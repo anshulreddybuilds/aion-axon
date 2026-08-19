@@ -9,6 +9,7 @@ class MemoryFirestore:
     def __init__(self):
         self.approvals: dict[str, dict[str, Any]] = {}
         self.audit_events: dict[str, dict[str, Any]] = {}
+        self.missions: dict[str, dict[str, Any]] = {}
 
     def create_approval(self, request_id: str, data: dict[str, Any]) -> None:
         self.approvals[request_id] = {
@@ -45,6 +46,22 @@ class MemoryFirestore:
             **data,
         }
         return event_id
+
+    def list_pending_approvals(self) -> list[dict[str, Any]]:
+        return [
+            {**data, "request_id": request_id}
+            for request_id, data in self.approvals.items()
+            if data.get("status") == "PENDING"
+        ]
+
+    def save_mission(self, mission_id: str, data: dict[str, Any]) -> None:
+        self.missions[mission_id] = {
+            **data,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def get_mission(self, mission_id: str) -> Optional[dict[str, Any]]:
+        return self.missions.get(mission_id)
 
 
 class AxonFirestore:
@@ -98,6 +115,32 @@ class AxonFirestore:
         })
 
         return reference.id
+
+    def list_pending_approvals(self) -> list[dict[str, Any]]:
+        query = (
+            self.db
+            .collection("approval_requests")
+            .where("status", "==", "PENDING")
+        )
+
+        return [
+            {**doc.to_dict(), "request_id": doc.id}
+            for doc in query.stream()
+        ]
+
+    def save_mission(self, mission_id: str, data: dict[str, Any]) -> None:
+        self.db.collection("missions").document(mission_id).set({
+            **data,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    def get_mission(self, mission_id: str) -> Optional[dict[str, Any]]:
+        snapshot = self.db.collection("missions").document(mission_id).get()
+
+        if not snapshot.exists:
+            return None
+
+        return snapshot.to_dict()
 
 
 if os.getenv("AXON_FIRESTORE_MODE") == "memory":
