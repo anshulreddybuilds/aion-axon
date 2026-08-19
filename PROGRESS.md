@@ -63,8 +63,11 @@ Evidence: `docs/phase2-evidence.md`.
 
 Target Aug 21. Exit: one real mission end-to-end via the live URL.
 
-- [ ] Mission intake -> structured plan STEPS parsed into executable steps
-- [ ] Registry exposed as Gemini function declarations
-- [ ] Seed 12 starter capabilities
-- [ ] Implement `web_research` for real, with source receipts
-- [ ] Run a live web fetch through the approval loop
+- [x] Mission intake -> structured plan STEPS parsed into executable steps
+      (`MissionPlan` schema + ADK `output_schema`)
+- [x] Registry exposed as Gemini function declarations
+- [x] Seed 12 starter capabilities (2 implemented, 10 declared)
+- [x] Implement `web_research` for real, with source receipts
+      (Google Search grounding)
+- [ ] Run a live web fetch through the approval loop — needs deploy
+- [ ] Live planned mission via the Cloud Run URL — needs deploy

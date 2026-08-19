@@ -9,6 +9,7 @@ from typing import Any, Optional
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
+from app.capabilities.declarations import catalog_summary
 from app.capabilities.registry import registry
 from app.governance.approval import approval_manager
 from app.governance.kill_switch import kill_switch
@@ -57,8 +58,22 @@ def health() -> dict[str, str]:
 
 @app.get("/capabilities")
 def capabilities() -> dict[str, Any]:
-    tools = registry.list_tools()
-    return {"count": len(tools), "capabilities": tools}
+    return catalog_summary()
+
+
+class PlannedMissionRequest(BaseModel):
+    request: str = Field(..., description="The messy human request.")
+
+
+@app.post("/missions/planned")
+def create_planned_mission(body: PlannedMissionRequest) -> dict[str, Any]:
+    """Plan a messy request with Gemini, then run it through the gate."""
+    return mission_service.start_planned(body.request)
+
+
+@app.post("/missions/{mission_id}/resume-planned")
+def resume_planned_mission(mission_id: str) -> dict[str, Any]:
+    return mission_service.resume_planned(mission_id)
 
 
 @app.post("/missions")

@@ -38,7 +38,9 @@ def test_capabilities_are_registered():
     names = [c["name"] for c in body["capabilities"]]
 
     assert "calculator" in names
-    assert body["count"] >= 1
+    assert body["total"] == 12
+    assert body["implemented"] >= 2
+    assert body["declared_only"] == body["total"] - body["implemented"]
 
 
 def test_medium_risk_mission_requires_approval_and_resumes():

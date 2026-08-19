@@ -13,8 +13,11 @@ from typing import Any, Optional
 from uuid import uuid4
 
 import app.capabilities.bootstrap  # noqa: F401 - registers default tools
+from app.agents.mission_planner import plan_mission
+from app.agents.plan_schema import MissionPlan
 from app.governance.guardian import RiskLevel
 from app.memory.firestore_store import firestore_store
+from app.missions.engine import mission_engine
 from app.workflows.orchestrator import orchestrator
 from app.workflows.state import WorkflowState
 
@@ -55,6 +58,154 @@ class MissionService:
             "approval_request_id": workflow.approval_request_id,
             "plan": self._plan_of(workflow),
         }
+
+    def start_planned(self, request: str) -> dict[str, Any]:
+        """Plan a messy request, then execute the plan through the gate."""
+        workflow = WorkflowState(user_request=request)
+        mission_id = str(uuid4())
+
+        plan, error = plan_mission(request)
+
+        if plan is None:
+            workflow.update_status("FAILED")
+            workflow.error = error
+
+            firestore_store.save_mission(mission_id, {
+                "mission_id": mission_id,
+                "workflow_id": workflow.workflow_id,
+                "request": request,
+                "mode": "planned",
+                "status": "FAILED",
+                "error": error,
+                "created_at": workflow.created_at,
+            })
+
+            return {
+                "mission_id": mission_id,
+                "status": "FAILED",
+                "error": error,
+            }
+
+        workflow.plan = [step.model_dump() for step in plan.steps]
+        workflow.update_status("EXECUTING")
+
+        summary = mission_engine.run(workflow, plan)
+
+        self._persist_planned(mission_id, workflow, request, plan, summary)
+
+        return {
+            "mission_id": mission_id,
+            "workflow_id": workflow.workflow_id,
+            "goal": plan.goal,
+            "plan": [step.model_dump() for step in plan.steps],
+            **summary,
+        }
+
+    def resume_planned(self, mission_id: str) -> dict[str, Any]:
+        """Continue a planned mission from the step that suspended it."""
+        mission = firestore_store.get_mission(mission_id)
+
+        if mission is None:
+            return {"status": "FAILED", "error": "Unknown mission."}
+
+        if mission.get("mode") != "planned":
+            return {"status": "FAILED", "error": "Not a planned mission."}
+
+        if mission.get("status") != "AWAITING_APPROVAL":
+            return {
+                "status": "FAILED",
+                "error": (
+                    "Mission is not awaiting approval. "
+                    f"Current status: {mission.get('status')}"
+                ),
+            }
+
+        plan = MissionPlan.model_validate(mission["plan_document"])
+
+        workflow = WorkflowState(
+            user_request=mission["request"],
+            workflow_id=mission["workflow_id"],
+        )
+        workflow.status = "EXECUTING"
+
+        index = mission.get("next_step_index", 0)
+        completed = [
+            r for r in mission.get("step_results", [])
+            if r.get("status") == "EXECUTED"
+        ]
+
+        # Resume the suspended step through the approved path, then let
+        # the engine carry on with the rest.
+        step = plan.steps[index]
+
+        approved = orchestrator.approve_and_resume(
+            workflow,
+            step.tool,
+            step.action,
+            RiskLevel(step.risk),
+            mission["approval_request_id"],
+            *step.args,
+        )
+
+        if approved.get("status") != "EXECUTED":
+            summary = {
+                "status": approved.get("status", "UNKNOWN"),
+                "steps_completed": len(completed),
+                "steps_total": len(plan.steps),
+                "next_step_index": index,
+                "step_results": completed,
+                "approval_request_id": mission["approval_request_id"],
+                "blocked_on": None,
+                "reason": approved.get("reason"),
+            }
+        else:
+            completed.append({
+                "step": step.step,
+                "description": step.description,
+                "tool": step.tool,
+                "action": step.action,
+                "risk": step.risk,
+                "kind": step.kind,
+                "status": "EXECUTED",
+                "result": approved.get("result"),
+                "approved": True,
+                "at": datetime.now(timezone.utc).isoformat(),
+            })
+
+            summary = mission_engine.run(
+                workflow, plan, start_at=index + 1, completed=completed,
+            )
+
+        self._persist_planned(
+            mission_id, workflow, mission["request"], plan, summary,
+        )
+
+        return {"mission_id": mission_id, "goal": plan.goal, **summary}
+
+    def _persist_planned(
+        self,
+        mission_id: str,
+        workflow: WorkflowState,
+        request: str,
+        plan: MissionPlan,
+        summary: dict[str, Any],
+    ) -> None:
+        firestore_store.save_mission(mission_id, {
+            "mission_id": mission_id,
+            "workflow_id": workflow.workflow_id,
+            "request": request,
+            "mode": "planned",
+            "goal": plan.goal,
+            "status": summary["status"],
+            "plan_document": plan.model_dump(),
+            "step_results": summary["step_results"],
+            "next_step_index": summary["next_step_index"],
+            "steps_completed": summary["steps_completed"],
+            "steps_total": summary["steps_total"],
+            "approval_request_id": summary.get("approval_request_id"),
+            "blocked_on": summary.get("blocked_on"),
+            "created_at": workflow.created_at,
+        })
 
     def resume(self, mission_id: str) -> dict[str, Any]:
         mission = firestore_store.get_mission(mission_id)
