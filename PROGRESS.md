@@ -7,7 +7,7 @@ intent. Anything unverified is written down as unverified.
 | Phase | Status | Commit | Evidence |
 |-------|--------|--------|----------|
 | 1 — Governed execution loop | DONE | `bed90c7` | `docs/day1-evidence.md`, CI run 32252020824 |
-| 2 — Deploy spine | IN PROGRESS | — | — |
+| 2 — Deploy spine | DONE | `f580ef1` | Two live Cloud Run URLs, live approval-resume, `docs/phase2-evidence.md` |
 | 3 — Mission engine | NOT STARTED | — | — |
 | 4 — Gap detection | NOT STARTED | — | — |
 | 5 — Synapse stage 1 | NOT STARTED | — | — |
@@ -33,9 +33,14 @@ Commit `bed90c7`. CI run `32252020824` green.
 
 Full detail: `docs/day1-evidence.md`.
 
-## Phase 2 — Deploy spine — IN PROGRESS
+## Phase 2 — Deploy spine — DONE (19 Aug, a day early)
 
-Target Aug 20. Exit: two live Cloud Run URLs + live e2e pass.
+Exit criteria met: two live Cloud Run URLs + live e2e pass.
+
+- **aion-core**: https://aion-core-638298765129.asia-south1.run.app
+- **aion-sandbox**: https://aion-sandbox-638298765129.asia-south1.run.app
+
+Evidence: `docs/phase2-evidence.md`.
 
 - [x] HTTP API on aion-core (`POST /missions`, `GET /approvals/pending`,
       `POST /approvals/{id}/decide`, `POST /killswitch`) — `app/api.py`
@@ -44,14 +49,22 @@ Target Aug 20. Exit: two live Cloud Run URLs + live e2e pass.
 - [x] Dockerfile for aion-core
 - [x] aion-sandbox service, zero secrets, logs env proof at startup
 - [x] API tests passing offline — 13 passed
-- [ ] Deploy aion-core to Cloud Run `asia-south1`
-- [ ] Deploy aion-sandbox to Cloud Run `asia-south1`
-- [ ] Prove Day-1 approval flow against the LIVE `.run` URL
+- [x] Deploy aion-core to Cloud Run `asia-south1`
+- [x] Deploy aion-sandbox to Cloud Run `asia-south1`
+- [x] Prove Day-1 approval flow against the LIVE `.run` URL
 
-### Owner console tasks for this phase
+### Owner console tasks — all complete
 
-Tracked here so they are never lost between sessions.
+- [x] gcloud on PATH, authed as webserieswatchdog@gmail.com
+- [x] APIs enabled: run, cloudbuild, artifactregistry, firestore, secretmanager
+- [x] Gemini key stored in Secret Manager as `gemini-api-key`
 
-- [ ] Add gcloud to PATH / authenticate `gcloud auth login`
-- [ ] Confirm billing + $150 credits active on `aion-axon-2026`
-- [ ] Enable Cloud Run + Artifact Registry + Cloud Build APIs
+## Phase 3 — Mission engine — NEXT
+
+Target Aug 21. Exit: one real mission end-to-end via the live URL.
+
+- [ ] Mission intake -> structured plan STEPS parsed into executable steps
+- [ ] Registry exposed as Gemini function declarations
+- [ ] Seed 12 starter capabilities
+- [ ] Implement `web_research` for real, with source receipts
+- [ ] Run a live web fetch through the approval loop
