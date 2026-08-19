@@ -1,0 +1,53 @@
+﻿# Python
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*.class
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Google Cloud credentials
+application_default_credentials.json
+credentials/
+service-account*.json
+*-credentials.json
+
+# Local ADK/runtime state
+*.db
+*.sqlite
+*.sqlite3
+app/.adk/
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Build / distribution
+build/
+dist/
+*.egg-info/
+
+# Test/cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
