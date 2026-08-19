@@ -35,13 +35,19 @@ CREDENTIAL_MARKERS = (
     "PRIVATE",
 )
 
-# Set by the platform, carry no authority, and would otherwise show up as
-# false positives.
+# Set by the platform or the base image, carry no authority, and would
+# otherwise show up as false positives.
+#
+# GPG_KEY is the python:3.11-slim base image's PUBLIC signing key id, used
+# to verify the Python tarball. It is a public identifier, not a secret.
+# It is listed in the /env-proof response as an ignored variable rather
+# than filtered silently: an allowlist a reader cannot see is not a proof.
 ALLOWED = {
     "GOOGLE_CLOUD_PROJECT",
     "K_SERVICE",
     "K_REVISION",
     "K_CONFIGURATION",
+    "GPG_KEY",
 }
 
 
@@ -62,6 +68,19 @@ def scan_environment() -> list[str]:
     return sorted(found)
 
 
+def ignored_variables() -> list[str]:
+    """Names matching a credential marker that were deliberately allowed.
+
+    Published alongside the verdict so the allowlist is auditable from
+    outside the container.
+    """
+    return sorted(
+        name for name in os.environ
+        if name in ALLOWED
+        and any(marker in name.upper() for marker in CREDENTIAL_MARKERS)
+    )
+
+
 def env_proof() -> dict[str, Any]:
     found = scan_environment()
 
@@ -70,6 +89,8 @@ def env_proof() -> dict[str, Any]:
         "credentials_found": len(found),
         "credential_variable_names": found,
         "verdict": "ZERO_CREDENTIALS" if not found else "CREDENTIALS_PRESENT",
+        "ignored_public_variables": ignored_variables(),
+        "service_account_roles": "none granted",
         "trust_boundary": "generated code runs here, secrets do not",
     }
 

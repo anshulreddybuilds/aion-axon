@@ -42,6 +42,27 @@ def test_proof_never_leaks_values(monkeypatch):
     assert "planted-value" not in str(module.env_proof())
 
 
+def test_base_image_gpg_key_is_ignored_but_disclosed(monkeypatch):
+    """GPG_KEY is a public base-image identifier, not a secret.
+
+    It must not trip the verdict, but it must still be visible in the
+    response -- a silent allowlist would make the proof unfalsifiable.
+    """
+    module = load_sandbox()
+
+    for name in list(module.os.environ):
+        if any(m in name.upper() for m in module.CREDENTIAL_MARKERS):
+            monkeypatch.delenv(name, raising=False)
+
+    monkeypatch.setenv("GPG_KEY", "A035C8C19219BA821ECEA86B64E628F8D684696D")
+
+    assert module.scan_environment() == []
+    proof = module.env_proof()
+
+    assert proof["verdict"] == "ZERO_CREDENTIALS"
+    assert "GPG_KEY" in proof["ignored_public_variables"]
+
+
 def test_env_proof_endpoint(monkeypatch):
     module = load_sandbox()
 
