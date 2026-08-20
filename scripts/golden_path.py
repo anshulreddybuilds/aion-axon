@@ -164,7 +164,22 @@ def act_two_dataset_work() -> None:
         "args": [json.dumps(payload["rows"])],
     })
 
-    result = (analysed.get("result") or {}).get("result") or {}
+    outcome = analysed.get("result") or {}
+
+    # A capability held for human verification is the GOVERNANCE WORKING,
+    # not a broken rehearsal. Reporting it as FAIL would send someone
+    # debugging a system that is behaving exactly as designed -- and on
+    # demo day that is the worst possible half hour to lose.
+    if outcome.get("status") == "APPROVAL_REQUIRED":
+        check(
+            "ACQUIRED capability analyses it in the sandbox",
+            BLOCKED,
+            f"held by {outcome.get('policy_id')} — awaiting one-time "
+            f"approval: {outcome.get('request_id')}",
+        )
+        return
+
+    result = outcome.get("result") or {}
     anomalies = [
         row for row in (result.get("yearly_analysis") or [])
         if row.get("is_anomaly")
