@@ -36,9 +36,10 @@ SEED_CAPABILITIES: tuple[SeedCapability, ...] = (
     ),
     SeedCapability(
         "read_dataset",
-        "Reads rows from a public BigQuery dataset.",
+        "Reads rows from a public BigQuery dataset with a read-only, "
+        "allowlisted, byte-capped SELECT.",
         "LOW",
-        False,
+        True,
     ),
     SeedCapability(
         "summarize_text",
