@@ -166,12 +166,32 @@ def autonomy_view() -> dict[str, Any]:
     raise a capability's autonomy would be a way to grant the agent trust
     it has not earned — the exact thing this subsystem exists to prevent.
     """
-    tracked = firestore_store.list_capabilities()
+    records = firestore_store.list_capabilities()
+
+    # Annotate rather than return raw documents. A capability record with
+    # no autonomy_pct is NOT at 0% -- the ledger treats a missing score as
+    # the starting value, and a dashboard rendering it as 0 would claim a
+    # supervision state the backend does not actually apply.
+    annotated = []
+
+    for record in records:
+        name = record.get("name")
+        scored = int(record.get("total_outcomes", 0)) > 0
+
+        annotated.append({
+            **record,
+            "scored": scored,
+            "effective_autonomy_pct": autonomy_ledger.autonomy_of(name)
+            if name else None,
+            "supervised": autonomy_ledger.requires_supervision(name)
+            if name else False,
+        })
 
     return {
         "supervision_threshold": SUPERVISION_THRESHOLD,
-        "tracked_count": len(tracked),
-        "capabilities": tracked,
+        "tracked_count": len(annotated),
+        "scored_count": len([a for a in annotated if a["scored"]]),
+        "capabilities": annotated,
     }
 
 

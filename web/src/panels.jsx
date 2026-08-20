@@ -68,8 +68,13 @@ export function AutonomyLedger({ tracked, threshold }) {
       ) : (
         <ul className="space-y-3">
           {tracked.map((c) => {
-            const pct = Number(c.autonomy_pct ?? 0);
-            const supervised = pct < threshold;
+            // effective_autonomy_pct comes from the ledger, which treats a
+            // missing score as the starting value. Rendering a raw
+            // undefined as 0% would claim a supervision state the backend
+            // does not actually apply.
+            const pct = Number(c.effective_autonomy_pct ?? c.autonomy_pct ?? 0);
+            const supervised = !!c.supervised;
+            const scored = !!c.scored;
 
             return (
               <li key={c.name}>
@@ -90,6 +95,11 @@ export function AutonomyLedger({ tracked, threshold }) {
                     transition={{ duration: 0.6, ease: "easeOut" }}
                   />
                 </div>
+                {!scored && (
+                  <p className="text-[10px] text-muted mt-1">
+                    not yet scored — starting autonomy
+                  </p>
+                )}
                 {supervised && (
                   <p className="text-[10px] text-danger mt-1">
                     below {threshold}% — human verification required (G-07)

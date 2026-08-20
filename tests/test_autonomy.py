@@ -352,3 +352,29 @@ def test_refused_step_is_not_scored():
 
     assert verify_outcome("web_research", result) is None
     assert autonomy_ledger.tracked("web_research") is None
+
+
+def test_direct_mission_path_applies_autonomy_supervision():
+    """Regression: G-07 was skipped depending on which endpoint was used.
+
+    The planned path passed `capability` to the Guardian and the direct
+    path did not, so a demoted capability ran unsupervised whenever it was
+    invoked directly. A governance check that depends on the caller's
+    choice of endpoint is not a check.
+    """
+    import app.capabilities.bootstrap  # noqa: F401
+    from app.missions.service import mission_service
+
+    autonomy_ledger.record_outcome("web_research", False, "contradicted")
+    assert autonomy_ledger.requires_supervision("web_research") is True
+
+    created = mission_service.start(
+        request="research something",
+        tool="web_research",
+        action="research",
+        risk="LOW",
+        args=["anything"],
+    )
+
+    assert created["result"]["status"] == "APPROVAL_REQUIRED"
+    assert created["result"]["policy_id"] == "G-07"

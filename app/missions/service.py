@@ -44,6 +44,12 @@ class MissionService:
             action,
             risk_level,
             *args,
+            # The planned path passed these and the direct path did not,
+            # so G-07 autonomy supervision was silently skipped whenever a
+            # capability was invoked directly. A governance check that
+            # depends on which endpoint the caller used is not a check.
+            description=request,
+            capability=tool,
         )
 
         mission_id = str(uuid4())
