@@ -12,6 +12,7 @@ class MemoryFirestore:
         self.missions: dict[str, dict[str, Any]] = {}
         self.capabilities: dict[str, dict[str, Any]] = {}
         self.evolution_events: dict[str, dict[str, Any]] = {}
+        self.monitors: dict[str, dict[str, Any]] = {}
 
     def create_approval(self, request_id: str, data: dict[str, Any]) -> None:
         self.approvals[request_id] = {
@@ -91,6 +92,21 @@ class MemoryFirestore:
 
     def list_evolution_events(self) -> list[dict[str, Any]]:
         return list(self.evolution_events.values())
+
+    def save_monitor(self, monitor_id: str, data: dict[str, Any]) -> None:
+        # Merge: run_one() updates a few fields and must not wipe the
+        # monitor's schedule or history.
+        self.monitors[monitor_id] = {
+            **self.monitors.get(monitor_id, {}),
+            **data,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def get_monitor(self, monitor_id: str) -> Optional[dict[str, Any]]:
+        return self.monitors.get(monitor_id)
+
+    def list_monitors(self) -> list[dict[str, Any]]:
+        return list(self.monitors.values())
 
 
 class AxonFirestore:
@@ -208,6 +224,26 @@ class AxonFirestore:
         return [
             doc.to_dict()
             for doc in self.db.collection("evolution_events").stream()
+        ]
+
+    def save_monitor(self, monitor_id: str, data: dict[str, Any]) -> None:
+        self.db.collection("monitors").document(monitor_id).set({
+            **data,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, merge=True)
+
+    def get_monitor(self, monitor_id: str) -> Optional[dict[str, Any]]:
+        snapshot = self.db.collection("monitors").document(monitor_id).get()
+
+        if not snapshot.exists:
+            return None
+
+        return snapshot.to_dict()
+
+    def list_monitors(self) -> list[dict[str, Any]]:
+        return [
+            doc.to_dict()
+            for doc in self.db.collection("monitors").stream()
         ]
 
 

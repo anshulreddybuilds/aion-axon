@@ -21,6 +21,7 @@ from app.governance.autonomy_ledger import (
 from app.governance.kill_switch import kill_switch
 from app.memory.firestore_store import firestore_store
 from app.missions.service import mission_service
+from app.monitors.service import monitor_service
 from app.synapse.engine import synapse
 from app.synapse.sandbox_client import env_proof as sandbox_env_proof
 
@@ -223,6 +224,59 @@ def skill_passport(capability: str) -> dict[str, Any]:
         "installed_at": stored.get("installed_at"),
         "passport": stored.get("passport"),
     }
+
+
+class MonitorRequest(BaseModel):
+    name: str
+    capability: str
+    args: list[str] = Field(default_factory=list)
+    interval_minutes: int = Field(60, ge=1)
+    description: str = ""
+
+
+@app.post("/monitors")
+def create_monitor(body: MonitorRequest) -> dict[str, Any]:
+    return monitor_service.create(
+        name=body.name,
+        capability=body.capability,
+        args=body.args,
+        interval_minutes=body.interval_minutes,
+        description=body.description,
+    )
+
+
+@app.get("/monitors")
+def list_monitors() -> dict[str, Any]:
+    monitors = monitor_service.list_all()
+
+    return {
+        "count": len(monitors),
+        "active": len([m for m in monitors if m.get("state") == "ACTIVE"]),
+        "monitors": monitors,
+    }
+
+
+@app.post("/monitors/run-due")
+def run_due_monitors() -> dict[str, Any]:
+    """Run every monitor that is due. Called by an external scheduler.
+
+    Pull-based rather than a message bus: the service still scales to zero
+    between ticks, and every run goes through the ExecutionGate, so the
+    kill switch halts scheduled work exactly like interactive work.
+    """
+    return monitor_service.run_due()
+
+
+class DisableMonitorRequest(BaseModel):
+    reason: str = "Disabled by owner"
+
+
+@app.post("/monitors/{monitor_id}/disable")
+def disable_monitor(
+    monitor_id: str,
+    body: DisableMonitorRequest,
+) -> dict[str, Any]:
+    return monitor_service.disable(monitor_id, body.reason)
 
 
 @app.get("/sandbox/proof")
