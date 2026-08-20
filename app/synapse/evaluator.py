@@ -17,9 +17,15 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-# Overridable because Gemma model ids move. An unknown id must degrade to
-# UNSCORED, never to a guess.
-MODEL = os.getenv("AXON_EVALUATOR_MODEL", "gemma-3-27b-it")
+# Pinned from a live models.list() against the project's own key, not
+# guessed: the previous value (gemma-3-27b-it) did not exist on this API
+# version and returned 404 at runtime, which is how the evaluator ended up
+# UNSCORED during Acquisition #1.
+#
+# gemma-4-26b-a4b-it is the mixture-of-experts variant (~4B active
+# parameters), chosen over the dense gemma-4-31b-it because §4.2 asks for
+# a CHEAP second opinion, not a second reasoning model.
+MODEL = os.getenv("AXON_EVALUATOR_MODEL", "gemma-4-26b-a4b-it")
 
 PROMPT = """You are grading a generated Python capability.
 
