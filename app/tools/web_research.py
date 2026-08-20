@@ -7,6 +7,7 @@ Action Brief is only worth reading if its numbers can be traced.
 Read-only by construction: this tool retrieves and summarises. It has no
 write path to anything.
 """
+import asyncio
 import os
 from typing import Any
 
@@ -16,13 +17,41 @@ from google.genai import types
 MODEL = os.getenv("AXON_RESEARCH_MODEL", "gemini-3.6-flash")
 
 
-def _client() -> genai.Client:
+def _api_key() -> str:
     key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 
     if not key:
         raise RuntimeError("No Gemini API key configured for web research.")
 
-    return genai.Client(api_key=key)
+    return key
+
+
+async def _generate_async(query: str) -> Any:
+    """Build the client INSIDE the coroutine that uses it.
+
+    The ADK Runner drives the planner in its own event loop and closes the
+    shared genai transport when that loop tears down. Since the planner
+    runs on every mission, a client created outside this coroutine is
+    already closed by the time research runs ("Cannot send a request, as
+    the client has been closed"). Creating it here binds it to the loop
+    that actually issues the request -- the same pattern the planner uses,
+    which is why the planner never hit this.
+    """
+    client = genai.Client(api_key=_api_key())
+
+    return await client.aio.models.generate_content(
+        model=MODEL,
+        contents=query,
+        config=types.GenerateContentConfig(
+            tools=[types.Tool(google_search=types.GoogleSearch())],
+            system_instruction=(
+                "You are a research assistant. Answer only from search "
+                "results. State findings plainly and include concrete "
+                "figures and dates where available. If the sources do "
+                "not support an answer, say so instead of guessing."
+            ),
+        ),
+    )
 
 
 def _receipts(response: Any) -> list[dict[str, str]]:
@@ -69,19 +98,7 @@ def search_web(query: str) -> dict[str, Any]:
     query = query.strip()
 
     try:
-        response = _client().models.generate_content(
-            model=MODEL,
-            contents=query,
-            config=types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())],
-                system_instruction=(
-                    "You are a research assistant. Answer only from search "
-                    "results. State findings plainly and include concrete "
-                    "figures and dates where available. If the sources do "
-                    "not support an answer, say so instead of guessing."
-                ),
-            ),
-        )
+        response = asyncio.run(_generate_async(query))
     except Exception as error:  # noqa: BLE001 - reported, never retried blindly
         return {
             "status": "ERROR",
