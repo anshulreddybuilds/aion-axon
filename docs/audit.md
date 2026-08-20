@@ -220,7 +220,7 @@ container — found by live testing, invisible to unit tests.
 
 ---
 
-## 12. Evolution Event Execution — **PARTIALLY IMPLEMENTED** ⚠️
+## 12. Evolution Event Execution — **IMPLEMENTED** (closed 21 Aug)
 
 | | |
 |---|---|
@@ -232,15 +232,14 @@ Evolution events are written with BEFORE / CHANGE / REASON / AFTER, citations,
 test results, evaluation and approver. **Verified live:** two events from two
 real acquisitions.
 
-**MISSING — this is the largest genuine gap.** The originally blocked mission
-does **not** automatically resume once the capability is installed. Today the
-loop is: mission BLOCKS → operator proposes an acquisition → approves →
-installs → operator re-runs the mission. The mission id is not carried into
-the acquisition, and nothing re-enters `MissionEngine.run` at the blocked step.
+**CLOSED.** An acquisition now carries the `mission_id` it exists to unblock,
+and `install()` resumes that mission from its blocked step via
+`MissionService.resume_blocked`. Routes: `POST /missions/{id}/acquire` and
+`POST /missions/{id}/resume-blocked`.
 
-To close it: store `mission_id` + `next_step_index` on the acquisition record,
-and have `install()` call back into the engine to continue the suspended
-mission from its blocked step.
+Resume cannot skip a still-open gap: the engine re-evaluates against the live
+registry, a rejected approval leaves the mission BLOCKED, and completed steps
+are never replayed.
 
 ---
 
@@ -264,8 +263,10 @@ used as a *data source* (`app/tools/bigquery_public.py`), not as the ledger.
 An external auditor expecting a BigQuery ledger will call this a gap; it is a
 decision.
 
-**Missing:** the upward half of the autonomy arc is untested live, because
-promotion needs a grounded `VERIFIED` verdict and grounding is quota-blocked.
+**Live-verified 21 Aug:** both capabilities moved 32% → 47% on human
+verification (`Human verification under G-07 by anshul: approved`), cleared
+the supervision threshold, and resumed executing. Promotion from GROUNDED
+research evidence remains untested while grounding is quota-blocked.
 
 ---
 

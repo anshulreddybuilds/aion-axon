@@ -199,7 +199,7 @@ pip install -r requirements.txt
 
 # Full test suite, offline — no credentials, no network:
 AXON_FIRESTORE_MODE=memory python -m pytest -q tests
-# -> 177 passed
+# -> 192 passed
 ```
 
 `AXON_FIRESTORE_MODE=memory` selects in-memory Firestore and kill switch so
@@ -269,7 +269,9 @@ locally. Full records in `docs/` and `PROGRESS.md`.
 | Survives restarts | `restored: [convert_currency_amount, detect_yoy_anomalies]` |
 | Background work | Cloud Scheduler tick → monitor ran through the gate |
 | Kill switch | Halts interactive *and* scheduled work |
-| Tests | **177 passing**, including 19 adversarial |
+| Autonomy arc | 32% → 47% live on human verification; demotion −18 on contradiction |
+| Loop closes | install() resumes the blocked mission from its blocked step |
+| Tests | **192 passing**, including 19 adversarial |
 
 The 2009–2010 anomalies match the documented post-2008 decline in US
 births — a result checkable against the outside world rather than taken on
@@ -285,10 +287,11 @@ system built around evidence should hold itself to the same standard.
 - **Search grounding is quota-blocked on the free tier.** Acquisition
   research currently returns `DEGRADED` with **zero citations**, and the
   Skill Passport shows "ungrounded" rather than a fabricated source.
-- **The autonomy arc's upward half is not demonstrated live.** Promotion
-  requires a grounded `VERIFIED` verdict, which needs those citations.
-  Demotion reproduces live today; the full 32% → 47% → 29% arc is covered
-  by tests only.
+- **The autonomy arc is demonstrated live in both directions**, but
+  promotion currently comes from HUMAN verification (approving a G-07
+  hold, or approving an install after reading the Skill Passport) rather
+  than from a grounded `VERIFIED` research verdict. Automated promotion
+  from grounded evidence still needs the citations above.
 - **Acquisition #3 (a background-monitor skill) was not acquired.** The
   monitor *infrastructure* is built, tested and running on a schedule; the
   acquisition itself hit the Gemini daily quota cap.
