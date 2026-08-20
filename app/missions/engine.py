@@ -17,8 +17,6 @@ from typing import Any, Optional
 
 from app.agents.plan_schema import MissionPlan, MissionStep
 from app.capabilities.registry import registry
-from app.governance.autonomy_ledger import autonomy_ledger
-from app.governance.evidence_engine import VERIFIED_VERDICT, verify_research
 from app.governance.guardian import RiskLevel
 from app.memory.firestore_store import firestore_store
 from app.workflows.orchestrator import orchestrator
@@ -85,7 +83,10 @@ class MissionEngine:
             }
 
             if status == "EXECUTED":
-                evidence = self._verify(step, outcome.get("result"))
+                # The orchestrator already verified and recorded the
+                # outcome. Read its verdict; never recompute it, or one
+                # action would move autonomy twice.
+                evidence = outcome.get("evidence")
 
                 if evidence:
                     record["evidence"] = evidence
@@ -108,50 +109,6 @@ class MissionEngine:
         workflow.update_status("COMPLETED")
 
         return self._summary("COMPLETED", results, len(plan.steps), plan)
-
-    def _verify(
-        self,
-        step: MissionStep,
-        result: Any,
-    ) -> Optional[dict[str, Any]]:
-        """Check a completed step's claim against evidence, and score it.
-
-        Scoped to web_research per Amendment 7 P0. This is the point where
-        the agent's own "EXECUTED" stops being the last word: the gate
-        says the step ran, the Evidence Engine says whether what it
-        produced can be believed, and the ledger moves autonomy on the
-        answer.
-
-        A verification failure must never fail the mission. The step did
-        run; what changed is how much the agent is trusted next time.
-        """
-        if step.tool != "web_research" or not isinstance(result, dict):
-            return None
-
-        try:
-            report = verify_research(result)
-
-            change = autonomy_ledger.record_outcome(
-                "web_research",
-                verified=report.verdict == VERIFIED_VERDICT,
-                reason=(
-                    report.contradiction_detail
-                    or f"Evidence verdict: {report.verdict}"
-                ),
-            )
-
-            return {
-                "verdict": report.verdict,
-                "confidence": report.confidence,
-                "checklist": report.checklist,
-                "grounded": report.grounded,
-                "source_count": report.source_count,
-                "autonomy_before": change.before,
-                "autonomy_after": change.after,
-                "oversight_restored": change.oversight_restored,
-            }
-        except Exception as error:  # noqa: BLE001 - never fail the mission
-            return {"verdict": "UNVERIFIED", "error": str(error)}
 
     def _gap_for(self, step: MissionStep) -> Optional[dict[str, Any]]:
         """Describe the capability gap at this step, if there is one."""

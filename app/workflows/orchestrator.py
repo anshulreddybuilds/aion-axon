@@ -6,6 +6,7 @@ from app.capabilities.registry import registry
 from app.governance.execution_gate import execution_gate
 from app.governance.guardian import RiskLevel
 from app.governance.approval import approval_manager
+from app.governance.verification import verify_outcome
 
 
 class AxonOrchestrator:
@@ -60,6 +61,13 @@ class AxonOrchestrator:
             *args,
             **kwargs,
         )
+
+        # Verification lives HERE, not in the mission engine, because both
+        # mission paths (direct /missions and planned) pass through the
+        # orchestrator while only the planned one uses the engine. Putting
+        # it in the engine left the direct path unverified -- a research
+        # claim could execute and move no autonomy at all.
+        verify_outcome(tool_name, result)
 
         workflow.add_observation(
             "execution_gate",
@@ -185,6 +193,11 @@ class AxonOrchestrator:
             *args,
             **kwargs,
         )
+
+        # Approved work is verified on the same terms as unapproved work.
+        # A human saying yes authorises the ACTION; it does not certify
+        # the RESULT, and the ledger scores results.
+        verify_outcome(tool_name, result)
 
         workflow.add_observation(
             "approved_execution",

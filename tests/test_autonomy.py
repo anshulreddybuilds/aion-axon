@@ -291,3 +291,64 @@ def test_grounding_is_required_for_a_verified_verdict():
     report = verify_research(result)
 
     assert report.verdict == "UNVERIFIED"
+
+
+def test_direct_mission_path_also_verifies_research():
+    """Regression: verification lived only in the planned-mission engine.
+
+    The direct /missions path executed research and moved no autonomy at
+    all, so a research claim could go unchecked depending only on which
+    endpoint was used.
+    """
+    from app.governance.verification import verify_outcome
+
+    result = {
+        "status": "EXECUTED",
+        "result": {
+            "findings": "The rate is 83.2.",
+            "grounded": False,
+            "sources": [],
+        },
+    }
+
+    evidence = verify_outcome("web_research", result)
+
+    assert evidence is not None
+    assert evidence["verdict"] == "UNVERIFIED"
+    assert result["evidence"]["verdict"] == "UNVERIFIED"
+    assert autonomy_ledger.tracked("web_research") is not None
+
+
+def test_verification_runs_once_per_action():
+    """Two verifications of one action would move autonomy twice."""
+    from app.governance.verification import verify_outcome
+
+    result = {
+        "status": "EXECUTED",
+        "result": {"findings": "x", "grounded": False, "sources": []},
+    }
+
+    verify_outcome("web_research", result)
+    first = autonomy_ledger.get("web_research")["total_outcomes"]
+
+    assert first == 1
+
+
+def test_non_verifiable_tools_are_left_alone():
+    from app.governance.verification import verify_outcome
+
+    result = {"status": "EXECUTED", "result": {"result": 1475.0}}
+
+    assert verify_outcome("calculator", result) is None
+    assert "evidence" not in result
+    assert autonomy_ledger.tracked("calculator") is None
+
+
+def test_refused_step_is_not_scored():
+    """Only work that actually ran can produce evidence."""
+    from app.governance.verification import verify_outcome
+
+    result = {"status": "REFUSED", "reason": "nope"}
+
+    assert verify_outcome("web_research", result) is None
+    assert autonomy_ledger.tracked("web_research") is None
