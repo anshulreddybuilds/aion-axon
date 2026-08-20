@@ -1,10 +1,12 @@
 name: AION-AXON CI
 
 on:
+  # Every branch, not just main. The parallel-session fleet uses CI as its
+  # review gate instead of line-by-line reading, so a feature branch with
+  # no CI is a branch with no review at all.
   push:
     branches:
-      - main
-      - feat/end-to-end-workflow
+      - '**'
   pull_request:
 
 jobs:
