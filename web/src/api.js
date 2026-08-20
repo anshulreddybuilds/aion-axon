@@ -38,6 +38,8 @@ export const api = {
   pending: () => request("/approvals/pending"),
   sandboxProof: () => request("/sandbox/proof"),
   passport: (name) => request(`/capabilities/${name}/passport`),
+  review: (id) => request(`/approvals/${id}/review`),
+  telemetry: () => request("/telemetry"),
 
   decide: (id, approved) =>
     request(`/approvals/${id}/decide`, {

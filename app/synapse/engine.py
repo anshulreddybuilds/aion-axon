@@ -234,6 +234,11 @@ class SynapseEngine:
                 f"SYNAPSE proposes installing '{candidate.name}': "
                 f"{candidate.description}"
             ),
+            # Named so the approval can be traced back to the code it
+            # authorises. An approval that cannot reach the source is a
+            # signature on an unread document.
+            policy_id="INSTALL",
+            capability=candidate.name,
         )
 
         record.approval_request_id = request.request_id
@@ -294,6 +299,10 @@ class SynapseEngine:
             "version": int(stored.get("version", 0)) + 1,
             "installed_at": datetime.now(timezone.utc).isoformat(),
             "approved_by": approval.get("decided_by"),
+            # Kept so the NEXT version can be diffed against what is
+            # actually running, rather than against the last thing that
+            # happened to be proposed.
+            "installed_code": candidate.get("code"),
         })
 
         event_id = firestore_store.write_evolution_event({

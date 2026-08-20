@@ -195,10 +195,19 @@ Three surfaces: HTTP, CLI, and the Holo-Deck approval card. Approvals persist
 in Firestore, so approving on one instance and resuming on another works.
 Deciding twice is refused and the first decision stands.
 
-**Missing:** no code **diff view** in the approval card. The owner sees the
-capability name, description, risk and reason, but not the generated source
-side by side. This is the clearest UX gap for the "review before approving"
-story.
+**Closed 21 Aug.** `GET /approvals/{id}/review` returns the source being
+authorised, a unified diff against the installed version when there is one,
+the sandbox result, the evaluator verdict and the research grounding. The
+Holo-Deck approval card renders it behind an explicit "review the code before
+approving" toggle -- collapsed by default, because an owner shown a wall of
+source on every card learns to scroll past it, while one who clicks has made
+a choice.
+
+A first install shows the FULL source rather than a diff against nothing:
+"no previous version" is information, not an empty diff to skim.
+
+An approval that concerns no code (a G-02 payment) says so explicitly rather
+than rendering blank, which would read as a loading failure.
 
 ---
 

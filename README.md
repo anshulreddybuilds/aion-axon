@@ -199,7 +199,7 @@ pip install -r requirements.txt
 
 # Full test suite, offline — no credentials, no network:
 AXON_FIRESTORE_MODE=memory python -m pytest -q tests
-# -> 201 passed
+# -> 205 passed
 ```
 
 `AXON_FIRESTORE_MODE=memory` selects in-memory Firestore and kill switch so
@@ -271,7 +271,7 @@ locally. Full records in `docs/` and `PROGRESS.md`.
 | Kill switch | Halts interactive *and* scheduled work |
 | Autonomy arc | 32% → 47% live on human verification; demotion −18 on contradiction |
 | Loop closes | install() resumes the blocked mission from its blocked step |
-| Tests | **201 passing**, including 19 adversarial |
+| Tests | **205 passing**, including 19 adversarial |
 
 The 2009–2010 anomalies match the documented post-2008 decline in US
 births — a result checkable against the outside world rather than taken on

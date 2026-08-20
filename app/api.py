@@ -21,6 +21,7 @@ from app.governance.autonomy_ledger import (
     autonomy_ledger,
 )
 from app.governance.kill_switch import kill_switch
+from app.governance.review import review_package
 from app.memory.firestore_store import firestore_store
 from app.missions.service import mission_service
 from app.observability.telemetry import summarise
@@ -391,6 +392,18 @@ def sandbox_proof() -> dict[str, Any]:
     is down. Both are worth telling apart.
     """
     return sandbox_env_proof()
+
+
+@app.get("/approvals/{request_id}/review")
+def review_approval(request_id: str) -> dict[str, Any]:
+    """The code being authorised, plus the evidence behind it.
+
+    Approving a description of generated code is a signature on an unread
+    document. This returns the source, a diff against the installed
+    version when there is one, the sandbox result and the evaluator's
+    verdict.
+    """
+    return review_package(request_id)
 
 
 @app.get("/approvals/pending")

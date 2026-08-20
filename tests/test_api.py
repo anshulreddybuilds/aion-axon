@@ -274,3 +274,71 @@ def test_unknown_origin_is_not_granted_access():
     )
 
     assert "access-control-allow-origin" not in response.headers
+
+
+def test_review_returns_the_code_being_approved():
+    """An approval must be traceable to the source it authorises."""
+    from app.memory.firestore_store import firestore_store
+
+    firestore_store.approvals["review-1"] = {
+        "action": "install capability: demo_skill",
+        "risk": "MEDIUM",
+        "reason": "SYNAPSE proposes installing demo_skill",
+        "status": "PENDING",
+        "policy_id": "INSTALL",
+        "capability": "demo_skill",
+    }
+    firestore_store.save_capability("demo_skill", {
+        "name": "demo_skill",
+        "version": 0,
+        "passport": {
+            "approval_request_id": "review-1",
+            "candidate": {
+                "name": "demo_skill",
+                "description": "does a thing",
+                "code": "def demo():\n    return 1\n",
+                "test": "assert demo() == 1",
+                "entrypoint": "demo",
+            },
+            "tests": {"passed": True},
+            "safety": {"safe": True},
+            "evaluation": {"status": "SCORED", "score": 90},
+        },
+    })
+
+    body = client.get("/approvals/review-1/review").json()
+
+    assert body["status"] == "OK"
+    assert "def demo()" in body["code"]
+    assert body["is_first_version"] is True
+    assert body["tests"]["passed"] is True
+
+
+def test_review_of_a_non_code_approval_says_so():
+    """A payment approval has no source; say that, don't render blank."""
+    from app.memory.firestore_store import firestore_store
+
+    firestore_store.approvals["review-2"] = {
+        "action": "purchase item", "risk": "MEDIUM",
+        "reason": "needs a human", "status": "PENDING",
+    }
+
+    body = client.get("/approvals/review-2/review").json()
+
+    assert body["code"] is None
+    assert "does not concern generated code" in body["note"]
+
+
+def test_review_of_an_unknown_request():
+    assert client.get("/approvals/nope/review").json()["status"] == "NOT_FOUND"
+
+
+def test_second_version_produces_a_real_diff():
+    from app.governance.review import build_diff
+
+    diff = build_diff(
+        "def f():\n    return 1\n", "def f():\n    return 2\n", "f",
+    )
+
+    assert any(line.startswith("-") and "return 1" in line for line in diff)
+    assert any(line.startswith("+") and "return 2" in line for line in diff)

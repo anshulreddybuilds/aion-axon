@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
+import ReviewPanel from "./ReviewPanel.jsx";
 
 /** Shared shell. Panels are calm by design — one hero effect only. */
 export function Panel({ title, right, children, tone = "edge" }) {
@@ -139,8 +140,12 @@ export function ApprovalCard({ pending, onDecide, busy }) {
               className="border border-cyan/40 rounded p-3 mb-2"
             >
               <p className="text-sm mb-1">{request.action}</p>
-              <p className="text-[11px] text-muted mb-3">{request.reason}</p>
-              <div className="flex gap-2">
+              <p className="text-[11px] text-muted mb-2">{request.reason}</p>
+
+              {/* The code, before the decision. */}
+              <ReviewPanel requestId={request.request_id} />
+
+              <div className="flex gap-2 mt-3">
                 <button
                   disabled={busy}
                   onClick={() => onDecide(request.request_id, true)}
