@@ -123,3 +123,22 @@ the outside world rather than taken on trust.
 Credentialed query stays human-written; generated code never touches a
 service account. That split is why Acquisition #2 acquires the ANALYSIS
 skill rather than the query itself.
+
+## Background monitors — LIVE (20 Aug, revision aion-core-00010-hst)
+
+- Monitor `350a73f5` created over the BigQuery dataset, 60-min interval.
+- Tick ran it through the gate: `EXECUTED`, 4 rows returned.
+- Monitor on an unimplemented capability: **REJECTED at creation**.
+- **Kill switch ON -> scheduled tick returned `BLOCKED`.** Unattended work
+  gets the same governance as interactive work.
+
+## Acquisition #3 — BLOCKED on Gemini free-tier daily quota
+
+Infrastructure complete and tested (146 tests). The acquisition itself
+failed at the GENERATE stage with `429 RESOURCE_EXHAUSTED`, persisting
+after a 75s pause, so it is the daily cap rather than a rate limit.
+
+The failure was recorded honestly: `status FAILED`, `stage GENERATE`, real
+reason. Nothing fabricated, no partial capability installed.
+
+Unblocks when the daily quota resets or the $150 credits land (~25 Aug).
