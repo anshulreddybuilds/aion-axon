@@ -4,6 +4,7 @@ Every route that can cause execution goes through MissionService ->
 Orchestrator -> ExecutionGate. There is no route that executes a tool
 directly, and adding one would break the governance guarantee.
 """
+from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 from fastapi import FastAPI
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.capabilities.declarations import catalog_summary
 from app.capabilities.registry import registry
+from app.capabilities.rehydrate import rehydrate_capabilities
 from app.governance.approval import approval_manager
 from app.governance.autonomy_ledger import (
     SUPERVISION_THRESHOLD,
@@ -22,10 +24,24 @@ from app.missions.service import mission_service
 from app.synapse.engine import synapse
 from app.synapse.sandbox_client import env_proof as sandbox_env_proof
 
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Reconcile the runtime registry to Firestore BEFORE serving traffic.
+
+    Cloud Run scales to zero, so without this an acquired capability lives
+    only as long as one container and the acquisition story becomes an
+    illusion between demo takes.
+    """
+    application.state.rehydration = rehydrate_capabilities()
+    yield
+
+
 app = FastAPI(
     title="AION AXON Core",
     description="Governed, self-evolving background agent.",
-    version="0.2.0",
+    version="0.3.0",
+    lifespan=lifespan,
 )
 
 
@@ -64,7 +80,10 @@ def health() -> dict[str, str]:
 
 @app.get("/capabilities")
 def capabilities() -> dict[str, Any]:
-    return catalog_summary()
+    return {
+        **catalog_summary(),
+        "rehydrated": getattr(app.state, "rehydration", None),
+    }
 
 
 class PlannedMissionRequest(BaseModel):
