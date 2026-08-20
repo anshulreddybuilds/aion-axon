@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1020 780" width="1020" height="780" font-family="ui-sans-serif, system-ui, Segoe UI, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#7d8899"/>
+    </marker>
+    <marker id="arrowCyan" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#37e0d8"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#f87171"/>
+    </marker>
+  </defs>
+
+  <rect width="1020" height="780" fill="#06090f"/>
+
+  <text x="30" y="40" fill="#ffffff" font-size="20" font-weight="600" letter-spacing="3">AION AXON</text>
+  <text x="30" y="60" fill="#7d8899" font-size="11">A governed agent that acquires the capabilities it lacks — and earns permission to use them.</text>
+  <text x="990" y="40" fill="#4ade80" font-size="10" text-anchor="end">● LIVE — Cloud Run · asia-south1</text>
+  <text x="990" y="58" fill="#7d8899" font-size="9" text-anchor="end">GCP project aion-axon-2026</text>
+
+  <!-- OWNER -->
+  <rect x="30" y="90" width="200" height="66" rx="6" fill="#0c1119" stroke="#37e0d8" stroke-width="1.5"/>
+  <text x="130" y="118" fill="#ffffff" font-size="13" text-anchor="middle" font-weight="600">OWNER</text>
+  <text x="130" y="136" fill="#7d8899" font-size="9.5" text-anchor="middle">approve · reject · kill switch</text>
+
+  <!-- HOLO-DECK -->
+  <rect x="30" y="180" width="200" height="80" rx="6" fill="#0c1119" stroke="#1b2432" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="130" y="205" fill="#e6edf5" font-size="12" text-anchor="middle" font-weight="600">Holo-Deck UI</text>
+  <text x="130" y="222" fill="#7d8899" font-size="9">Vite · React · Framer Motion</text>
+  <text x="130" y="238" fill="#7d8899" font-size="9" text-anchor="middle">reads the API — holds NO credentials</text>
+  <text x="130" y="252" fill="#f87171" font-size="8.5" text-anchor="middle">built · Firebase Hosting not yet deployed</text>
+
+  <path d="M130,156 L130,180" stroke="#37e0d8" stroke-width="1.4" marker-end="url(#arrowCyan)"/>
+
+  <!-- CORE -->
+  <rect x="290" y="90" width="430" height="410" rx="8" fill="#0c1119" stroke="#37e0d8" stroke-width="2"/>
+  <text x="310" y="115" fill="#37e0d8" font-size="12" font-weight="600" letter-spacing="1.5">CLOUD RUN · aion-core</text>
+  <text x="310" y="131" fill="#7d8899" font-size="9">holds the credentials · scale-to-zero</text>
+
+  <rect x="310" y="145" width="390" height="46" rx="4" fill="#06090f" stroke="#1b2432"/>
+  <text x="322" y="164" fill="#e6edf5" font-size="11" font-weight="600">ADK 2.7 Planner</text>
+  <text x="322" y="180" fill="#7d8899" font-size="9">Runner + output_schema → structured MissionPlan · gemini-3.6-flash</text>
+
+  <rect x="310" y="199" width="390" height="46" rx="4" fill="#06090f" stroke="#1b2432"/>
+  <text x="322" y="218" fill="#e6edf5" font-size="11" font-weight="600">Mission Engine</text>
+  <text x="322" y="234" fill="#7d8899" font-size="9">step → gate → suspend on approval → resume · never replays a step</text>
+
+  <rect x="310" y="253" width="390" height="60" rx="4" fill="#06090f" stroke="#f87171" stroke-width="1.4"/>
+  <text x="322" y="272" fill="#f87171" font-size="11" font-weight="600">GUARDIAN · Unified Execution Gate</text>
+  <text x="322" y="288" fill="#7d8899" font-size="9">deny-by-default · G-01…G-07 · every refusal cites a policy</text>
+  <text x="322" y="303" fill="#7d8899" font-size="9">THE ONLY PATH TO ANY TOOL EXECUTION — including scheduled work</text>
+
+  <rect x="310" y="321" width="390" height="60" rx="4" fill="#06090f" stroke="#1b2432"/>
+  <text x="322" y="340" fill="#e6edf5" font-size="11" font-weight="600">SYNAPSE — capability acquisition</text>
+  <text x="322" y="356" fill="#7d8899" font-size="9">research → generate → AST screen → sandbox → Gemma → Guardian</text>
+  <text x="322" y="371" fill="#4ade80" font-size="9">→ HUMAN APPROVAL → install → Evolution Event → rollback</text>
+
+  <rect x="310" y="389" width="190" height="50" rx="4" fill="#06090f" stroke="#1b2432"/>
+  <text x="322" y="407" fill="#e6edf5" font-size="10.5" font-weight="600">Evidence Engine</text>
+  <text x="322" y="422" fill="#7d8899" font-size="8.5">checks claims vs ground truth</text>
+  <text x="322" y="434" fill="#7d8899" font-size="8.5">SHA-256 · CONFIDENCE %</text>
+
+  <rect x="510" y="389" width="190" height="50" rx="4" fill="#06090f" stroke="#1b2432"/>
+  <text x="522" y="407" fill="#e6edf5" font-size="10.5" font-weight="600">Autonomy Ledger</text>
+  <text x="522" y="422" fill="#7d8899" font-size="8.5">+15 verified · −18 contradicted</text>
+  <text x="522" y="434" fill="#7d8899" font-size="8.5">&lt;40% → human verification</text>
+
+  <rect x="310" y="447" width="390" height="38" rx="4" fill="#06090f" stroke="#1b2432"/>
+  <text x="322" y="464" fill="#e6edf5" font-size="10.5" font-weight="600">Telemetry</text>
+  <text x="322" y="478" fill="#7d8899" font-size="8.5">monotonic latency · real usage_metadata · unmeasured ≠ zero</text>
+
+  <path d="M230,123 L290,123" stroke="#37e0d8" stroke-width="1.4" marker-end="url(#arrowCyan)"/>
+  <path d="M230,215 L290,215" stroke="#7d8899" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="243" y="209" fill="#7d8899" font-size="8">HTTPS</text>
+
+  <!-- TRUST BOUNDARY -->
+  <line x1="290" y1="530" x2="990" y2="530" stroke="#f87171" stroke-width="2.5" stroke-dasharray="10 6"/>
+  <rect x="470" y="516" width="230" height="28" rx="4" fill="#06090f" stroke="#f87171" stroke-width="1.5"/>
+  <text x="585" y="535" fill="#f87171" font-size="11" font-weight="700" text-anchor="middle" letter-spacing="1.5">TRUST BOUNDARY</text>
+
+  <path d="M505,500 L505,516" stroke="#f87171" stroke-width="1.4"/>
+  <path d="M505,544 L505,575" stroke="#f87171" stroke-width="1.4" marker-end="url(#arrowRed)"/>
+  <text x="515" y="566" fill="#7d8899" font-size="8.5">OIDC identity token — no shared secret</text>
+
+  <!-- SANDBOX -->
+  <rect x="290" y="580" width="430" height="110" rx="8" fill="#0c1119" stroke="#f87171" stroke-width="2"/>
+  <text x="310" y="605" fill="#f87171" font-size="12" font-weight="600" letter-spacing="1.5">CLOUD RUN · aion-sandbox</text>
+  <text x="310" y="623" fill="#e6edf5" font-size="10">Generated code runs HERE — before AND after approval</text>
+  <text x="310" y="641" fill="#4ade80" font-size="9.5">ZERO credentials · ZERO IAM roles · non-root · stripped env</text>
+  <text x="310" y="657" fill="#4ade80" font-size="9.5">CPU / memory / file / fork caps · ephemeral container</text>
+  <text x="310" y="675" fill="#f87171" font-size="9.5">HTTP 403 to the public internet — only aion-core may invoke</text>
+
+  <!-- RIGHT COLUMN -->
+  <rect x="770" y="90" width="220" height="118" rx="6" fill="#0c1119" stroke="#1b2432"/>
+  <text x="786" y="112" fill="#e6edf5" font-size="11" font-weight="600">Firestore</text>
+  <text x="786" y="130" fill="#7d8899" font-size="9">capabilities · evolution_events</text>
+  <text x="786" y="145" fill="#7d8899" font-size="9">audit_events · missions</text>
+  <text x="786" y="160" fill="#7d8899" font-size="9">approval_requests · monitors</text>
+  <text x="786" y="180" fill="#4ade80" font-size="8.5">durable record — the registry is</text>
+  <text x="786" y="192" fill="#4ade80" font-size="8.5">rehydrated from here on cold start</text>
+
+  <rect x="770" y="222" width="220" height="72" rx="6" fill="#0c1119" stroke="#1b2432"/>
+  <text x="786" y="244" fill="#e6edf5" font-size="11" font-weight="600">Gemini API</text>
+  <text x="786" y="261" fill="#7d8899" font-size="9">gemini-3.6-flash · plan, generate</text>
+  <text x="786" y="276" fill="#7d8899" font-size="9">gemma-4-26b-a4b-it · evaluate</text>
+  <text x="786" y="289" fill="#7d8899" font-size="8.5">Search grounding → citations</text>
+
+  <rect x="770" y="308" width="220" height="60" rx="6" fill="#0c1119" stroke="#1b2432"/>
+  <text x="786" y="330" fill="#e6edf5" font-size="11" font-weight="600">Secret Manager</text>
+  <text x="786" y="347" fill="#7d8899" font-size="9">API key for aion-core only</text>
+  <text x="786" y="361" fill="#f87171" font-size="8.5">the sandbox is given none</text>
+
+  <rect x="770" y="382" width="220" height="60" rx="6" fill="#0c1119" stroke="#1b2432"/>
+  <text x="786" y="404" fill="#e6edf5" font-size="11" font-weight="600">BigQuery</text>
+  <text x="786" y="421" fill="#7d8899" font-size="9">public datasets, read-only</text>
+  <text x="786" y="435" fill="#7d8899" font-size="8.5">SELECT-only · allowlist · byte cap</text>
+
+  <rect x="770" y="456" width="220" height="60" rx="6" fill="#0c1119" stroke="#1b2432"/>
+  <text x="786" y="478" fill="#e6edf5" font-size="11" font-weight="600">Cloud Scheduler</text>
+  <text x="786" y="495" fill="#7d8899" font-size="9">every 15 min → /monitors/run-due</text>
+  <text x="786" y="509" fill="#4ade80" font-size="8.5">scheduled work passes the gate too</text>
+
+  <path d="M720,150 L770,130" stroke="#7d8899" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <path d="M720,230 L770,250" stroke="#7d8899" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <path d="M720,300 L770,332" stroke="#7d8899" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <path d="M720,400 L770,406" stroke="#7d8899" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <path d="M770,486 L720,470" stroke="#7d8899" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- FOOTER -->
+  <text x="30" y="720" fill="#7d8899" font-size="9.5">Every execution path — interactive, planned, acquired or scheduled — passes the Unified Execution Gate. There is no route around it.</text>
+  <text x="30" y="738" fill="#7d8899" font-size="9.5">Nothing installs without an explicit human approval, and approval never promotes generated code out of the sandbox.</text>
+  <text x="30" y="758" fill="#4ade80" font-size="9">Verified live: core → sandbox reads ZERO_CREDENTIALS · internet → sandbox returns HTTP 403 · registry rehydrates after cold start.</text>
+</svg>

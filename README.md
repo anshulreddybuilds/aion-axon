@@ -69,6 +69,8 @@ python -m scripts.golden_path
 
 ## Architecture
 
+![AION Axon architecture](docs/architecture.svg)
+
 ```
 OWNER
   │ approve / reject / kill switch
