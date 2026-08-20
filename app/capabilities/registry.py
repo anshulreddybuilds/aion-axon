@@ -65,6 +65,15 @@ class ToolRegistry:
             function=None,
         )
 
+    def unregister(self, name: str) -> bool:
+        """Remove a capability entirely. True if it was present.
+
+        This is the ROLLBACK step of the Skill Passport. An acquisition
+        process with no way back is a one-way door, and a capability that
+        turns out to be wrong must be removable without a redeploy.
+        """
+        return self._tools.pop(name, None) is not None
+
     def get(self, name: str) -> ToolDefinition:
         if name not in self._tools:
             raise KeyError(f"Unknown AXON capability: {name}")

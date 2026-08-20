@@ -15,9 +15,20 @@ Phase 6.
 """
 import logging
 import os
+import subprocess
+import sys
+import tempfile
 from typing import Any
 
+try:
+    # POSIX only. Absent on the Windows dev machine, always present in the
+    # deployed Linux container where the caps actually matter.
+    import resource
+except ImportError:  # pragma: no cover - Windows dev only
+    resource = None
+
 from fastapi import FastAPI
+from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("aion-sandbox")
@@ -49,6 +60,13 @@ ALLOWED = {
     "K_CONFIGURATION",
     "GPG_KEY",
 }
+
+MAX_SECONDS = int(os.getenv("SANDBOX_TIMEOUT_SECONDS", "10"))
+MAX_MEMORY_BYTES = int(
+    os.getenv("SANDBOX_MEMORY_BYTES", str(256 * 1024 * 1024))
+)
+MAX_OUTPUT_CHARS = 20_000
+MAX_CODE_CHARS = 40_000
 
 
 def scan_environment() -> list[str]:
@@ -127,3 +145,100 @@ def get_env_proof() -> dict[str, Any]:
     # Recomputed per request, not served from the startup cache, so the
     # proof reflects the environment right now.
     return env_proof()
+
+
+class ExecutionRequest(BaseModel):
+    code: str = Field(..., description="Candidate capability source.")
+    test: str = Field("", description="Test code appended after the source.")
+    timeout_seconds: int = Field(MAX_SECONDS, ge=1, le=30)
+
+
+def _limits() -> None:
+    """Resource caps applied inside the child, before the code runs."""
+    if resource is None:  # pragma: no cover - Windows dev only
+        return
+
+    resource.setrlimit(
+        resource.RLIMIT_AS, (MAX_MEMORY_BYTES, MAX_MEMORY_BYTES)
+    )
+    resource.setrlimit(resource.RLIMIT_CPU, (MAX_SECONDS, MAX_SECONDS))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (1024 * 1024, 1024 * 1024))
+    # No forking: a candidate must not spawn workers that outlive its cap.
+    resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+
+
+@app.post("/execute")
+def execute(request: ExecutionRequest) -> dict[str, Any]:
+    """Run a candidate capability and report what happened.
+
+    Returns a result for EVERY outcome, including failure. A candidate
+    that crashes is a valid and useful answer -- it is exactly what
+    stage-2 exists to discover -- and must never read as a sandbox
+    outage, or SYNAPSE would retry a genuinely broken candidate forever.
+
+    Safe to expose only because the blast radius is deliberately empty:
+    no credentials, no IAM roles, non-root, ephemeral container, stripped
+    child environment, and hard CPU / memory / wall-clock / fork caps.
+    """
+    if len(request.code) > MAX_CODE_CHARS:
+        return {
+            "status": "REJECTED",
+            "passed": False,
+            "reason": f"Code exceeds {MAX_CODE_CHARS} characters.",
+        }
+
+    source = request.code
+
+    if request.test:
+        source = f"{source}\n\n{request.test}\n"
+
+    timeout = min(request.timeout_seconds, MAX_SECONDS)
+
+    with tempfile.TemporaryDirectory() as workdir:
+        path = os.path.join(workdir, "candidate.py")
+
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(source)
+
+        # A stripped environment: the child cannot read what the parent
+        # holds, even though the parent holds nothing worth reading.
+        child_env = {
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "HOME": workdir,
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-I", path],
+                cwd=workdir,
+                env=child_env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                preexec_fn=(
+                    _limits if os.name != "nt" and resource else None
+                ),
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "status": "TIMEOUT",
+                "passed": False,
+                "timeout_seconds": timeout,
+                "reason": f"Candidate exceeded {timeout}s.",
+            }
+        except Exception as error:  # noqa: BLE001 - reported, not raised
+            return {
+                "status": "ERROR",
+                "passed": False,
+                "reason": f"{type(error).__name__}: {error}",
+            }
+
+    return {
+        "status": "COMPLETED",
+        "passed": completed.returncode == 0,
+        "exit_code": completed.returncode,
+        "stdout": completed.stdout[:MAX_OUTPUT_CHARS],
+        "stderr": completed.stderr[:MAX_OUTPUT_CHARS],
+        "timeout_seconds": timeout,
+    }
