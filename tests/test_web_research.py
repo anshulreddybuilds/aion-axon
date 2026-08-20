@@ -76,3 +76,37 @@ def test_missing_api_key_reports_error_rather_than_raising(monkeypatch):
 
     assert result["status"] == "ERROR"
     assert "RuntimeError" in result["error"]
+
+
+def test_grounding_failure_degrades_but_never_looks_sourced(monkeypatch):
+    """If grounding quota fails, the answer must not masquerade as sourced."""
+    calls = []
+
+    async def fake(query, grounded=True):
+        calls.append(grounded)
+        if grounded:
+            raise RuntimeError("429 RESOURCE_EXHAUSTED")
+        return response_with([web_chunk("stale", "https://example.com")])
+
+    monkeypatch.setattr(web_research, "_generate_async", fake)
+
+    result = web_research.search_web("usd to inr")
+
+    assert calls == [True, False]
+    assert result["status"] == "DEGRADED"
+    assert result["grounded"] is False
+    assert result["sources"] == []
+    assert "RESOURCE_EXHAUSTED" in result["degraded_reason"]
+
+
+def test_total_failure_reports_both_errors(monkeypatch):
+    async def always_fails(query, grounded=True):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(web_research, "_generate_async", always_fails)
+
+    result = web_research.search_web("anything")
+
+    assert result["status"] == "ERROR"
+    assert "network down" in result["error"]
+    assert "network down" in result["grounding_error"]
