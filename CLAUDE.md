@@ -107,7 +107,10 @@ Detail per phase lives in `PROGRESS.md`. Phase 9 (UI) runs parallel where safe.
 ## ENVIRONMENT (verified 19 Aug 2026)
 
 - Repo: `C:\Users\sneha\Desktop\AION-AXON` · GitHub
-  `webserieswatchdog-dotcom/aion-axon` (PRIVATE) · branch `main`.
+  `anshulreddybuilds/aion-axon` (PRIVATE) · branch `main`.
+  (Account renamed from `webserieswatchdog-dotcom` on 20 Aug 2026. The
+  Google/gcloud account is still `webserieswatchdog@gmail.com` — the
+  rename was GitHub-only.)
 - GCP project `aion-axon-2026`, Firestore Native `asia-south1`, ADC works.
 - Owner shell is **PowerShell** — `&&` is not a statement separator, and it
   strips inner double quotes from `python -c`. Write a script file instead of
