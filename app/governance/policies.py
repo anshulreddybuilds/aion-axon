@@ -192,7 +192,26 @@ POLICY_CATALOG: tuple[Policy, ...] = (
     ),
 )
 
-POLICY_BY_ID = {policy.policy_id: policy for policy in POLICY_CATALOG}
+# Applied programmatically by the Guardian from the Autonomy Ledger, not
+# by text matching, so it carries no triggers and is not in POLICY_CATALOG.
+# It still lives here so that every citable ID has exactly one definition —
+# a citation pointing at a policy nobody can look up is not accountability.
+AUTONOMY_SUPERVISION_POLICY = Policy(
+    policy_id="G-07",
+    title="autonomy-below-supervision-threshold",
+    enforcement=Enforcement.APPROVAL_REQUIRED,
+    rationale=(
+        "A capability whose autonomy has fallen below the supervision "
+        "threshold requires human verification, including for work it was "
+        "previously trusted to do alone. Demotion without consequence is "
+        "decoration."
+    ),
+)
+
+POLICY_BY_ID = {
+    **{policy.policy_id: policy for policy in POLICY_CATALOG},
+    AUTONOMY_SUPERVISION_POLICY.policy_id: AUTONOMY_SUPERVISION_POLICY,
+}
 
 
 def find_policy(*texts: Optional[str]) -> Optional[Policy]:

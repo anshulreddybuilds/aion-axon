@@ -60,6 +60,35 @@ class Guardian:
         if policy is not None:
             return self._from_policy(policy, risk)
 
+        # Autonomy demotion must have teeth. A capability whose autonomy
+        # has fallen below the supervision threshold needs a human even
+        # for work it was trusted to do yesterday -- otherwise demotion is
+        # a number on a dashboard rather than a control.
+        #
+        # Imported here rather than at module scope: the ledger imports
+        # firestore_store, and guardian is imported by nearly everything.
+        # A top-level import would build the import cycle that already
+        # cost this project a day of red CI.
+        from app.governance.autonomy_ledger import (
+            SUPERVISION_THRESHOLD,
+            autonomy_ledger,
+        )
+
+        if capability and autonomy_ledger.requires_supervision(capability):
+            return GuardianDecision(
+                decision=Decision.APPROVAL_REQUIRED,
+                risk=risk,
+                reason=(
+                    f"Human verification required: capability "
+                    f"'{capability}' is at "
+                    f"{autonomy_ledger.autonomy_of(capability):.0f}% "
+                    f"autonomy, below the "
+                    f"{SUPERVISION_THRESHOLD:.0f}% supervision threshold."
+                ),
+                policy_id="G-07",
+                policy_title="autonomy-below-supervision-threshold",
+            )
+
         if risk == RiskLevel.HIGH:
             return GuardianDecision(
                 decision=Decision.REFUSE,
