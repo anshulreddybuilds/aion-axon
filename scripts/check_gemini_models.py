@@ -16,11 +16,21 @@ def main() -> None:
 
     client = genai.Client(api_key=key)
 
-    names = [m.name for m in client.models.list() if "gemini" in m.name]
+    # List EVERY model, not just gemini-*. Guessing an id is how the
+    # Gemma evaluator ended up returning 404 at runtime.
+    names = sorted(model.name for model in client.models.list())
 
-    print(f"VISIBLE GEMINI MODELS: {len(names)}")
-    for name in sorted(names):
-        print(" ", name)
+    gemma = [name for name in names if "gemma" in name.lower()]
+
+    print(f"TOTAL MODELS VISIBLE: {len(names)}")
+    print()
+    print(f"GEMMA MODELS: {len(gemma)}")
+
+    for name in gemma:
+        print("  ", name)
+
+    if not gemma:
+        print("   (none - this key has no Gemma access)")
 
 
 if __name__ == "__main__":
