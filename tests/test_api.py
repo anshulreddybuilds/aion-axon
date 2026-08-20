@@ -171,3 +171,35 @@ def test_unknown_mission_and_approval_are_handled():
     }).json()
 
     assert decided["status"] == "NOT_FOUND"
+
+
+def test_autonomy_endpoints_are_read_only():
+    """There must be no HTTP route that grants autonomy.
+
+    A route that could raise a capability's autonomy would let the agent
+    be handed trust it never earned.
+    """
+    routes = [
+        (r.path, sorted(r.methods))
+        for r in app.routes
+        if getattr(r, "path", "").startswith("/autonomy")
+    ]
+
+    assert routes, "autonomy endpoints missing"
+
+    for path, methods in routes:
+        assert methods == ["GET"], f"{path} exposes {methods}"
+
+
+def test_untracked_capability_reports_honestly():
+    body = client.get("/autonomy/calculator").json()
+
+    assert body["tracked"] is False
+    assert body["supervised"] is False
+
+
+def test_evolution_endpoint_exists():
+    body = client.get("/evolution").json()
+
+    assert "count" in body
+    assert isinstance(body["events"], list)

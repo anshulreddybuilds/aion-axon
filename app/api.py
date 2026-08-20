@@ -12,6 +12,10 @@ from pydantic import BaseModel, Field
 from app.capabilities.declarations import catalog_summary
 from app.capabilities.registry import registry
 from app.governance.approval import approval_manager
+from app.governance.autonomy_ledger import (
+    SUPERVISION_THRESHOLD,
+    autonomy_ledger,
+)
 from app.governance.kill_switch import kill_switch
 from app.memory.firestore_store import firestore_store
 from app.missions.service import mission_service
@@ -100,6 +104,55 @@ def get_mission(mission_id: str) -> dict[str, Any]:
 @app.post("/missions/{mission_id}/resume")
 def resume_mission(mission_id: str) -> dict[str, Any]:
     return mission_service.resume(mission_id)
+
+
+@app.get("/autonomy")
+def autonomy_view() -> dict[str, Any]:
+    """The Autonomy Ledger, READ-ONLY.
+
+    There is deliberately no endpoint that sets autonomy. It moves only
+    when the Evidence Engine scores a real outcome. A route that could
+    raise a capability's autonomy would be a way to grant the agent trust
+    it has not earned — the exact thing this subsystem exists to prevent.
+    """
+    tracked = firestore_store.list_capabilities()
+
+    return {
+        "supervision_threshold": SUPERVISION_THRESHOLD,
+        "tracked_count": len(tracked),
+        "capabilities": tracked,
+    }
+
+
+@app.get("/autonomy/{capability}")
+def autonomy_of(capability: str) -> dict[str, Any]:
+    record = autonomy_ledger.tracked(capability)
+
+    if record is None:
+        return {
+            "capability": capability,
+            "tracked": False,
+            "supervised": False,
+            "note": (
+                "Not tracked by the ledger. Hand-built seed capabilities "
+                "were human-reviewed before shipping and are trusted "
+                "until evidence says otherwise."
+            ),
+        }
+
+    return {
+        "capability": capability,
+        "tracked": True,
+        "supervised": autonomy_ledger.requires_supervision(capability),
+        "supervision_threshold": SUPERVISION_THRESHOLD,
+        **record,
+    }
+
+
+@app.get("/evolution")
+def evolution_events() -> dict[str, Any]:
+    events = firestore_store.list_evolution_events()
+    return {"count": len(events), "events": events}
 
 
 @app.get("/approvals/pending")
