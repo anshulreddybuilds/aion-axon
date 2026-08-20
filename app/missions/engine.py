@@ -60,6 +60,12 @@ class MissionEngine:
                 step.action,
                 RiskLevel(step.risk),
                 *step.args,
+                # The action label is short and often innocuous; the real
+                # intent usually lives in the description. Guardian must
+                # see both, or a prohibited request can hide behind a
+                # bland label.
+                description=step.description,
+                capability=step.tool,
             )
 
             status = outcome.get("status")

@@ -13,6 +13,8 @@ class ExecutionGate:
         risk: RiskLevel,
         tool: Callable[..., Any],
         *args,
+        description: str | None = None,
+        capability: str | None = None,
         **kwargs,
     ) -> dict:
 
@@ -31,7 +33,12 @@ class ExecutionGate:
                 "reason": "Kill switch is active.",
             }
 
-        decision = guardian.evaluate(action, risk)
+        decision = guardian.evaluate(
+            action,
+            risk,
+            description=description,
+            capability=capability,
+        )
 
         firestore_store.write_audit_event(
             "GUARDIAN_DECISION",
@@ -40,6 +47,8 @@ class ExecutionGate:
                 "risk": risk.value,
                 "decision": decision.decision.value,
                 "reason": decision.reason,
+                "policy_id": decision.policy_id,
+                "policy_title": decision.policy_title,
             },
         )
 
@@ -47,6 +56,9 @@ class ExecutionGate:
             return {
                 "status": "REFUSED",
                 "reason": decision.reason,
+                "policy_id": decision.policy_id,
+                "policy_title": decision.policy_title,
+                "rationale": decision.rationale,
             }
 
         if decision.decision == Decision.APPROVAL_REQUIRED:
@@ -62,6 +74,8 @@ class ExecutionGate:
                 "action": action,
                 "risk": risk.value,
                 "reason": decision.reason,
+                "policy_id": decision.policy_id,
+                "policy_title": decision.policy_title,
             }
 
         return self._execute_tool(
