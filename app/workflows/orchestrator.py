@@ -7,6 +7,7 @@ from app.governance.execution_gate import execution_gate
 from app.governance.guardian import RiskLevel
 from app.governance.approval import approval_manager
 from app.governance.verification import verify_outcome
+from app.memory.firestore_store import firestore_store
 
 
 class AxonOrchestrator:
@@ -44,7 +45,31 @@ class AxonOrchestrator:
         **kwargs: Any,
     ) -> dict[str, Any]:
 
-        tool = registry.get(tool_name)
+        # An unknown or unbuilt capability is a CAPABILITY GAP, not a
+        # server error. Letting the KeyError escape produced an unhandled
+        # 500 with a stack trace, which reads as "the agent crashed"
+        # rather than "the agent cannot do that yet" -- and the second is
+        # both true and the thing SYNAPSE acts on.
+        try:
+            tool = registry.get(tool_name)
+        except KeyError as error:
+            gap = {
+                "status": "BLOCKED",
+                "reason": str(error).strip("'"),
+                "missing_capability": tool_name,
+            }
+
+            workflow.error = gap["reason"]
+            workflow.update_status("BLOCKED")
+            workflow.add_observation("capability_gap", gap)
+
+            firestore_store.write_audit_event("CAPABILITY_GAP", {
+                "action": action,
+                "missing_capability": tool_name,
+                "reason": gap["reason"],
+            })
+
+            return gap
 
         workflow.add_action(
             action=action,
