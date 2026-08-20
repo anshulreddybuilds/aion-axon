@@ -102,10 +102,40 @@ def execute_in_sandbox(
 
 
 def env_proof() -> dict[str, Any]:
-    """Read the sandbox's own credential scan. Used by adversarial tests."""
+    """Read the sandbox's credential scan, authenticated.
+
+    The sandbox is not publicly reachable, so this needs the same identity
+    token as /execute. A 403 here means core lost its invoker role, which
+    is a different failure from the service being down -- reporting them
+    the same way would send someone debugging the wrong thing.
+    """
+    headers = {}
+
+    token = _identity_token(SANDBOX_URL)
+
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     try:
-        response = requests.get(f"{SANDBOX_URL}/env-proof", timeout=10)
-        response.raise_for_status()
-        return response.json()
+        response = requests.get(
+            f"{SANDBOX_URL}/env-proof", headers=headers, timeout=10,
+        )
     except Exception as error:  # noqa: BLE001
         return {"verdict": "UNREACHABLE", "error": str(error)}
+
+    if response.status_code == 403:
+        return {
+            "verdict": "FORBIDDEN",
+            "error": (
+                "aion-core is not authorised to invoke aion-sandbox. "
+                "Check the run.invoker binding on aion-core-sa."
+            ),
+        }
+
+    if response.status_code != 200:
+        return {
+            "verdict": "UNREACHABLE",
+            "error": f"Sandbox returned HTTP {response.status_code}.",
+        }
+
+    return response.json()

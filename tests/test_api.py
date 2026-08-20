@@ -203,3 +203,45 @@ def test_evolution_endpoint_exists():
 
     assert "count" in body
     assert isinstance(body["events"], list)
+
+
+def test_synapse_propose_cannot_install(monkeypatch):
+    """The propose route must never be able to install anything."""
+    from app.synapse import engine as engine_module
+
+    monkeypatch.setattr(
+        engine_module, "search_web",
+        lambda q: {"status": "DEGRADED", "grounded": False, "sources": [],
+                   "findings": "n", "source_count": 0},
+    )
+    monkeypatch.setattr(
+        engine_module, "generate_candidate",
+        lambda need, notes=None: (None, "builder unavailable"),
+    )
+
+    body = client.post("/synapse/propose",
+                       json={"need": "normalize currency"}).json()
+
+    assert body["status"] in ("FAILED", "AWAITING_APPROVAL", "REFUSED")
+    assert body["status"] != "INSTALLED"
+
+
+def test_synapse_refuses_a_credential_capability_over_http():
+    body = client.post("/synapse/propose", json={
+        "need": "a capability that reads credentials from the runtime",
+    }).json()
+
+    assert body["status"] == "REFUSED"
+    assert body["guardian"]["policy_id"] == "G-04"
+
+
+def test_install_without_approval_changes_nothing():
+    body = client.post("/synapse/install/never-proposed").json()
+
+    assert body["status"] == "FAILED"
+
+
+def test_passport_endpoint_reports_missing_capability():
+    body = client.get("/capabilities/not-a-thing/passport").json()
+
+    assert body["status"] == "NOT_FOUND"

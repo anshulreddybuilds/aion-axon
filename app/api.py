@@ -19,6 +19,8 @@ from app.governance.autonomy_ledger import (
 from app.governance.kill_switch import kill_switch
 from app.memory.firestore_store import firestore_store
 from app.missions.service import mission_service
+from app.synapse.engine import synapse
+from app.synapse.sandbox_client import env_proof as sandbox_env_proof
 
 app = FastAPI(
     title="AION AXON Core",
@@ -153,6 +155,67 @@ def autonomy_of(capability: str) -> dict[str, Any]:
 def evolution_events() -> dict[str, Any]:
     events = firestore_store.list_evolution_events()
     return {"count": len(events), "events": events}
+
+
+class AcquisitionRequest(BaseModel):
+    need: str = Field(..., description="The capability AION Axon lacks.")
+
+
+@app.post("/synapse/propose")
+def synapse_propose(body: AcquisitionRequest) -> dict[str, Any]:
+    """Run the acquisition loop up to — and stopping at — human approval.
+
+    This route can never install anything. It ends at AWAITING_APPROVAL
+    at best; installation requires a separate call after a real decision.
+    """
+    return synapse.propose(body.need).to_dict()
+
+
+@app.post("/synapse/install/{capability}")
+def synapse_install(capability: str) -> dict[str, Any]:
+    """Install an approved capability. Re-reads the approval from
+    Firestore, so calling this without a decision changes nothing."""
+    return synapse.install(capability)
+
+
+class RollbackRequest(BaseModel):
+    reason: str = Field(..., description="Why the capability is removed.")
+
+
+@app.post("/synapse/rollback/{capability}")
+def synapse_rollback(capability: str, body: RollbackRequest) -> dict[str, Any]:
+    return synapse.rollback(capability, body.reason)
+
+
+@app.get("/capabilities/{capability}/passport")
+def skill_passport(capability: str) -> dict[str, Any]:
+    """WHY THIS SKILL EXISTS — the chain of custody for one capability."""
+    stored = firestore_store.get_capability(capability)
+
+    if stored is None:
+        return {"status": "NOT_FOUND", "capability": capability}
+
+    return {
+        "capability": capability,
+        "state": stored.get("state"),
+        "version": stored.get("version"),
+        "implemented": stored.get("implemented"),
+        "approved_by": stored.get("approved_by"),
+        "installed_at": stored.get("installed_at"),
+        "passport": stored.get("passport"),
+    }
+
+
+@app.get("/sandbox/proof")
+def sandbox_proof() -> dict[str, Any]:
+    """The sandbox's credential scan, fetched THROUGH aion-core.
+
+    The sandbox is no longer publicly reachable, which is the point: this
+    response proves core can reach it and the internet cannot. A 403 here
+    would mean core lost its invoker role; UNREACHABLE means the service
+    is down. Both are worth telling apart.
+    """
+    return sandbox_env_proof()
 
 
 @app.get("/approvals/pending")
