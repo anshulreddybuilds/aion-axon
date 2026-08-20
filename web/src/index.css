@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: #06090f;
+  color: #e6edf5;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* One hero effect only. Everything else stays calm (§5.1). */
+@keyframes orbBreathe {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%      { opacity: 0.9;  transform: scale(1.04); }
+}
+
+.orb-breathe { animation: orbBreathe 4s ease-in-out infinite; }
+
+/* Respect the reader. Motion narrates events; it should never be
+   mandatory to read the screen. */
+@media (prefers-reduced-motion: reduce) {
+  .orb-breathe { animation: none; }
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+.scroll-thin::-webkit-scrollbar { width: 6px; }
+.scroll-thin::-webkit-scrollbar-thumb { background: #1b2432; border-radius: 3px; }

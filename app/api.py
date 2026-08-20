@@ -4,10 +4,12 @@ Every route that can cause execution goes through MissionService ->
 Orchestrator -> ExecutionGate. There is no route that executes a tool
 directly, and adding one would break the governance guarantee.
 """
+import os
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.capabilities.declarations import catalog_summary
@@ -43,6 +45,33 @@ app = FastAPI(
     description="Governed, self-evolving background agent.",
     version="0.3.0",
     lifespan=lifespan,
+)
+
+# An explicit origin allowlist, NOT "*". This API exposes POST routes that
+# approve capabilities and trip the kill switch. With a wildcard, any page
+# on the internet could drive those from a visitor's browser -- an agent
+# whose kill switch a third-party site can flip is not under its owner's
+# control. Extra origins can be added via AXON_ALLOWED_ORIGINS (comma
+# separated) without a code change.
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "AXON_ALLOWED_ORIGINS",
+        "https://aion-axon-2026.web.app,"
+        "https://aion-axon-2026.firebaseapp.com,"
+        "http://localhost:5173,"
+        "http://localhost:4173,"
+        "http://127.0.0.1:4173",
+    ).split(",")
+    if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 

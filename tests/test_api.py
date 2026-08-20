@@ -245,3 +245,32 @@ def test_passport_endpoint_reports_missing_capability():
     body = client.get("/capabilities/not-a-thing/passport").json()
 
     assert body["status"] == "NOT_FOUND"
+
+
+def test_cors_is_an_allowlist_not_a_wildcard():
+    """A wildcard would let any site trip the kill switch via a visitor.
+
+    This API exposes POST routes that approve capabilities and halt the
+    agent. An agent whose kill switch a third-party page can flip is not
+    under its owner's control.
+    """
+    from app.api import ALLOWED_ORIGINS
+
+    assert "*" not in ALLOWED_ORIGINS
+    assert any("web.app" in origin for origin in ALLOWED_ORIGINS)
+
+
+def test_allowed_origin_gets_cors_headers():
+    response = client.get("/health", headers={"Origin": "http://localhost:5173"})
+
+    assert response.headers.get("access-control-allow-origin") == (
+        "http://localhost:5173"
+    )
+
+
+def test_unknown_origin_is_not_granted_access():
+    response = client.get(
+        "/health", headers={"Origin": "https://evil.example.com"},
+    )
+
+    assert "access-control-allow-origin" not in response.headers
