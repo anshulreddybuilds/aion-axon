@@ -378,3 +378,91 @@ def test_direct_mission_path_applies_autonomy_supervision():
 
     assert created["result"]["status"] == "APPROVAL_REQUIRED"
     assert created["result"]["policy_id"] == "G-07"
+
+
+def test_approving_a_G07_request_records_the_verification():
+    """Regression: the gate asked forever.
+
+    G-07 asks the human to VERIFY a capability. If the answer is not
+    recorded, the capability stays below the threshold and is held again
+    on the very next call -- training the owner to click without reading,
+    which is the exact failure the gate exists to prevent.
+    """
+    import app.capabilities.bootstrap  # noqa: F401
+    from app.governance.execution_gate import execution_gate
+
+    autonomy_ledger.record_outcome("web_research", False, "contradicted")
+    assert autonomy_ledger.requires_supervision("web_research") is True
+
+    held = execution_gate.execute(
+        "research the rate",
+        RiskLevel.LOW,
+        lambda *a: {"status": "SUCCESS"},
+        capability="web_research",
+    )
+
+    assert held["status"] == "APPROVAL_REQUIRED"
+    assert held["policy_id"] == "G-07"
+
+    from app.governance.approval import approval_manager
+
+    before = autonomy_ledger.autonomy_of("web_research")
+
+    approval_manager.decide(held["request_id"], True, "anshul")
+
+    after = autonomy_ledger.autonomy_of("web_research")
+
+    # The verification must MOVE the ledger. Whether one approval clears
+    # the threshold depends on how far the capability fell -- a capability
+    # that contradicted reality should not be fully restored by a single
+    # click, because trust is meant to be slower to earn than to lose.
+    # What matters is that the answer is recorded and the gate converges
+    # instead of asking the identical question forever.
+    assert after > before
+
+    # A capability that was never demoted -- the common case, a freshly
+    # installed one at the starting value -- clears in one approval.
+    autonomy_ledger.record_outcome("fresh_skill", True, "installed")
+    assert autonomy_ledger.requires_supervision("fresh_skill") is False
+
+
+def test_rejecting_a_G07_request_demotes_further():
+    """A human saying 'no, this is wrong' is evidence too."""
+    import app.capabilities.bootstrap  # noqa: F401
+    from app.governance.approval import approval_manager
+    from app.governance.execution_gate import execution_gate
+
+    autonomy_ledger.record_outcome("web_research", False, "contradicted")
+    before = autonomy_ledger.autonomy_of("web_research")
+
+    held = execution_gate.execute(
+        "research the rate",
+        RiskLevel.LOW,
+        lambda *a: {"status": "SUCCESS"},
+        capability="web_research",
+    )
+
+    approval_manager.decide(held["request_id"], False, "anshul")
+
+    assert autonomy_ledger.autonomy_of("web_research") <= before
+    assert autonomy_ledger.requires_supervision("web_research") is True
+
+
+def test_a_non_G07_approval_does_not_touch_the_ledger():
+    """Approving a payment is not a statement about a capability."""
+    import app.capabilities.bootstrap  # noqa: F401
+    from app.governance.approval import approval_manager
+    from app.governance.execution_gate import execution_gate
+
+    held = execution_gate.execute(
+        "purchase item",
+        RiskLevel.MEDIUM,
+        lambda *a: {"status": "SUCCESS"},
+        capability="calculator",
+    )
+
+    assert held["policy_id"] == "G-02"
+
+    approval_manager.decide(held["request_id"], True, "anshul")
+
+    assert autonomy_ledger.tracked("calculator") is None

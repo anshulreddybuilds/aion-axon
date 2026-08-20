@@ -20,6 +20,13 @@ class ApprovalRequest:
     decided_at: Optional[str] = None
     decided_by: Optional[str] = None
 
+    # Which policy demanded this approval, and for which capability. G-07
+    # asks the human to VERIFY a capability, so the answer has to be
+    # recorded as evidence -- otherwise the same question is asked again
+    # on the very next call and the gate becomes a treadmill.
+    policy_id: Optional[str] = None
+    capability: Optional[str] = None
+
     @property
     def pending(self) -> bool:
         return self.approved is None
@@ -47,12 +54,16 @@ class ApprovalManager:
         action: str,
         risk: RiskLevel,
         reason: str,
+        policy_id: Optional[str] = None,
+        capability: Optional[str] = None,
     ) -> ApprovalRequest:
 
         request = ApprovalRequest(
             action=action,
             risk=risk,
             reason=reason,
+            policy_id=policy_id,
+            capability=capability,
         )
 
         self.pending[request.request_id] = request
@@ -63,6 +74,8 @@ class ApprovalManager:
                 "action": request.action,
                 "risk": request.risk.value,
                 "reason": request.reason,
+                "policy_id": request.policy_id,
+                "capability": request.capability,
             },
         )
 
@@ -98,6 +111,8 @@ class ApprovalManager:
                 approved=approved,
                 decided_at=data.get("decided_at"),
                 decided_by=data.get("decided_by"),
+                policy_id=data.get("policy_id"),
+                capability=data.get("capability"),
             )
 
             self.pending[request_id] = request
@@ -145,8 +160,31 @@ class ApprovalManager:
                 "decided_by": decided_by,
                 "action": request.action,
                 "risk": request.risk.value,
+                "policy_id": request.policy_id,
+                "capability": request.capability,
             },
         )
+
+        # G-07 asked the human to VERIFY a capability. Recording the answer
+        # is what stops the gate asking the same question forever: without
+        # this the capability stays below the threshold and is held again
+        # on the very next call, which trains the owner to click without
+        # reading -- the exact failure the gate exists to prevent.
+        #
+        # Imported here: autonomy_ledger reads firestore_store, and this
+        # module is imported by the gate.
+        if request.policy_id == "G-07" and request.capability:
+            from app.governance.autonomy_ledger import autonomy_ledger
+
+            autonomy_ledger.record_outcome(
+                request.capability,
+                verified=approved,
+                reason=(
+                    f"Human verification under G-07 by {decided_by}: "
+                    f"{'approved' if approved else 'rejected'}."
+                ),
+                intervened=True,
+            )
 
         return request
 

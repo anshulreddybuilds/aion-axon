@@ -66,6 +66,8 @@ class ExecutionGate:
                 action=action,
                 risk=risk,
                 reason=decision.reason,
+                policy_id=decision.policy_id,
+                capability=capability,
             )
 
             return {
