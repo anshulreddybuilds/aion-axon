@@ -58,7 +58,11 @@ class MemoryFirestore:
         ]
 
     def save_mission(self, mission_id: str, data: dict[str, Any]) -> None:
+        # Merge, like capabilities and monitors. A partial write used to
+        # REPLACE the document, so updating one field silently dropped
+        # `mode` and left the mission unresumable.
         self.missions[mission_id] = {
+            **self.missions.get(mission_id, {}),
             **data,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -174,10 +178,12 @@ class AxonFirestore:
         ]
 
     def save_mission(self, mission_id: str, data: dict[str, Any]) -> None:
+        # merge=True for the same reason as capabilities and monitors: a
+        # partial write must not silently drop the rest of the document.
         self.db.collection("missions").document(mission_id).set({
             **data,
             "updated_at": datetime.now(timezone.utc).isoformat(),
-        })
+        }, merge=True)
 
     def get_mission(self, mission_id: str) -> Optional[dict[str, Any]]:
         snapshot = self.db.collection("missions").document(mission_id).get()

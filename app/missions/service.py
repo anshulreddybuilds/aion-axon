@@ -107,6 +107,64 @@ class MissionService:
             **summary,
         }
 
+    def resume_blocked(self, mission_id: str) -> dict[str, Any]:
+        """Continue a mission that BLOCKED on a missing capability.
+
+        This is what closes the loop. Without it, "the agent hit a gap,
+        acquired the capability, and then finished the job" has a human
+        performing that last clause by re-running the mission by hand.
+
+        The engine re-evaluates the gap from the live registry, so calling
+        this before the capability actually exists blocks again rather
+        than proceeding. Nothing here assumes the acquisition succeeded.
+        """
+        mission = firestore_store.get_mission(mission_id)
+
+        if mission is None:
+            return {"status": "FAILED", "error": "Unknown mission."}
+
+        if mission.get("mode") != "planned":
+            return {"status": "FAILED", "error": "Not a planned mission."}
+
+        if mission.get("status") != "BLOCKED":
+            return {
+                "status": "FAILED",
+                "error": (
+                    "Mission is not blocked. "
+                    f"Current status: {mission.get('status')}"
+                ),
+            }
+
+        plan = MissionPlan.model_validate(mission["plan_document"])
+
+        workflow = WorkflowState(
+            user_request=mission["request"],
+            workflow_id=mission["workflow_id"],
+        )
+        workflow.status = "EXECUTING"
+
+        index = mission.get("next_step_index", 0)
+        completed = [
+            r for r in mission.get("step_results", [])
+            if r.get("status") == "EXECUTED"
+        ]
+
+        summary = mission_engine.run(
+            workflow, plan, start_at=index, completed=completed,
+        )
+
+        self._persist_planned(
+            mission_id, workflow, mission["request"], plan, summary,
+        )
+
+        firestore_store.write_audit_event("MISSION_RESUMED_AFTER_GAP", {
+            "mission_id": mission_id,
+            "resumed_at_step": index,
+            "status": summary["status"],
+        })
+
+        return {"mission_id": mission_id, "goal": plan.goal, **summary}
+
     def resume_planned(self, mission_id: str) -> dict[str, Any]:
         """Continue a planned mission from the step that suspended it."""
         mission = firestore_store.get_mission(mission_id)

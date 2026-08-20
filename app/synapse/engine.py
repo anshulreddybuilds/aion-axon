@@ -24,6 +24,7 @@ from typing import Any, Optional
 
 from app.capabilities.registry import registry
 from app.governance.approval import approval_manager
+from app.governance.autonomy_ledger import autonomy_ledger
 from app.governance.guardian import Decision, RiskLevel, guardian
 from app.memory.firestore_store import firestore_store
 from app.synapse.evaluator import evaluate
@@ -43,6 +44,11 @@ class AcquisitionRecord:
     stage: str = "STARTED"
     status: str = "IN_PROGRESS"
 
+    # The mission this acquisition exists to unblock, if any. Carrying it
+    # is what lets install() finish the original job instead of leaving a
+    # human to re-run it.
+    mission_id: Optional[str] = None
+
     research: dict[str, Any] = field(default_factory=dict)
     candidate: Optional[dict[str, Any]] = None
     safety: dict[str, Any] = field(default_factory=dict)
@@ -61,6 +67,7 @@ class AcquisitionRecord:
             "need": self.need,
             "stage": self.stage,
             "status": self.status,
+            "mission_id": self.mission_id,
             "research": self.research,
             "candidate": self.candidate,
             "safety": self.safety,
@@ -75,9 +82,13 @@ class AcquisitionRecord:
 
 class SynapseEngine:
 
-    def propose(self, need: str) -> AcquisitionRecord:
+    def propose(
+        self,
+        need: str,
+        mission_id: Optional[str] = None,
+    ) -> AcquisitionRecord:
         """Run every stage up to (and stopping at) human approval."""
-        record = AcquisitionRecord(need=need)
+        record = AcquisitionRecord(need=need, mission_id=mission_id)
 
         # --- GUARDIAN PRE-SCREEN --------------------------------------
         # Screen the NEED before spending a single token on it. A request
@@ -309,12 +320,53 @@ class SynapseEngine:
             "approved_at": approval.get("decided_at"),
         })
 
-        return {
+        # A human read the Skill Passport -- tests, evaluation, safety
+        # screen -- and approved. That IS a verification event, and the
+        # strongest kind this system has. Recording it seeds the ledger so
+        # the capability starts above the supervision threshold.
+        #
+        # Without this, a freshly installed capability sat at the starting
+        # 32% and G-07 demanded approval on its very first use, asking the
+        # owner to approve the same thing twice in a row. Approval fatigue
+        # is a governance failure, not a governance feature: an owner who
+        # is asked constantly stops reading.
+        promotion = autonomy_ledger.record_outcome(
+            candidate["name"],
+            verified=True,
+            reason=(
+                f"Human approved after reviewing the Skill Passport "
+                f"({approval.get('decided_by')})."
+            ),
+        )
+
+        result = {
             "status": "INSTALLED",
             "capability": candidate["name"],
             "evolution_event_id": event_id,
             "implemented_count": registry.counts()["implemented"],
+            "autonomy_before": promotion.before,
+            "autonomy_after": promotion.after,
         }
+
+        # THE LOOP CLOSES HERE. If this acquisition existed to unblock a
+        # mission, finish that mission now rather than leaving a human to
+        # re-run it. "It hit a gap, acquired the capability, and then
+        # finished the job" should be one action, not two.
+        #
+        # Imported locally: mission_service reaches the orchestrator, and a
+        # module-level import here would form a cycle.
+        mission_id = passport.get("mission_id")
+
+        if mission_id:
+            from app.missions.service import mission_service
+
+            # The engine re-evaluates the gap against the live registry, so
+            # this cannot skip a step that is still genuinely missing.
+            result["mission_resumed"] = mission_service.resume_blocked(
+                mission_id
+            )
+
+        return result
 
     def rollback(self, capability_name: str, reason: str) -> dict[str, Any]:
         """Remove an installed capability and record why.

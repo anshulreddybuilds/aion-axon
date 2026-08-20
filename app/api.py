@@ -126,6 +126,40 @@ def create_planned_mission(body: PlannedMissionRequest) -> dict[str, Any]:
     return mission_service.start_planned(body.request)
 
 
+@app.post("/missions/{mission_id}/acquire")
+def acquire_for_mission(mission_id: str) -> dict[str, Any]:
+    """Propose the capability a BLOCKED mission is missing.
+
+    Reads the gap off the mission itself rather than making the caller
+    restate it, and ties the acquisition back to the mission so that
+    installing it finishes the original job.
+    """
+    mission = mission_service.get(mission_id)
+
+    if mission is None:
+        return {"status": "NOT_FOUND", "mission_id": mission_id}
+
+    if mission.get("status") != "BLOCKED":
+        return {
+            "status": "FAILED",
+            "error": f"Mission is {mission.get('status')}, not BLOCKED.",
+        }
+
+    gap = mission.get("blocked_on") or {}
+
+    need = gap.get("capability_description") or gap.get("description")
+
+    if not need:
+        return {"status": "FAILED", "error": "Mission records no gap."}
+
+    return synapse.propose(need, mission_id).to_dict()
+
+
+@app.post("/missions/{mission_id}/resume-blocked")
+def resume_blocked_mission(mission_id: str) -> dict[str, Any]:
+    return mission_service.resume_blocked(mission_id)
+
+
 @app.post("/missions/{mission_id}/resume-planned")
 def resume_planned_mission(mission_id: str) -> dict[str, Any]:
     return mission_service.resume_planned(mission_id)
@@ -228,6 +262,10 @@ def evolution_events() -> dict[str, Any]:
 
 class AcquisitionRequest(BaseModel):
     need: str = Field(..., description="The capability AION Axon lacks.")
+    mission_id: Optional[str] = Field(
+        None,
+        description="Mission this acquisition should unblock, if any.",
+    )
 
 
 @app.post("/synapse/propose")
@@ -237,7 +275,7 @@ def synapse_propose(body: AcquisitionRequest) -> dict[str, Any]:
     This route can never install anything. It ends at AWAITING_APPROVAL
     at best; installation requires a separate call after a real decision.
     """
-    return synapse.propose(body.need).to_dict()
+    return synapse.propose(body.need, body.mission_id).to_dict()
 
 
 @app.post("/synapse/install/{capability}")
