@@ -17,6 +17,8 @@ from typing import Any
 from google import genai
 from google.genai import types
 
+from app.observability.telemetry import record_model_call, timed
+
 # Pinned from a live models.list() against the project's own key, not
 # guessed: the previous value (gemma-3-27b-it) did not exist on this API
 # version and returned 404 at runtime, which is how the evaluator ended up
@@ -50,11 +52,14 @@ def _client() -> genai.Client:
 async def _score(prompt: str) -> str:
     client = _client()
 
-    response = await client.aio.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(system_instruction=PROMPT),
-    )
+    with timed() as clock:
+        response = await client.aio.models.generate_content(
+            model=MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(system_instruction=PROMPT),
+        )
+
+    record_model_call("evaluate", MODEL, response, clock["ms"])
 
     return (response.text or "").strip()
 

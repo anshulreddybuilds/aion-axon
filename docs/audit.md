@@ -274,19 +274,27 @@ research evidence remains untested while grounding is quota-blocked.
 
 | | |
 |---|---|
-| Files | none |
-| GCP | would use Cloud Logging / Firestore |
+| Files | `app/observability/telemetry.py`, `app/governance/execution_gate.py` |
+| Functions | `usage_of`, `record_model_call`, `timed`, `summarise`; `GET /telemetry` |
+| GCP | Firestore (`audit_events`) |
 
-Verified by search: **zero** references to latency, token counts,
-`usage_metadata`, or benchmarks anywhere in `app/`.
+`ExecutionGate._execute_tool` is timed with a monotonic clock -- the one place
+a tool actually runs, so no execution path is missed. Model calls in the
+generator, evaluator and research tool record real `usage_metadata`.
 
-There is no before/after performance capture, no token-cost accounting, and no
-latency measurement. Audit events carry timestamps, so per-step duration is
-*derivable* but never computed or displayed.
+**Measure, never estimate.** A call that did not report usage is counted as
+UNMEASURED rather than assigned a plausible number; `None` and `0` are kept
+distinct because they mean opposite things. An inferred token count reads
+exactly like a measured one and would quietly corrupt every cost figure
+downstream.
 
-**To close:** wrap `ExecutionGate._execute_tool` with a monotonic timer, record
-`usage_metadata` from Gemini responses, and write `duration_ms` +
-`token_count` onto each audit event.
+Telemetry cannot change behaviour: a measurement failure is swallowed, because
+an agent that crashes when its stopwatch breaks is worse than one with no
+stopwatch. Failing tools are timed too -- a slow failure is the cost you most
+want to see.
+
+**Not captured:** ADK Runner planner tokens. The planner runs through ADK
+rather than a direct genai call, so its usage is not yet surfaced.
 
 ---
 

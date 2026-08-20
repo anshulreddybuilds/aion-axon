@@ -4,6 +4,7 @@ from app.governance.guardian import guardian, RiskLevel, Decision
 from app.governance.approval import approval_manager
 from app.governance.kill_switch import kill_switch
 from app.memory.firestore_store import firestore_store
+from app.observability.telemetry import timed
 
 
 class ExecutionGate:
@@ -178,37 +179,49 @@ class ExecutionGate:
         **kwargs,
     ) -> dict:
 
-        try:
-            result = tool(*args, **kwargs)
+        # Timed here because this is the ONE place a tool actually runs.
+        # Measuring anywhere else would miss a path, and a latency number
+        # that silently excludes some executions is worse than none.
+        with timed() as clock:
+            try:
+                result = tool(*args, **kwargs)
+                failure = None
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                result = None
+                failure = exc
 
+        if failure is None:
             firestore_store.write_audit_event(
                 "ACTION_EXECUTED",
                 {
                     "action": action,
                     "risk": risk.value,
                     "result": str(result),
+                    "duration_ms": round(clock["ms"], 1),
                 },
             )
 
             return {
                 "status": "EXECUTED",
                 "result": result,
+                "duration_ms": round(clock["ms"], 1),
             }
 
-        except Exception as exc:
-            firestore_store.write_audit_event(
-                "ACTION_FAILED",
-                {
-                    "action": action,
-                    "risk": risk.value,
-                    "error": str(exc),
-                },
-            )
+        firestore_store.write_audit_event(
+            "ACTION_FAILED",
+            {
+                "action": action,
+                "risk": risk.value,
+                "error": str(failure),
+                "duration_ms": round(clock["ms"], 1),
+            },
+        )
 
-            return {
-                "status": "FAILED",
-                "error": str(exc),
-            }
+        return {
+            "status": "FAILED",
+            "error": str(failure),
+            "duration_ms": round(clock["ms"], 1),
+        }
 
 
 execution_gate = ExecutionGate()

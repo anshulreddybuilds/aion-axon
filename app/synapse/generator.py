@@ -14,6 +14,8 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from app.observability.telemetry import record_model_call, timed
+
 MODEL = os.getenv("AXON_BUILDER_MODEL", "gemini-3.6-flash")
 
 
@@ -65,15 +67,18 @@ async def _generate(prompt: str) -> str:
     # mission.
     client = _client()
 
-    response = await client.aio.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=INSTRUCTION,
-            response_mime_type="application/json",
-            response_schema=Candidate,
-        ),
-    )
+    with timed() as clock:
+        response = await client.aio.models.generate_content(
+            model=MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=INSTRUCTION,
+                response_mime_type="application/json",
+                response_schema=Candidate,
+            ),
+        )
+
+    record_model_call("generate", MODEL, response, clock["ms"])
 
     return (response.text or "").strip()
 

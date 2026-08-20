@@ -23,6 +23,7 @@ from app.governance.autonomy_ledger import (
 from app.governance.kill_switch import kill_switch
 from app.memory.firestore_store import firestore_store
 from app.missions.service import mission_service
+from app.observability.telemetry import summarise
 from app.monitors.service import monitor_service
 from app.synapse.engine import synapse
 from app.synapse.sandbox_client import env_proof as sandbox_env_proof
@@ -252,6 +253,20 @@ def autonomy_of(capability: str) -> dict[str, Any]:
         "supervision_threshold": SUPERVISION_THRESHOLD,
         **record,
     }
+
+
+@app.get("/telemetry")
+def telemetry(limit: int = 500) -> dict[str, Any]:
+    """What the work cost: latency and real token usage.
+
+    Token counts come from the model's own usage_metadata. Calls that did
+    not report usage are counted as UNMEASURED rather than estimated --
+    an inferred token count is a guess wearing the same clothes as a
+    measurement, and would quietly corrupt every cost figure downstream.
+    """
+    events = firestore_store.list_audit_events(limit)
+
+    return {"events_examined": len(events), **summarise(events)}
 
 
 @app.get("/evolution")

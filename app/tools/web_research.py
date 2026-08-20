@@ -14,6 +14,8 @@ from typing import Any
 from google import genai
 from google.genai import types
 
+from app.observability.telemetry import record_model_call, timed
+
 MODEL = os.getenv("AXON_RESEARCH_MODEL", "gemini-3.6-flash")
 
 
@@ -56,11 +58,19 @@ async def _generate_async(query: str, grounded: bool = True) -> Any:
     if grounded:
         config.tools = [types.Tool(google_search=types.GoogleSearch())]
 
-    return await client.aio.models.generate_content(
-        model=MODEL,
-        contents=query,
-        config=config,
+    with timed() as clock:
+        response = await client.aio.models.generate_content(
+            model=MODEL,
+            contents=query,
+            config=config,
+        )
+
+    record_model_call(
+        "research" if grounded else "research_degraded",
+        MODEL, response, clock["ms"],
     )
+
+    return response
 
 
 def _receipts(response: Any) -> list[dict[str, str]]:

@@ -57,6 +57,14 @@ class MemoryFirestore:
             if data.get("status") == "PENDING"
         ]
 
+    def list_audit_events(self, limit: int = 500) -> list[dict[str, Any]]:
+        events = sorted(
+            self.audit_events.values(),
+            key=lambda e: e.get("timestamp", ""),
+            reverse=True,
+        )
+        return events[:limit]
+
     def save_mission(self, mission_id: str, data: dict[str, Any]) -> None:
         # Merge, like capabilities and monitors. A partial write used to
         # REPLACE the document, so updating one field silently dropped
@@ -176,6 +184,16 @@ class AxonFirestore:
             {**doc.to_dict(), "request_id": doc.id}
             for doc in query.stream()
         ]
+
+    def list_audit_events(self, limit: int = 500) -> list[dict[str, Any]]:
+        query = (
+            self.db
+            .collection("audit_events")
+            .order_by("timestamp", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+
+        return [doc.to_dict() for doc in query.stream()]
 
     def save_mission(self, mission_id: str, data: dict[str, Any]) -> None:
         # merge=True for the same reason as capabilities and monitors: a
