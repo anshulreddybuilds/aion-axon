@@ -92,3 +92,34 @@ wall.
 Known limitation: matching is lexical, not semantic. A missed match
 degrades to "a human is asked", never to "anything runs", because the
 gate still stands behind the catalog. Semantic matching is §12 backlog.
+
+## Acquisitions #1 and #2 — DONE (20 Aug, live)
+
+Branch `feat/core-intelligence`. CI green. 137 tests.
+
+| | Acquisition #1 | Acquisition #2 |
+|---|---|---|
+| Capability | `convert_currency_amount` | `detect_yoy_anomalies` |
+| Gemma score | UNSCORED (model id 404) | **100 / PASS** |
+| Approved | 09:26:05Z | 09:49:16Z |
+| Evolution event | `xTT0XMI9RxawQdcHrnyU` | `HCjIUO3FfUwo1pdgtyEn` |
+
+Registry **12 -> 14** (5 implemented). Both survive a cold restart via
+Firestore rehydration, verified on revision `aion-core-00009-zmm`.
+
+### The full dataset chain, live
+
+BigQuery (core, credentialed) -> 9 rows, 88.8 MB scanned, under the
+200 MB cap -> the ACQUIRED capability analyses them in the sandbox:
+
+- 2006: +2.49% **anomaly**
+- 2009: -3.25% **anomaly**
+- 2010: -3.59% **anomaly**
+
+Those are real US birth records, and the 2009-2010 anomalies line up with
+the post-2008 birth-rate decline -- a finding that can be checked against
+the outside world rather than taken on trust.
+
+Credentialed query stays human-written; generated code never touches a
+service account. That split is why Acquisition #2 acquires the ANALYSIS
+skill rather than the query itself.
