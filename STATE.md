@@ -7,13 +7,13 @@
 | | |
 |---|---|
 | Branch | `feat/core-intelligence`, pushed, level with origin |
-| HEAD | `23e8de3` |
-| Live revision | `aion-core-00016-kjz` (deployed 21 Aug ~09:5x UTC) |
+| HEAD | `4c9581b` |
+| Live revision | `aion-core-00017-fzq` |
 | Core URL | https://aion-core-638298765129.asia-south1.run.app |
-| Registry (live) | **17 declared, 8 implemented** |
+| Registry (live) | **17 declared, 9 implemented** |
 | Implemented | calculator · web_research · read_dataset · convert_currency_amount · detect_yoy_anomalies · analyze_yoy_alert · summarize_performance_text · analyze_complaint_urgency |
 | Telemetry (live) | 18 model calls, all measured, 65,486 tokens; 26 tool executions |
-| Tests | **75 passing** across test_loop_closure / test_synapse / test_mission_engine / test_api / test_reliability |
+| Tests | **83 passing** across test_loop_closure / test_synapse / test_mission_engine / test_api / test_reliability |
 | current_amendment | 13 |
 
 **Test-count caveat:** 75 is the count for those five files run together. The
@@ -57,11 +57,16 @@ Mission `ab1f0b35-5eed-4632-b0dc-760abcc66316` is sitting BLOCKED with
 `tool: null` and can be reused — `/acquire` on it is the exact call that
 429'd. Cheapest resume path: retry that one call after quota reset.
 
-**2. Build `write_brief` — the mission's actual product.**
-Declared but not implemented. This is the deliverable the whole locked §9 demo
-builds toward ("produce an executive Business Action Brief"). Currently the
-demo can acquire capabilities and finish missions but cannot produce the
-artifact it exists to produce. Highest-value remaining build item.
+**2. DONE 21 Aug (`7ac0125`) — `write_brief` built and live.** Kept here only
+so the next reader does not rebuild it. Deterministic, model-free, 8 tests.
+Verified live on mission `e37b2464` — and it rendered a full brief **while the
+Gemini planner was returning 429**, evidencing that the mission's product does
+not depend on model availability. New priority 2 is below.
+
+**2. Phase 8 fire drill — the ONE continuous messy-workflow run.**
+Every ingredient now exists (acquisition ✓, dataset ✓, brief ✓) but they have
+never been run as a single unbroken mission, which is what the locked §9 demo
+actually shows. Needs quota for the planner.
 
 **3. Reconcile with Session B / Holo-Deck UI status.**
 Not inspected this session at all — genuinely unknown. `docs/audit.md` records
