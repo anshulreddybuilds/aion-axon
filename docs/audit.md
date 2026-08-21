@@ -279,7 +279,13 @@ research evidence remains untested while grounding is quota-blocked.
 
 ---
 
-## 14. Telemetry & Benchmark Tracking — **NOT STARTED** ⚠️
+## 14. Telemetry & Benchmark Tracking — **IMPLEMENTED** (21 Aug, `b330877`)
+
+Live-verified same day: `GET /telemetry` on `aion-core` reports 453 audit
+events examined, 4 real model calls (14,698 measured tokens across
+`research_degraded` x2, `generate`, `evaluate`) and 1 tool execution
+(260ms) from tonight's Acquisition #3 run. Numbers came from the model's
+own `usage_metadata`, not inferred.
 
 | | |
 |---|---|
@@ -355,26 +361,39 @@ resume time.
 
 ---
 
-# Top 3 Immediate Coding Priorities
+# Top 3 Immediate Coding Priorities — SUPERSEDED (21 Aug, corrected below)
 
-### 1. Close the loop — auto-resume the blocked mission (Stage 12)
-The single most valuable remaining change. Right now the acquisition and the
-mission that needed it are joined by a human operator, not by code. The demo
-narrates "the mission was blocked, so it acquired the capability, and then
-**finished the job**" — and that last clause is currently done by hand.
-Carry `mission_id` into the acquisition record and have `install()` resume
-`MissionEngine.run` from `next_step_index`.
+All three items below were done as of this morning (`d451dcf`, `b330877`,
+21 Aug ~05:00-05:15 IST) — Stage 12 auto-resume, Stage 14 telemetry, and
+Stage 10's code diff all shipped together and this list was never updated
+to say so. Left below for history rather than deleted, per the repo's
+append-don't-rewrite rule; do not re-implement any of these.
 
-### 2. Telemetry on the execution gate (Stage 14)
-Not started at all, and it is what turns "it works" into "here is what it
-cost". A timer plus `usage_metadata` on each audit event unlocks the
-before/after evidence the video's closing beat wants.
+### 1. ~~Close the loop — auto-resume the blocked mission (Stage 12)~~ DONE
+`app/synapse/engine.py:367-375` — `install()` carries `mission_id` from
+the acquisition record and calls `mission_service.resume_blocked(mission_id)`
+directly. Verified live: Acquisition #3 (21 Aug) installed and its result
+was checked separately by running the capability fresh, not by re-running
+a blocked mission — this specific auto-resume path was not re-exercised
+tonight, only confirmed present in code and history.
 
-### 3. Code diff in the approval card (Stage 10)
-The owner currently approves a *description*. For a project whose thesis is
-accountable autonomy, the human should see the generated source before saying
-yes. The data is already in the Skill Passport — this is a UI change, not a
-backend one.
+### 2. ~~Telemetry on the execution gate (Stage 14)~~ DONE
+See section 14 above — live-verified 21 Aug with real token/latency data
+from tonight's Acquisition #3 run.
+
+### 3. ~~Code diff in the approval card (Stage 10)~~ DONE
+Shipped in the same commit batch (`d451dcf`). Not independently
+re-verified live tonight.
+
+## Actual current priority (21 Aug)
+
+**Fix the mission-resume args bug** documented above: `POST
+/missions/{id}/resume` drops tool arguments for any mission created from
+a free-text `request` rather than an explicit `tool`+`args` pair. This is
+a *different* resume path than the Stage 12 acquisition auto-resume above
+(that one calls `resume_blocked` internally with data it already has) —
+this bug is in the generic owner-facing resume endpoint. Reproduced live,
+not yet fixed.
 
 **Explicitly NOT priorities:** Search grounding (Stage 4) and the upward
 autonomy arc (Stage 13) are blocked on Gemini quota, not on code. They are
