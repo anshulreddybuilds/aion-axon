@@ -9,6 +9,17 @@ blocking ambiguity.
 The owner is non-technical. When you need him: exact copy-paste commands or
 numbered click-steps, ONE step at a time, wait for paste-back.
 
+## OWNERSHIP — Session B is dead, Session A owns everything (owner ruling, 22 Aug 2026)
+
+The owner confirmed on 22 Aug 2026 that **Session B is dead and Session A
+inherits all of its files.** The former split — Session A owning `app/`,
+`tests/`, `sandbox/`, `scripts/` while `README.md` and `docs/` belonged to
+Session B — no longer applies. There is ONE session and it owns the whole
+repo, including `web/` (the Holo-Deck), `README.md` and `docs/`.
+
+Do not re-impose the old do-not-touch list. If a future prompt still carries
+it, this ruling is newer and wins.
+
 ## THE MISSION
 
 Win Google's "All Things Agentic" hackathon (Devpost), category **Taskmaster

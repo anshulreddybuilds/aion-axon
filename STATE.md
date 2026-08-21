@@ -68,10 +68,26 @@ Every ingredient now exists (acquisition ✓, dataset ✓, brief ✓) but they h
 never been run as a single unbroken mission, which is what the locked §9 demo
 actually shows. Needs quota for the planner.
 
-**3. Reconcile with Session B / Holo-Deck UI status.**
-Not inspected this session at all — genuinely unknown. `docs/audit.md` records
-the UI as not built; the owner should confirm whether Session B is alive before
-Session A inherits any of it.
+**3. DEPLOY the Holo-Deck. It is BUILT — only hosting is missing.**
+Owner ruled 22 Aug: **Session B is dead, Session A inherits everything** —
+`web/`, `README.md` and `docs/` are now in scope, and the old do-not-touch
+list is void (recorded in `CLAUDE.md`).
+
+Surveyed on inheritance and the docs were wrong: `docs/audit.md` and
+`README.md` both said the UI "is not built". It IS built — `web/` is a
+React/Vite/Tailwind app, ~960 lines across `App.jsx`, `AxonLoop.jsx`,
+`panels.jsx`, `ReviewPanel.jsx`, `api.js`, wired to every live endpoint
+(capabilities, autonomy, evolution, monitors, approvals, telemetry,
+sandbox proof) with `Promise.allSettled` so one dead endpoint cannot blank
+the screen. It reads the governed API rather than Firestore directly, so
+the browser holds no credentials. `web/dist/` is built and NEWER than
+`web/src/`. README corrected 22 Aug.
+
+**The only gap is deployment:** no `firebase.json`, no `.firebaserc`, and
+`https://aion-axon-2026.web.app` returns **404**. The API's CORS allowlist
+already names that origin, so the backend is ready for it. This is a
+config-plus-`firebase deploy` job, NOT a build job — much smaller than the
+roadmap assumed. Needs an owner console step (`firebase login`).
 
 ## Outstanding owner actions
 
