@@ -8,16 +8,21 @@ intent. Anything unverified is written down as unverified.
 |-------|--------|--------|----------|
 | 1 — Governed execution loop | DONE | `bed90c7` | `docs/day1-evidence.md`, CI run 32252020824 |
 | 2 — Deploy spine | DONE | `f580ef1` | Two live Cloud Run URLs, live approval-resume, `docs/phase2-evidence.md` |
-| 3 — Mission engine | NOT STARTED | — | — |
-| 4 — Gap detection | NOT STARTED | — | — |
-| 5 — Synapse stage 1 | NOT STARTED | — | — |
-| 6 — Synapse stage 2 | NOT STARTED | — | — |
-| 7 — Guardian + HITL | NOT STARTED | — | — |
-| 8 — Fire drill + package v1 | NOT STARTED | — | — |
-| 9 — Holo-Deck UI | NOT STARTED | — | — |
+| 3 — Mission engine | DONE | `52a6936` | Live planned + direct missions COMPLETED via Cloud Run URL |
+| 4 — Gap detection | DONE | `e9a44a5` | Live BLOCKED + evolution events; both gap shapes now exercised |
+| 5 — Synapse stage 1 | DONE | — | Candidates generated + sandbox-tested live (acq #1–#3). Citations still quota-blocked, see §4 |
+| 6 — Synapse stage 2 | DONE | — | Full pipeline through sandbox, Gemma-scored, 3 live acquisitions |
+| 7 — Guardian + HITL | DONE | — | Acq #1 `convert_currency_amount` e2e with owner approval; G-04/G-06 refusals live |
+| 8 — Fire drill + package v1 | IN PROGRESS | `7ac0125` | ≥1 acquisition ✓, Brief ✓ (live, `00017-fzq`). Full messy-workflow run as ONE continuous mission: not yet done |
+| 9 — Holo-Deck UI | UNKNOWN | — | Session B's scope; not inspected by Session A. Owner to confirm |
 | 10 — Reliability | NOT STARTED | — | — |
 | 11 — Hardening + video | NOT STARTED | — | — |
 | 12 — Submit | NOT STARTED | — | — |
+
+**Table corrected 21 Aug.** It read `NOT STARTED` for phases 3–8 while all
+of them were finished and live — the same failure mode the roadmap doctrine
+warns about, where a stale list outlives its work and costs the next reader
+a re-derivation. Rows above carry evidence or say plainly what is missing.
 
 ---
 
