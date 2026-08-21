@@ -385,15 +385,43 @@ from tonight's Acquisition #3 run.
 Shipped in the same commit batch (`d451dcf`). Not independently
 re-verified live tonight.
 
-## Actual current priority (21 Aug)
+## Mission-resume args bug — FIXED (21 Aug, `3c6d488`)
 
-**Fix the mission-resume args bug** documented above: `POST
-/missions/{id}/resume` drops tool arguments for any mission created from
-a free-text `request` rather than an explicit `tool`+`args` pair. This is
-a *different* resume path than the Stage 12 acquisition auto-resume above
-(that one calls `resume_blocked` internally with data it already has) —
-this bug is in the generic owner-facing resume endpoint. Reproduced live,
-not yet fixed.
+`POST /missions/{id}/resume` used to drop tool arguments for any mission
+created from a free-text `request` rather than an explicit `tool`+`args`
+pair, because `MissionRequest.tool` defaulted to `"calculator"` and
+`.args` defaulted to `[]`. Root cause: this endpoint never parsed
+`request` into a real tool call — `POST /missions/planned` already does
+that via the real planner — so the defaults let a caller skip the tool
+call entirely, get a narrative Gemini plan describing real work, sail
+through approval, then fail at resume with a bare `TypeError`. Fixed by
+making `tool`/`action`/`args` required, not defaulted, so a caller who
+omits them now gets a 422 at the door instead of a mission that fails
+downstream. Regression test added and proven: reverted the fix, watched
+the new test fail against the original defaults, restored the fix,
+watched it pass. All 67 tests in `test_api.py`/`test_reliability.py`/
+`test_owner_auth.py` green.
+
+## Known issue, NOT FIXED — full-suite cross-test-file state leak (found 21 Aug)
+
+Running the full suite (`pytest -q`, no path filter) produces **121
+errors** that do not occur when the same tests run file-by-file or in
+smaller groups. Root cause identified but not fixed: `firestore_store`
+(`app/memory/firestore_store.py`) is a **module-level singleton** whose
+concrete class is picked once, at import time, based on
+`AXON_FIRESTORE_MODE` (`== "memory"` → the in-memory store with a
+`.capabilities` dict; anything else → real `AxonFirestore`, which has no
+such attribute). `tests/test_adversarial.py`'s `clean` fixture calls
+`firestore_store.capabilities.clear()` and blows up with `AttributeError:
+'AxonFirestore' object has no attribute 'capabilities'` when the full
+suite's collection/import order causes some other test file to trigger
+the real-mode class before `test_adversarial.py` runs. Confirmed
+pre-existing on clean `HEAD` before any change in this session — not
+introduced by the mission-args fix above, not fixed here (out of scope
+for that fix; whoever picks this up next should look at making the
+memory-vs-real backend a fixture-scoped dependency injection rather than
+an env-var-gated module singleton, so test order can't change which
+backend a test gets).
 
 **Explicitly NOT priorities:** Search grounding (Stage 4) and the upward
 autonomy arc (Stage 13) are blocked on Gemini quota, not on code. They are
