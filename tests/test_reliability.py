@@ -8,6 +8,7 @@ and an approval whose workflow no longer exists in anyone's memory.
 import os
 
 os.environ.setdefault("AXON_FIRESTORE_MODE", "memory")
+os.environ.setdefault("AXON_OWNER_TOKEN", "test-owner-token")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -20,7 +21,7 @@ from app.governance.kill_switch import kill_switch  # noqa: E402
 from app.memory.firestore_store import firestore_store  # noqa: E402
 from app.missions.service import mission_service  # noqa: E402
 
-client = TestClient(app)
+client = TestClient(app, headers={"X-Axon-Token": "test-owner-token"})
 
 
 @pytest.fixture(autouse=True)
@@ -36,14 +37,14 @@ def clean():
 
 def test_service_answers_immediately_after_boot():
     """A cold container must serve, not 500 while it warms up."""
-    with TestClient(app) as cold:
+    with TestClient(app, headers={"X-Axon-Token": "test-owner-token"}) as cold:
         assert cold.get("/health").json() == {"status": "OK"}
         assert cold.get("/").json()["status"] == "LIVE"
 
 
 def test_rehydration_runs_before_the_first_request():
     """The registry must be reconciled before traffic, not lazily."""
-    with TestClient(app) as cold:
+    with TestClient(app, headers={"X-Axon-Token": "test-owner-token"}) as cold:
         body = cold.get("/capabilities").json()
 
     assert body["rehydrated"] is not None, (
@@ -55,7 +56,7 @@ def test_cold_start_does_not_lose_the_kill_switch_state():
     """A restart must not silently re-enable a killed agent."""
     kill_switch.activate("stopped before restart")
 
-    with TestClient(app) as cold:
+    with TestClient(app, headers={"X-Axon-Token": "test-owner-token"}) as cold:
         assert cold.get("/killswitch").json()["kill_switch_active"] is True
 
     kill_switch.deactivate()

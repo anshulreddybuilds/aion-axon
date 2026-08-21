@@ -8,7 +8,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -20,8 +20,9 @@ from app.governance.autonomy_ledger import (
     SUPERVISION_THRESHOLD,
     autonomy_ledger,
 )
-from app.governance.ground_truth import all_facts, lookup, record
+from app.governance.ground_truth import all_facts, lookup, record_fact
 from app.governance.kill_switch import kill_switch
+from app.governance.owner_auth import require_owner
 from app.governance.review import review_package
 from app.memory.firestore_store import firestore_store
 from app.missions.service import mission_service
@@ -123,13 +124,13 @@ class PlannedMissionRequest(BaseModel):
     request: str = Field(..., description="The messy human request.")
 
 
-@app.post("/missions/planned")
+@app.post("/missions/planned", dependencies=[Depends(require_owner)])
 def create_planned_mission(body: PlannedMissionRequest) -> dict[str, Any]:
     """Plan a messy request with Gemini, then run it through the gate."""
     return mission_service.start_planned(body.request)
 
 
-@app.post("/missions/{mission_id}/acquire")
+@app.post("/missions/{mission_id}/acquire", dependencies=[Depends(require_owner)])
 def acquire_for_mission(mission_id: str) -> dict[str, Any]:
     """Propose the capability a BLOCKED mission is missing.
 
@@ -158,17 +159,17 @@ def acquire_for_mission(mission_id: str) -> dict[str, Any]:
     return synapse.propose(need, mission_id).to_dict()
 
 
-@app.post("/missions/{mission_id}/resume-blocked")
+@app.post("/missions/{mission_id}/resume-blocked", dependencies=[Depends(require_owner)])
 def resume_blocked_mission(mission_id: str) -> dict[str, Any]:
     return mission_service.resume_blocked(mission_id)
 
 
-@app.post("/missions/{mission_id}/resume-planned")
+@app.post("/missions/{mission_id}/resume-planned", dependencies=[Depends(require_owner)])
 def resume_planned_mission(mission_id: str) -> dict[str, Any]:
     return mission_service.resume_planned(mission_id)
 
 
-@app.post("/missions")
+@app.post("/missions", dependencies=[Depends(require_owner)])
 def create_mission(body: MissionRequest) -> dict[str, Any]:
     return mission_service.start(
         request=body.request,
@@ -189,7 +190,7 @@ def get_mission(mission_id: str) -> dict[str, Any]:
     return mission
 
 
-@app.post("/missions/{mission_id}/resume")
+@app.post("/missions/{mission_id}/resume", dependencies=[Depends(require_owner)])
 def resume_mission(mission_id: str) -> dict[str, Any]:
     return mission_service.resume(mission_id)
 
@@ -279,7 +280,7 @@ class GroundTruthRequest(BaseModel):
     recorded_by: str = Field("owner", description="Who recorded it.")
 
 
-@app.post("/ground-truth")
+@app.post("/ground-truth", dependencies=[Depends(require_owner)])
 def record_ground_truth(body: GroundTruthRequest) -> dict[str, Any]:
     """Record an independently known fact, with provenance.
 
@@ -288,7 +289,7 @@ def record_ground_truth(body: GroundTruthRequest) -> dict[str, Any]:
     be the agent grading its own homework, and a fact with no source is an
     unaccountable veto over a capability's autonomy.
     """
-    return record(
+    return record_fact(
         body.key, body.statement, body.value, body.source, body.recorded_by,
     )
 
@@ -347,7 +348,7 @@ class AcquisitionRequest(BaseModel):
     )
 
 
-@app.post("/synapse/propose")
+@app.post("/synapse/propose", dependencies=[Depends(require_owner)])
 def synapse_propose(body: AcquisitionRequest) -> dict[str, Any]:
     """Run the acquisition loop up to — and stopping at — human approval.
 
@@ -357,7 +358,7 @@ def synapse_propose(body: AcquisitionRequest) -> dict[str, Any]:
     return synapse.propose(body.need, body.mission_id).to_dict()
 
 
-@app.post("/synapse/install/{capability}")
+@app.post("/synapse/install/{capability}", dependencies=[Depends(require_owner)])
 def synapse_install(capability: str) -> dict[str, Any]:
     """Install an approved capability. Re-reads the approval from
     Firestore, so calling this without a decision changes nothing."""
@@ -368,7 +369,7 @@ class RollbackRequest(BaseModel):
     reason: str = Field(..., description="Why the capability is removed.")
 
 
-@app.post("/synapse/rollback/{capability}")
+@app.post("/synapse/rollback/{capability}", dependencies=[Depends(require_owner)])
 def synapse_rollback(capability: str, body: RollbackRequest) -> dict[str, Any]:
     return synapse.rollback(capability, body.reason)
 
@@ -400,7 +401,7 @@ class MonitorRequest(BaseModel):
     description: str = ""
 
 
-@app.post("/monitors")
+@app.post("/monitors", dependencies=[Depends(require_owner)])
 def create_monitor(body: MonitorRequest) -> dict[str, Any]:
     return monitor_service.create(
         name=body.name,
@@ -422,7 +423,7 @@ def list_monitors() -> dict[str, Any]:
     }
 
 
-@app.post("/monitors/run-due")
+@app.post("/monitors/run-due", dependencies=[Depends(require_owner)])
 def run_due_monitors() -> dict[str, Any]:
     """Run every monitor that is due. Called by an external scheduler.
 
@@ -437,7 +438,7 @@ class DisableMonitorRequest(BaseModel):
     reason: str = "Disabled by owner"
 
 
-@app.post("/monitors/{monitor_id}/disable")
+@app.post("/monitors/{monitor_id}/disable", dependencies=[Depends(require_owner)])
 def disable_monitor(
     monitor_id: str,
     body: DisableMonitorRequest,
@@ -475,7 +476,7 @@ def pending_approvals() -> dict[str, Any]:
     return {"count": len(pending), "pending": pending}
 
 
-@app.post("/approvals/{request_id}/decide")
+@app.post("/approvals/{request_id}/decide", dependencies=[Depends(require_owner)])
 def decide_approval(
     request_id: str,
     body: ApprovalDecision,
@@ -499,7 +500,7 @@ def decide_approval(
     }
 
 
-@app.post("/killswitch")
+@app.post("/killswitch", dependencies=[Depends(require_owner)])
 def set_kill_switch(body: KillSwitchRequest) -> dict[str, Any]:
     if body.active:
         kill_switch.activate(body.reason)

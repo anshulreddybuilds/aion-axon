@@ -98,7 +98,7 @@ def _keywords(text: str) -> set[str]:
     }
 
 
-def record(
+def record_fact(
     key: str,
     statement: str,
     value: str,

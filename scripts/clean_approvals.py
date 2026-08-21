@@ -12,12 +12,16 @@ which is exactly the failure the approval gate exists to prevent.
     python -m scripts.clean_approvals --apply      # actually reject them
     python -m scripts.clean_approvals --older-than 2 --apply
 """
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 
 import requests
 
 CORE = "https://aion-core-638298765129.asia-south1.run.app"
+
+# Writes require the owner token. Reads do not.
+HEADERS = {"X-Axon-Token": os.getenv("AXON_OWNER_TOKEN", "")}
 
 
 def age_hours(created_at: str) -> float:
@@ -69,6 +73,7 @@ def main() -> None:
         response = requests.post(
             f"{CORE}/approvals/{item['request_id']}/decide",
             json={"approved": False, "decided_by": "anshul (stale cleanup)"},
+            headers=HEADERS,
             timeout=30,
         )
         print(f"  rejected {item['request_id']}: "

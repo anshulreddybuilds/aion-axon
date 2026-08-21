@@ -29,7 +29,7 @@ def clean():
 
 
 def fx_fact():
-    return gt.record(
+    return gt.record_fact(
         key="usd_inr_aug_2026",
         statement="USD to INR exchange rate August 2026",
         value="83.2",
@@ -42,7 +42,7 @@ def fx_fact():
 
 def test_a_fact_without_a_source_is_rejected():
     """An unauditable fact must not be able to demote a capability."""
-    result = gt.record("k", "some statement", "1", "", "anshul")
+    result = gt.record_fact("k", "some statement", "1", "", "anshul")
 
     assert result["status"] == "REJECTED"
     assert "provenance" in result["error"]
@@ -192,7 +192,7 @@ def test_matching_requires_covering_most_of_the_fact():
 
 def test_the_best_covering_fact_wins_when_several_could_match():
     fx_fact()
-    gt.record(
+    gt.record_fact(
         key="usd_eur",
         statement="USD to EUR exchange rate August 2026",
         value="0.92",

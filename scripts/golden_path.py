@@ -13,6 +13,7 @@ Moments that need Gemini quota are reported as BLOCKED, never faked. A
 green run with a fabricated step would be worse than a red one.
 """
 import json
+import os
 import sys
 import time
 from typing import Any, Optional
@@ -23,6 +24,9 @@ CORE = "https://aion-core-638298765129.asia-south1.run.app"
 SANDBOX = "https://aion-sandbox-638298765129.asia-south1.run.app"
 
 TIMEOUT = 180
+
+# Writes require the owner token; reads do not.
+HEADERS = {"X-Axon-Token": os.getenv("AXON_OWNER_TOKEN", "")}
 
 PASS = "PASS"
 FAIL = "FAIL"
@@ -42,7 +46,7 @@ def check(name: str, status: str, detail: str = "") -> None:
 def post(path: str, body: Optional[dict] = None) -> dict[str, Any]:
     response = requests.post(
         f"{CORE}{path}", json=body if body is not None else {},
-        timeout=TIMEOUT,
+        headers=HEADERS, timeout=TIMEOUT,
     )
     return response.json()
 

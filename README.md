@@ -184,6 +184,12 @@ needing no oversight ever is a claim no evidence supports.
 - Generated code is AST-screened before execution, then run non-root in a
   stripped environment with CPU, memory, file-size and fork limits.
 - API keys live in Secret Manager. No secret is committed to this repo.
+- **Reads are public; writes require an owner token.** Every mutating
+  route (`/killswitch`, `/approvals/*/decide`, `/synapse/*`, `/missions`,
+  `/ground-truth`, `/monitors`) requires an `X-Axon-Token` header. Reads
+  stay open so judges and the Holo-Deck can inspect every decision — the
+  transparency is the point; only the ability to CHANGE things is gated.
+  It fails **closed**: with no token configured, writes are refused.
 - BigQuery access is read-only, `SELECT`-only, restricted to an allowlist
   of public datasets, and byte-capped so a careless query fails rather than
   burning the free tier.
@@ -201,7 +207,7 @@ pip install -r requirements.txt
 
 # Full test suite, offline — no credentials, no network:
 AXON_FIRESTORE_MODE=memory python -m pytest -q tests
-# -> 205 passed
+# -> 250 passed
 ```
 
 `AXON_FIRESTORE_MODE=memory` selects in-memory Firestore and kill switch so
@@ -273,7 +279,7 @@ locally. Full records in `docs/` and `PROGRESS.md`.
 | Kill switch | Halts interactive *and* scheduled work |
 | Autonomy arc | 32% → 47% live on human verification; demotion −18 on contradiction |
 | Loop closes | install() resumes the blocked mission from its blocked step |
-| Tests | **205 passing**, including 19 adversarial |
+| Tests | **250 passing**, including 19 adversarial |
 
 The 2009–2010 anomalies match the documented post-2008 decline in US
 births — a result checkable against the outside world rather than taken on
@@ -308,6 +314,10 @@ system built around evidence should hold itself to the same standard.
   and in Firestore.
 - Live Gemini calls and real-Firestore writes are **manual probes**, not
   CI. CI deliberately runs the offline path only.
+- **Owner auth is a bearer token, not real authentication.** The honest
+  answer is Firebase Auth or IAP; that was a bigger change than the days
+  remaining allowed, and shipping the small correct thing beat shipping
+  the ambitious unfinished one.
 
 ---
 

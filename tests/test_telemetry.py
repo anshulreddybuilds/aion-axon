@@ -9,6 +9,7 @@ import os
 from types import SimpleNamespace
 
 os.environ.setdefault("AXON_FIRESTORE_MODE", "memory")
+os.environ.setdefault("AXON_OWNER_TOKEN", "test-owner-token")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -24,7 +25,7 @@ from app.observability.telemetry import (  # noqa: E402
     usage_of,
 )
 
-client = TestClient(app)
+client = TestClient(app, headers={"X-Axon-Token": "test-owner-token"})
 
 
 @pytest.fixture(autouse=True)

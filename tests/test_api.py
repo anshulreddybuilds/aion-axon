@@ -8,13 +8,14 @@ import os
 import pytest
 
 os.environ.setdefault("AXON_FIRESTORE_MODE", "memory")
+os.environ.setdefault("AXON_OWNER_TOKEN", "test-owner-token")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.api import app  # noqa: E402
 from app.governance.kill_switch import kill_switch  # noqa: E402
 
-client = TestClient(app)
+client = TestClient(app, headers={"X-Axon-Token": "test-owner-token"})
 
 
 @pytest.fixture(autouse=True)

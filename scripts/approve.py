@@ -8,11 +8,15 @@ agent proposes and the owner decides. Usage:
 Shows what is being decided BEFORE deciding it -- approving something you
 have not read is not approval, it is a rubber stamp.
 """
+import os
 import sys
 
 import requests
 
 CORE = "https://aion-core-638298765129.asia-south1.run.app"
+
+# Writes require the owner token. Reads do not.
+HEADERS = {"X-Axon-Token": os.getenv("AXON_OWNER_TOKEN", "")}
 
 
 def main() -> None:
@@ -51,6 +55,7 @@ def main() -> None:
     response = requests.post(
         f"{CORE}/approvals/{request_id}/decide",
         json={"approved": approved, "decided_by": "anshul"},
+        headers=HEADERS,
         timeout=30,
     )
 
