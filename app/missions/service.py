@@ -107,7 +107,9 @@ class MissionService:
             **summary,
         }
 
-    def resume_blocked(self, mission_id: str) -> dict[str, Any]:
+    def resume_blocked(
+        self, mission_id: str, capability_name: Optional[str] = None,
+    ) -> dict[str, Any]:
         """Continue a mission that BLOCKED on a missing capability.
 
         This is what closes the loop. Without it, "the agent hit a gap,
@@ -117,6 +119,16 @@ class MissionService:
         The engine re-evaluates the gap from the live registry, so calling
         this before the capability actually exists blocks again rather
         than proceeding. Nothing here assumes the acquisition succeeded.
+
+        `capability_name` backfills the blocked step's `tool` field when
+        it was `null` in the plan. The planner leaves `tool: null` when it
+        found no registered capability at all for a step -- that step can
+        never name a tool on its own, so nothing the engine does moves it
+        off BLOCKED unless the caller that just installed a capability for
+        this exact gap tells it what to call. Only a `null` tool is ever
+        overwritten: a step that already names a declared-but-unimplemented
+        capability keeps that name, since SYNAPSE's candidate is presumed
+        to have been proposed to fill that exact gap.
         """
         mission = firestore_store.get_mission(mission_id)
 
@@ -137,13 +149,21 @@ class MissionService:
 
         plan = MissionPlan.model_validate(mission["plan_document"])
 
+        index = mission.get("next_step_index", 0)
+
+        if (
+            capability_name
+            and 0 <= index < len(plan.steps)
+            and plan.steps[index].tool is None
+        ):
+            plan.steps[index].tool = capability_name
+
         workflow = WorkflowState(
             user_request=mission["request"],
             workflow_id=mission["workflow_id"],
         )
         workflow.status = "EXECUTING"
 
-        index = mission.get("next_step_index", 0)
         completed = [
             r for r in mission.get("step_results", [])
             if r.get("status") == "EXECUTED"

@@ -371,8 +371,12 @@ class SynapseEngine:
 
             # The engine re-evaluates the gap against the live registry, so
             # this cannot skip a step that is still genuinely missing.
+            # capability_name lets resume_blocked backfill a `tool: null`
+            # step -- the planner could not name a capability that did not
+            # exist yet, so nothing else ever tells the step what to call
+            # now that this acquisition just installed one for it.
             result["mission_resumed"] = mission_service.resume_blocked(
-                mission_id
+                mission_id, capability_name=capability_name,
             )
 
         return result

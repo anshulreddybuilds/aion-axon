@@ -38,11 +38,13 @@ def clean():
     # install from a previous test would survive into this one.
     registry.unregister("write_brief")
     registry.declare("write_brief", "Writes an executive brief.", "LOW")
+    registry.unregister("summarize_notes_v1")
     yield
     firestore_store.missions.clear()
     firestore_store.capabilities.clear()
     registry.unregister("write_brief")
     registry.declare("write_brief", "Writes an executive brief.", "LOW")
+    registry.unregister("summarize_notes_v1")
 
 
 def blocked_mission() -> str:
@@ -217,6 +219,118 @@ def test_acquisition_without_a_mission_installs_normally(monkeypatch):
 
     assert result["status"] == "INSTALLED"
     assert "mission_resumed" not in result
+
+
+def blocked_mission_with_unnamed_gap() -> str:
+    """A planned mission whose blocked step has tool=None.
+
+    This is a DIFFERENT gap shape than `blocked_mission()` above: the
+    planner found no registered capability at all for the step, not an
+    unimplemented one it could name. Found live 21 Aug: install() never
+    backfilled this null with the name of what it just installed, so the
+    mission stayed BLOCKED forever even after a successful acquisition.
+    """
+    plan = MissionPlan(
+        goal="Summarize the notes",
+        steps=[
+            MissionStep(
+                step=1, description="summarize the notes",
+                kind="READ_ANALYZE", tool=None, args=[], risk="LOW",
+                action="summarize_notes",
+            ),
+        ],
+    )
+
+    from app.workflows.state import WorkflowState
+    from app.missions.engine import mission_engine
+
+    workflow = WorkflowState(user_request="summarize the notes")
+    summary = mission_engine.run(workflow, plan)
+
+    assert summary["status"] == "BLOCKED"
+    assert summary["blocked_on"]["missing_capability"] is None
+
+    mission_id = "mission-under-test-null-tool"
+    mission_service._persist_planned(
+        mission_id, workflow, "summarize the notes", plan, summary,
+    )
+
+    return mission_id
+
+
+def patch_synapse_for_unnamed_gap(monkeypatch):
+    """Candidate name has no relation to anything in the plan -- there
+    was no name for the planner to give it.
+    """
+    monkeypatch.setattr(
+        engine_module, "search_web",
+        lambda q: {"status": "DEGRADED", "grounded": False, "sources": [],
+                   "findings": "n", "source_count": 0},
+    )
+    monkeypatch.setattr(
+        engine_module, "generate_candidate",
+        lambda need, notes=None: (Candidate(
+            name="summarize_notes_v1", description="Summarizes notes.",
+            risk="LOW", code=(
+                "def summarize_notes_v1(text):\n"
+                "    return {'status': 'SUCCESS', 'summary': text[:10]}\n"
+            ),
+            test="print('OK')", entrypoint="summarize_notes_v1",
+        ), None),
+    )
+    monkeypatch.setattr(
+        engine_module, "execute_in_sandbox",
+        lambda code, test="", timeout_seconds=10: {
+            "status": "COMPLETED", "passed": True,
+            "stdout": '{"status": "SUCCESS", "summary": "hi"}',
+            "stderr": "",
+        },
+    )
+    monkeypatch.setattr(
+        engine_module, "evaluate",
+        lambda *a, **k: {"status": "SCORED", "score": 90, "verdict": "PASS",
+                         "reason": "fine"},
+    )
+
+
+def test_install_finishes_a_mission_whose_gap_had_no_tool_name(monkeypatch):
+    """The bug found live 21 Aug: a `tool: null` step never got backfilled
+    with the name of the capability that was just installed for it, so
+    the mission stayed BLOCKED forever -- even though `mission_resumed`
+    was present in the install response, proving resume_blocked DID run.
+    install() must pass its capability_name into resume_blocked so the
+    step can name what will actually run it.
+    """
+    patch_synapse_for_unnamed_gap(monkeypatch)
+
+    mission_id = blocked_mission_with_unnamed_gap()
+
+    record = synapse.propose("Summarizes notes.", mission_id=mission_id)
+
+    assert record.status == "AWAITING_APPROVAL"
+
+    firestore_store.update_approval(
+        record.approval_request_id, approved=True, decided_by="anshul",
+    )
+
+    result = synapse.install("summarize_notes_v1")
+
+    assert result["status"] == "INSTALLED"
+
+    resumed = result.get("mission_resumed")
+
+    assert resumed is not None, "install did not resume the mission"
+    assert resumed["status"] == "COMPLETED", (
+        "mission stayed BLOCKED even though a matching capability was "
+        "just installed -- the blocked step's tool was never backfilled"
+    )
+
+    mission = firestore_store.get_mission(mission_id)
+    assert mission["status"] == "COMPLETED"
+    assert (
+        mission["plan_document"]["steps"][0]["tool"]
+        == "summarize_notes_v1"
+    )
 
 
 def test_rejected_approval_leaves_the_mission_blocked(monkeypatch):
