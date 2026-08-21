@@ -158,3 +158,26 @@ text is never parsed into tool args before execution. Reproduced live:
 `POST /missions/{id}/resume` on an approved "12.5 * 4" calculator mission
 returned `calculate() missing 1 required positional argument:
 'expression'`. Logged in `docs/audit.md`.
+
+## write_brief — BUILT AND LIVE (21 Aug, revision aion-core-00017-fzq)
+
+The mission's actual product, declared since day one and never
+implemented until now. Registry **8 -> 9 implemented**.
+
+Deterministic and model-free by design: no Gemini call, reproducible
+output, and structurally incapable of inventing a figure. Missing
+recommendations are reported as missing rather than generated. 8 tests;
+one caught a real defect on its first run (a `None` input produced a
+finished-looking brief whose only bullet read "None").
+
+**Proven live under total model outage.** Mission
+`e37b2464-9254-48fc-a53b-79325a5ee860` returned `COMPLETED` / `EXECUTED`
+with a fully rendered three-finding brief **while the Gemini planner was
+returning `429 RESOURCE_EXHAUSTED`** -- the same response carries
+`PLANNER_ERROR: _ResourceExhaustedError` in its `plan` field. The
+deliverable was produced while the model layer was entirely unavailable.
+
+That was not a planned test; the daily quota happened to be exhausted
+when the capability went live. It is nonetheless real evidence for a
+claim worth making carefully: **the mission's product does not depend on
+model availability.** The planner does. The brief does not.
