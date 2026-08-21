@@ -129,6 +129,17 @@ class MissionService:
         overwritten: a step that already names a declared-but-unimplemented
         capability keeps that name, since SYNAPSE's candidate is presumed
         to have been proposed to fill that exact gap.
+
+        The same backfill covers `args`. The planner's instructions only
+        explain arg format for capabilities that already exist -- for a
+        `tool: null` step, the capability does not exist yet at planning
+        time, so there is no signature to follow and args stays `[]`.
+        Found live 21 Aug: this let the freshly installed capability run
+        with zero arguments and crash on its own required parameter. The
+        mission's original free-text request is the only material that
+        was ever given for this step, so it becomes the sole positional
+        arg -- only when the step's args are still empty, never
+        overwriting an explicit one.
         """
         mission = firestore_store.get_mission(mission_id)
 
@@ -157,6 +168,9 @@ class MissionService:
             and plan.steps[index].tool is None
         ):
             plan.steps[index].tool = capability_name
+
+            if not plan.steps[index].args:
+                plan.steps[index].args = [mission["request"]]
 
         workflow = WorkflowState(
             user_request=mission["request"],

@@ -333,6 +333,61 @@ def test_install_finishes_a_mission_whose_gap_had_no_tool_name(monkeypatch):
     )
 
 
+def test_null_tool_step_gets_the_original_request_as_its_args():
+    """The bug found live 21 Aug, right after the tool-name backfill above
+    started working for the first time: the newly named tool ran with
+    ZERO arguments and crashed on its own required parameter, because a
+    `tool: null` step's args stays `[]` -- the planner cannot know a
+    not-yet-invented capability's argument format. The mission's original
+    free-text request is the only material ever supplied for that step,
+    so resume_blocked must use it as the arg when args is still empty.
+
+    This is checked directly against resume_blocked's output rather than
+    through a full synapse.install() run, because the mocked sandbox used
+    elsewhere in this file returns the same canned response regardless of
+    what arguments were actually passed -- it cannot catch a missing-args
+    bug, only a real invocation (or this direct assertion) can.
+    """
+    mission_id = blocked_mission_with_unnamed_gap()
+
+    mission_service.resume_blocked(mission_id, capability_name="calculator")
+
+    mission = firestore_store.get_mission(mission_id)
+
+    assert mission["plan_document"]["steps"][0]["args"] == [
+        "summarize the notes"
+    ]
+
+
+def test_null_tool_step_keeps_explicit_args_if_it_somehow_had_any():
+    """The backfill must never override real args with the request text."""
+    plan = MissionPlan(
+        goal="g",
+        steps=[
+            MissionStep(
+                step=1, description="d", kind="READ_ANALYZE", tool=None,
+                args=["already here"], risk="LOW", action="a",
+            ),
+        ],
+    )
+
+    from app.workflows.state import WorkflowState
+    from app.missions.engine import mission_engine
+
+    workflow = WorkflowState(user_request="the raw request")
+    summary = mission_engine.run(workflow, plan)
+
+    mission_id = "mission-explicit-args"
+    mission_service._persist_planned(
+        mission_id, workflow, "the raw request", plan, summary,
+    )
+
+    mission_service.resume_blocked(mission_id, capability_name="calculator")
+
+    mission = firestore_store.get_mission(mission_id)
+    assert mission["plan_document"]["steps"][0]["args"] == ["already here"]
+
+
 def test_rejected_approval_leaves_the_mission_blocked(monkeypatch):
     """A refused acquisition must not quietly finish the job anyway."""
     patch_synapse(monkeypatch)
