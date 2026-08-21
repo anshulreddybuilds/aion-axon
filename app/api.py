@@ -80,11 +80,19 @@ app.add_middleware(
 
 
 class MissionRequest(BaseModel):
+    # tool/action/args are deliberately required, not defaulted. This
+    # endpoint executes exactly the tool call it is given -- it does not
+    # parse `request` into a plan. A caller who wants that must use
+    # POST /missions/planned. Defaulting tool to "calculator" and args to
+    # [] used to let a request with no tool call in it pass validation,
+    # generate a narrative "plan" that described a real computation, and
+    # then fail at execution/resume time with a bare TypeError -- the
+    # narrative promised work the request never actually specified.
     request: str = Field(..., description="The messy human request.")
-    tool: str = Field("calculator", description="Registered tool name.")
-    action: str = Field("run tool", description="Action being proposed.")
+    tool: str = Field(..., description="Registered tool name.")
+    action: str = Field(..., description="Action being proposed.")
     risk: str = Field("MEDIUM", description="LOW | MEDIUM | HIGH")
-    args: list[Any] = Field(default_factory=list)
+    args: list[Any] = Field(..., description="Positional args for the tool.")
 
 
 class ApprovalDecision(BaseModel):

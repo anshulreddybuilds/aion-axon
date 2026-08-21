@@ -44,6 +44,21 @@ def test_capabilities_are_registered():
     assert body["declared_only"] == body["total"] - body["implemented"]
 
 
+def test_mission_without_explicit_tool_and_args_is_rejected():
+    """POST /missions executes exactly the call it is given -- it does not
+    infer a tool call from free text. Before this test, tool defaulted to
+    "calculator" and args to [], so a request with neither silently built
+    a mission that generated a narrative plan promising a real
+    computation, then failed at execution/resume time with a bare
+    TypeError instead of a validation error at the door.
+    """
+    response = client.post("/missions", json={
+        "request": "Calculate 12.5 * 4 and tell me the result",
+    })
+
+    assert response.status_code == 422
+
+
 def test_medium_risk_mission_requires_approval_and_resumes():
     created = client.post("/missions", json={
         "request": "Work out the invoice total with tax.",
