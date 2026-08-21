@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 from app.governance.autonomy_ledger import autonomy_ledger
 from app.governance.evidence_engine import VERIFIED_VERDICT, verify_research
+from app.governance.ground_truth import lookup
 
 VERIFIABLE_CAPABILITIES = ("web_research",)
 
@@ -41,8 +42,19 @@ def verify_outcome(
     if not isinstance(payload, dict):
         return None
 
+    # Check the claim against an INDEPENDENTLY RECORDED fact when one
+    # clearly applies. Without this the Evidence Engine can only ask "does
+    # this answer look well-formed", which a confident wrong answer passes
+    # easily. lookup() returns None on a weak match on purpose: a
+    # loosely-related fact would manufacture a contradiction and demote a
+    # capability that was actually right.
+    fact = lookup(payload.get("query") or "")
+
     try:
-        report = verify_research(payload)
+        report = verify_research(
+            payload,
+            ground_truth=fact.value if fact and not fact.stale else None,
+        )
 
         change = autonomy_ledger.record_outcome(
             tool_name,
@@ -55,6 +67,17 @@ def verify_outcome(
 
         evidence = {
             "verdict": report.verdict,
+            "ground_truth": (
+                {
+                    "key": fact.key,
+                    "value": fact.value,
+                    "source": fact.source,
+                    "recorded_by": fact.recorded_by,
+                    "age_days": fact.age_days,
+                    "stale": fact.stale,
+                }
+                if fact else None
+            ),
             "confidence": report.confidence,
             "checklist": report.checklist,
             "grounded": report.grounded,

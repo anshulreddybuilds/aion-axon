@@ -20,6 +20,7 @@ from app.governance.autonomy_ledger import (
     SUPERVISION_THRESHOLD,
     autonomy_ledger,
 )
+from app.governance.ground_truth import all_facts, lookup, record
 from app.governance.kill_switch import kill_switch
 from app.governance.review import review_package
 from app.memory.firestore_store import firestore_store
@@ -268,6 +269,68 @@ def telemetry(limit: int = 500) -> dict[str, Any]:
     events = firestore_store.list_audit_events(limit)
 
     return {"events_examined": len(events), **summarise(events)}
+
+
+class GroundTruthRequest(BaseModel):
+    key: str = Field(..., description="Short identifier for the fact.")
+    statement: str = Field(..., description="What the fact is about.")
+    value: str = Field(..., description="The independently known value.")
+    source: str = Field(..., description="Where it came from. Required.")
+    recorded_by: str = Field("owner", description="Who recorded it.")
+
+
+@app.post("/ground-truth")
+def record_ground_truth(body: GroundTruthRequest) -> dict[str, Any]:
+    """Record an independently known fact, with provenance.
+
+    This is what the Evidence Engine checks the agent's claims against. It
+    must come from a human with a source: a fact the agent supplied would
+    be the agent grading its own homework, and a fact with no source is an
+    unaccountable veto over a capability's autonomy.
+    """
+    return record(
+        body.key, body.statement, body.value, body.source, body.recorded_by,
+    )
+
+
+@app.get("/ground-truth")
+def list_ground_truth() -> dict[str, Any]:
+    facts = all_facts()
+
+    return {
+        "count": len(facts),
+        "facts": [
+            {**f.to_dict(), "age_days": f.age_days, "stale": f.stale}
+            for f in facts
+        ],
+    }
+
+
+@app.get("/ground-truth/match")
+def match_ground_truth(query: str) -> dict[str, Any]:
+    """Show which fact WOULD be applied to a query, without running it.
+
+    Useful before a demo: it makes the contradiction check inspectable
+    rather than something that happens invisibly inside a verification.
+    """
+    fact = lookup(query)
+
+    if fact is None:
+        return {
+            "query": query,
+            "matched": False,
+            "note": (
+                "No fact matched closely enough. The claim will be checked "
+                "for form but not against a known value."
+            ),
+        }
+
+    return {
+        "query": query,
+        "matched": True,
+        "fact": {**fact.to_dict(), "age_days": fact.age_days,
+                 "stale": fact.stale},
+    }
 
 
 @app.get("/evolution")

@@ -13,6 +13,7 @@ class MemoryFirestore:
         self.capabilities: dict[str, dict[str, Any]] = {}
         self.evolution_events: dict[str, dict[str, Any]] = {}
         self.monitors: dict[str, dict[str, Any]] = {}
+        self.ground_truth: dict[str, dict[str, Any]] = {}
 
     def create_approval(self, request_id: str, data: dict[str, Any]) -> None:
         self.approvals[request_id] = {
@@ -119,6 +120,12 @@ class MemoryFirestore:
 
     def list_monitors(self) -> list[dict[str, Any]]:
         return list(self.monitors.values())
+
+    def save_ground_truth(self, key: str, data: dict[str, Any]) -> None:
+        self.ground_truth[key] = data
+
+    def list_ground_truth(self) -> list[dict[str, Any]]:
+        return list(self.ground_truth.values())
 
 
 class AxonFirestore:
@@ -268,6 +275,15 @@ class AxonFirestore:
         return [
             doc.to_dict()
             for doc in self.db.collection("monitors").stream()
+        ]
+
+    def save_ground_truth(self, key: str, data: dict[str, Any]) -> None:
+        self.db.collection("ground_truth").document(key).set(data)
+
+    def list_ground_truth(self) -> list[dict[str, Any]]:
+        return [
+            doc.to_dict()
+            for doc in self.db.collection("ground_truth").stream()
         ]
 
 
