@@ -265,6 +265,23 @@ exact live symptom. The lesson, not just the fix: "implemented and tested"
 had not yet meant "run once for real" — this is why live verification
 found a gap code review and CI both missed.
 
+**Second finding, same live session, immediately after the tool-name fix
+above was deployed (`aion-core-00015-rsb`) and confirmed working live:**
+with the tool name now correctly backfilled, the mission (`3c60715b`,
+capability `analyze_complaint_urgency`) tried to run for real — and
+crashed. The freshly installed capability's function required an
+argument (`complaint_text`) that was never supplied: a `tool: null`
+step's `args` also stays `[]`, for the same root reason its `tool` stayed
+`null` — the planner's instructions only cover arg format for
+capabilities that already exist, and this one didn't exist at planning
+time. Fixed the same way (`655102c`): `resume_blocked` now also backfills
+empty `args` with the mission's original free-text request (the only
+material ever supplied for that step), never overwriting an explicit
+args list. Two regression tests added, one proven against a revert. Not
+yet deployed or re-verified live as of this commit — next step is a
+fresh gap so the already-installed `analyze_complaint_urgency` capability
+doesn't mask whether the fix actually works.
+
 ---
 
 ## 13. Evidence & Autonomy Ledger — **IMPLEMENTED (on Firestore, not BigQuery)**
