@@ -132,13 +132,29 @@ skill rather than the query itself.
 - **Kill switch ON -> scheduled tick returned `BLOCKED`.** Unattended work
   gets the same governance as interactive work.
 
-## Acquisition #3 — BLOCKED on Gemini free-tier daily quota
+## Acquisition #3 — DONE (21 Aug, live, revision aion-core-00014-ctw)
 
-Infrastructure complete and tested (146 tests). The acquisition itself
-failed at the GENERATE stage with `429 RESOURCE_EXHAUSTED`, persisting
-after a 75s pause, so it is the daily cap rather than a rate limit.
+Blocked 20 Aug on the Gemini free-tier daily cap (`429 RESOURCE_EXHAUSTED`,
+20 requests/day/model). Retried 21 Aug once the daily quota reset. First
+retry hit a transient `503 UNAVAILABLE` (model overload, not quota); second
+retry same day succeeded.
 
-The failure was recorded honestly: `status FAILED`, `stage GENERATE`, real
-reason. Nothing fabricated, no partial capability installed.
+`analyze_yoy_alert`: research DEGRADED (still no Search grounding — known
+limitation, unchanged) -> candidate generated -> safety screen PASS ->
+sandbox tests PASS -> Gemma evaluation **100/PASS** -> human approval
+(owner, request `2c5e0ac3-820c-45bf-8855-2a6ac3091ccf`) -> installed,
+evolution event `nO8eYSNPWoYwRPvMz9v7`.
 
-Unblocks when the daily quota resets or the $150 credits land (~25 Aug).
+Registry **14 -> 15** (6 implemented). Autonomy for the capability
+**32% -> 47%** on installation. Verified live end-to-end immediately after:
+mission `bd1c6e7a-266b-44b4-bd34-34287df04f22` ran `analyze_yoy_alert`
+against a real 2022->2023 series, no approval hold needed this time (47%
+autonomy clears the 40% threshold), correctly flagged a 28% YoY jump as
+`ALERT` against a 15% threshold.
+
+**New defect found in passing, not fixed tonight:** resuming a mission
+after approval calls the underlying tool with no arguments — the plan
+text is never parsed into tool args before execution. Reproduced live:
+`POST /missions/{id}/resume` on an approved "12.5 * 4" calculator mission
+returned `calculate() missing 1 required positional argument:
+'expression'`. Logged in `docs/audit.md`.

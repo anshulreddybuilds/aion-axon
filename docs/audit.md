@@ -325,6 +325,36 @@ demotion is separate and works on evidence.
 
 ---
 
+---
+
+# Known defect — mission resume drops tool arguments (found 21 Aug, not fixed)
+
+`POST /missions/{id}/resume` calls the mission's tool with whatever `args`
+were stored on the mission at creation time — but a mission created from a
+free-text `request` (rather than an explicit `tool`/`args` pair) never has
+its plan text parsed into real arguments. The stored `args` stays `[]`.
+
+Reproduced live: a mission built from `{"request": "Calculate 12.5 * 4 and
+tell me the result"}` planned correctly (Gemini's own plan says "12.5 x
+4 = 50"), went to `AWAITING_APPROVAL` on `calculator`/`run tool`, was
+approved, then `resume` failed with `calculate() missing 1 required
+positional argument: 'expression'` — because `args` was `[]` the whole
+time.
+
+**Impact:** any mission that reaches a tool via free-text planning rather
+than an explicit `tool`+`args` call is unrunnable after approval. Missions
+posted directly with `tool`/`args` (the pattern every other test in this
+file uses) are unaffected — this is specifically the planner-to-tool-call
+handoff.
+
+**Not fixed tonight** — out of scope for the Acquisition #3 verification
+pass that found it. Whoever picks this up next: the fix is parsing the
+plan's `STEPS`/args intent into the mission's stored `args` before
+`AWAITING_APPROVAL`, or having `resume` re-derive args from the plan at
+resume time.
+
+---
+
 # Top 3 Immediate Coding Priorities
 
 ### 1. Close the loop — auto-resume the blocked mission (Stage 12)
