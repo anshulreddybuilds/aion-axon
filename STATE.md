@@ -11,12 +11,12 @@
 | Live revision | `aion-core-00017-fzq` |
 | Core URL | https://aion-core-638298765129.asia-south1.run.app |
 | Registry (live) | **17 declared, 9 implemented** |
-| Implemented | calculator · web_research · read_dataset · convert_currency_amount · detect_yoy_anomalies · analyze_yoy_alert · summarize_performance_text · analyze_complaint_urgency |
+| Implemented | calculator · web_research · read_dataset · convert_currency_amount · detect_yoy_anomalies · analyze_yoy_alert · summarize_performance_text · analyze_complaint_urgency · **write_brief** |
 | Telemetry (live) | 18 model calls, all measured, 65,486 tokens; 26 tool executions |
-| Tests | **83 passing** across test_loop_closure / test_synapse / test_mission_engine / test_api / test_reliability |
+| Tests | **83 passing** across test_loop_closure / test_synapse / test_mission_engine / test_api / test_reliability / test_brief_writer |
 | current_amendment | 13 |
 
-**Test-count caveat:** 75 is the count for those five files run together. The
+**Test-count caveat:** 83 is the count for those five files run together. The
 FULL suite (`pytest -q`, no path filter) does NOT pass — see blocker 2.
 
 ## Blockers
@@ -57,11 +57,11 @@ Mission `ab1f0b35-5eed-4632-b0dc-760abcc66316` is sitting BLOCKED with
 `tool: null` and can be reused — `/acquire` on it is the exact call that
 429'd. Cheapest resume path: retry that one call after quota reset.
 
-**2. DONE 21 Aug (`7ac0125`) — `write_brief` built and live.** Kept here only
+**DONE 21 Aug (`7ac0125`) — `write_brief` built and live.** Kept here only
 so the next reader does not rebuild it. Deterministic, model-free, 8 tests.
 Verified live on mission `e37b2464` — and it rendered a full brief **while the
 Gemini planner was returning 429**, evidencing that the mission's product does
-not depend on model availability. New priority 2 is below.
+not depend on model availability. The real priority 2 is below.
 
 **2. Phase 8 fire drill — the ONE continuous messy-workflow run.**
 Every ingredient now exists (acquisition ✓, dataset ✓, brief ✓) but they have
