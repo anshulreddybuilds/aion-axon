@@ -241,14 +241,29 @@ Evolution events are written with BEFORE / CHANGE / REASON / AFTER, citations,
 test results, evaluation and approver. **Verified live:** two events from two
 real acquisitions.
 
-**CLOSED.** An acquisition now carries the `mission_id` it exists to unblock,
-and `install()` resumes that mission from its blocked step via
+**CLOSED, corrected 21 Aug after a real live run exposed a gap the tests
+missed.** An acquisition carries the `mission_id` it exists to unblock, and
+`install()` resumes that mission from its blocked step via
 `MissionService.resume_blocked`. Routes: `POST /missions/{id}/acquire` and
 `POST /missions/{id}/resume-blocked`.
 
 Resume cannot skip a still-open gap: the engine re-evaluates against the live
 registry, a rejected approval leaves the mission BLOCKED, and completed steps
 are never replayed.
+
+**What "closed" missed, found live 21 Aug (`e9a44a5`):** every test only
+covered the gap shape where the planner *names* an unimplemented declared
+capability. The first real live run of the full loop (mission `75d24305`)
+hit the OTHER gap shape — the planner leaves `tool: null` when it finds no
+registered capability at all — and `install()`'s auto-resume fired
+correctly (zero manual step) but the mission stayed BLOCKED forever,
+because nothing wrote the newly installed capability's name back into
+the step. Fixed: `resume_blocked` now backfills a null `tool` with the
+capability `install()` just installed. Regression test added for this
+specific gap shape, proven by reverting and watching it fail with the
+exact live symptom. The lesson, not just the fix: "implemented and tested"
+had not yet meant "run once for real" — this is why live verification
+found a gap code review and CI both missed.
 
 ---
 
