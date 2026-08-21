@@ -310,14 +310,15 @@ system built around evidence should hold itself to the same standard.
 - **The AST safety screen can be evaded** by sufficiently indirect code.
   That is why the sandbox holds nothing worth stealing — neither layer is
   trusted alone.
-- **The Holo-Deck UI is built but not deployed.** The React/Vite app in
-  `web/` reads the governed API (never Firestore directly, so the browser
-  holds no credentials) and renders capabilities, autonomy, evolution
-  events, monitors, approvals and telemetry, tolerating partial endpoint
-  failure. What is missing is only the hosting step: the repo carries no
-  `firebase.json`/`.firebaserc`, and `https://aion-axon-2026.web.app`
-  currently returns 404. The API's CORS allowlist already names that
-  origin. All state also remains available directly over the API.
+- **The Holo-Deck is live at https://aion-axon-2026.web.app but is
+  read-only.** It reads the governed API rather than Firestore directly, so
+  the browser holds no credentials — the same property the sandbox has, for
+  the same reason. The consequence is that its Approve / Reject / kill-switch
+  controls **return 401**: those are writes, and writes require the owner
+  token the browser deliberately does not carry. Approvals are driven from
+  `scripts/approve.py` instead. Giving the UI real write access needs a token
+  entry field or proper auth, and is listed as a limitation rather than
+  presented as working.
 - Live Gemini calls and real-Firestore writes are **manual probes**, not
   CI. CI deliberately runs the offline path only.
 - **Owner auth is a bearer token, not real authentication.** The honest

@@ -8,9 +8,9 @@
 |---|---|
 | Branch | `feat/core-intelligence`, pushed, level with origin |
 | HEAD | `4c9581b` |
-| Live revision | `aion-core-00017-fzq` |
+| Live revision | `aion-core-00017-fzq` · **Holo-Deck: https://aion-axon-2026.web.app** |
 | Core URL | https://aion-core-638298765129.asia-south1.run.app |
-| Registry (live) | **17 declared, 9 implemented** |
+| Registry (live) | **18 declared, 10 implemented** |
 | Implemented | calculator · web_research · read_dataset · convert_currency_amount · detect_yoy_anomalies · analyze_yoy_alert · summarize_performance_text · analyze_complaint_urgency · **write_brief** |
 | Telemetry (live) | 18 model calls, all measured, 65,486 tokens; 26 tool executions |
 | Tests | **83 passing** across test_loop_closure / test_synapse / test_mission_engine / test_api / test_reliability / test_brief_writer |
@@ -40,54 +40,53 @@ dependency, not an env-var-gated module singleton. Full detail in
 
 ## Next 3 priorities
 
-**1. Finish live-verifying the args-backfill fix (`655102c`) — needs quota.**
-Two Stage 12 bugs were found live 21 Aug and both are fixed + deployed:
-- `e9a44a5` (tool-name backfill) — **VERIFIED LIVE**, mission `3c60715b`.
-- `655102c` (args backfill) — **tests pass, proven by revert, but NOT yet
-  confirmed live.** Deployed in `00016-kjz`.
+**1. Phase 8 fire drill — the ONE continuous messy-workflow run.**
+Every ingredient now exists and each is individually proven live
+(acquisition, BigQuery dataset, anomaly analysis, brief). They have never
+been run as a single unbroken mission, which is what the locked §9 demo
+actually shows. Needs Gemini quota for the planner.
 
-To verify: `POST /missions/planned` with any free-text request that has no
-matching capability → confirm `tool: null` + BLOCKED → `POST
-/missions/{id}/acquire` → `scripts/approve.py <request_id>` → `POST
-/synapse/install/<capability>` → the mission must come back **COMPLETED with a
-real non-error result**. Use a FRESH request; the already-installed
-`analyze_complaint_urgency` and `summarize_performance_text` will mask the test.
-
-Mission `ab1f0b35-5eed-4632-b0dc-760abcc66316` is sitting BLOCKED with
-`tool: null` and can be reused — `/acquire` on it is the exact call that
-429'd. Cheapest resume path: retry that one call after quota reset.
-
-**DONE 21 Aug (`7ac0125`) — `write_brief` built and live.** Kept here only
+**DONE — `write_brief` (`7ac0125`) — `write_brief` built and live.** Kept here only
 so the next reader does not rebuild it. Deterministic, model-free, 8 tests.
 Verified live on mission `e37b2464` — and it rendered a full brief **while the
 Gemini planner was returning 429**, evidencing that the mission's product does
 not depend on model availability. The real priority 2 is below.
 
-**2. Phase 8 fire drill — the ONE continuous messy-workflow run.**
-Every ingredient now exists (acquisition ✓, dataset ✓, brief ✓) but they have
-never been run as a single unbroken mission, which is what the locked §9 demo
-actually shows. Needs quota for the planner.
+**2. Clean the approval queue before filming.** The Holo-Deck shows **12
+waiting** approvals, most of them stale test artifacts. A queue that long
+trains a viewer (and an owner) to scroll past without reading, which is the
+opposite of what the demo argues. `scripts/clean_approvals.py` exists and is
+dry-run by default. Rejecting is a recorded decision, so this is an owner
+action, not housekeeping.
 
-**3. DEPLOY the Holo-Deck. It is BUILT — only hosting is missing.**
-Owner ruled 22 Aug: **Session B is dead, Session A inherits everything** —
-`web/`, `README.md` and `docs/` are now in scope, and the old do-not-touch
-list is void (recorded in `CLAUDE.md`).
+**3. Wire owner-token entry into the Holo-Deck (or accept read-only).**
+The dashboard is LIVE at **https://aion-axon-2026.web.app** (deployed 22 Aug;
+`firebase.json` + `.firebaserc` at repo root, `web/dist` is the public dir).
+Reads all work. **Writes do not** — Approve / Reject / kill switch will 401,
+because the browser holds no owner token by design. Either add a
+paste-your-token field held in memory only, or decide the demo drives writes
+from the CLI and the Holo-Deck stays a read surface. **Owner decision, not a
+bug.**
 
-Surveyed on inheritance and the docs were wrong: `docs/audit.md` and
-`README.md` both said the UI "is not built". It IS built — `web/` is a
-React/Vite/Tailwind app, ~960 lines across `App.jsx`, `AxonLoop.jsx`,
-`panels.jsx`, `ReviewPanel.jsx`, `api.js`, wired to every live endpoint
-(capabilities, autonomy, evolution, monitors, approvals, telemetry,
-sandbox proof) with `Promise.allSettled` so one dead endpoint cannot blank
-the screen. It reads the governed API rather than Firestore directly, so
-the browser holds no credentials. `web/dist/` is built and NEWER than
-`web/src/`. README corrected 22 Aug.
+## DONE this session — do not rebuild
 
-**The only gap is deployment:** no `firebase.json`, no `.firebaserc`, and
-`https://aion-axon-2026.web.app` returns **404**. The API's CORS allowlist
-already names that origin, so the backend is ready for it. This is a
-config-plus-`firebase deploy` job, NOT a build job — much smaller than the
-roadmap assumed. Needs an owner console step (`firebase login`).
+- **`write_brief` (`7ac0125`)** — the mission's product. Deterministic,
+  model-free, cannot invent a figure. Verified live on mission `e37b2464`
+  **during a total Gemini outage**, which is evidence that the deliverable
+  does not depend on model availability.
+- **Both Stage 12 fixes VERIFIED LIVE (`e9a44a5`, `655102c`)** on mission
+  `ab1f0b35` / capability `analyze_review_sentiment`: came back `COMPLETED`
+  with `tool` backfilled AND the original request text passed as args,
+  returning `sentiment: Negative, rationale: "crushed"`. Cost zero quota —
+  the SYNAPSE proposal had already been banked before the cap hit.
+- **Holo-Deck deployed** — see priority 3.
+- **Firebase added to the GCP project.** It was a Cloud-only project; Firebase
+  Management API had to be enabled AND the project adopted via the console
+  (the CLI `addfirebase` 403s until terms are accepted). Now on the **Blaze**
+  plan because the project already had billing — free-tier allowances still
+  apply and usage is ~275 kB against 360 MB/day. ⚠️ **Never delete the project
+  from the Firebase console — that deletes the Cloud project and everything
+  in it.**
 
 ## Outstanding owner actions
 
