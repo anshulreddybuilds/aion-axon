@@ -10,6 +10,7 @@ real implementation.
 from app.capabilities.registry import registry
 from app.capabilities.seed import SEED_CAPABILITIES
 from app.tools.bigquery_public import query_public_dataset
+from app.tools.brief_writer import write_brief
 from app.tools.calculator import calculate
 from app.tools.web_research import search_web
 
@@ -17,6 +18,7 @@ IMPLEMENTATIONS = {
     "calculator": calculate,
     "web_research": search_web,
     "read_dataset": query_public_dataset,
+    "write_brief": write_brief,
 }
 
 

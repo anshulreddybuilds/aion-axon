@@ -75,7 +75,7 @@ SEED_CAPABILITIES: tuple[SeedCapability, ...] = (
         "write_brief",
         "Writes an executive Business Action Brief from findings.",
         "LOW",
-        False,
+        True,
     ),
     SeedCapability(
         "format_table",
