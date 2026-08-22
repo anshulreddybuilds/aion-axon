@@ -127,20 +127,23 @@ function readStages({ telemetry, sandbox, capabilities, autonomy, evolution, pen
   };
 }
 
-const TONE = {
+// Exported so Topology3D reads the exact same tone map — two renderings
+// of one dataset must never be free to disagree about what a color means.
+export const TONE = {
   VERIFIED: { dot: "#37e0d8", text: "text-cyan", ring: "border-cyan/40" },
   DEGRADED: { dot: "#fbbf24", text: "text-warn", ring: "border-warn/40" },
   LOCKED: { dot: "#3a4657", text: "text-muted", ring: "border-edge" },
 };
 
-export default function Topology({ stages, selected, onSelect }) {
-
+/** A node pulses only when its own counter actually moved between two
+ * polls — never on a timer, never on load. Shared by every rendering of
+ * the topology (2D grid, 3D ring) so "what counts as a real event" is
+ * defined exactly once.
+ */
+export function useFiringPulses(stages) {
   const [firing, setFiring] = useState({});
   const previous = useRef(null);
 
-  // A node pulses only when its own counter actually moved between two
-  // polls. The first poll is a baseline; lighting everything on load
-  // would make the very first impression a lie.
   useEffect(() => {
     const counts = Object.fromEntries(
       STAGES.map(({ key }) => [key, stages[key].count])
@@ -171,6 +174,13 @@ export default function Topology({ stages, selected, onSelect }) {
 
     return () => clearTimeout(t);
   }, [stages]);
+
+  return firing;
+}
+
+export default function Topology({ stages, selected, onSelect }) {
+
+  const firing = useFiringPulses(stages);
 
   const counts = STAGES.reduce((acc, { key }) => {
     acc[stages[key].state] = (acc[stages[key].state] || 0) + 1;

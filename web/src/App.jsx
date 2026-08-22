@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Command from "./Command.jsx";
 import Topology, { computeStages } from "./Topology.jsx";
+import Topology3D from "./Topology3D.jsx";
 import Inventory from "./Inventory.jsx";
 import { CompletionRing, Hero, Sidebar, TopStrip } from "./Shell.jsx";
 import { api, loadAll } from "./api.js";
@@ -52,6 +53,10 @@ export default function App() {
   const [error, setError] = useState(null);
   const [view, setView] = useState("command");
   const [node, setNode] = useState(null);
+  // 2D is the default and the fallback everywhere. 3D is opt-in, in the
+  // Pipeline view only, per the owner's own time-boxed rollout plan: it
+  // ships behind a toggle, never replacing the 2D rendering outright.
+  const [pipelineIs3D, setPipelineIs3D] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -180,7 +185,19 @@ export default function App() {
 
           {view === "pipeline" && (
             <div className="space-y-4">
-              <Topology stages={stages} selected={node} onSelect={setNode} />
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setPipelineIs3D((v) => !v)}
+                  className="text-[9px] tracking-[0.14em] px-3 py-1.5 rounded border border-edge text-muted hover:border-cyan/40 hover:text-cyan"
+                >
+                  {pipelineIs3D ? "◱ SWITCH TO 2D" : "◳ TRY 3D (PREVIEW)"}
+                </button>
+              </div>
+              {pipelineIs3D ? (
+                <Topology3D stages={stages} selected={node} onSelect={setNode} />
+              ) : (
+                <Topology stages={stages} selected={node} onSelect={setNode} />
+              )}
               <Inventory stages={stages} onSelect={setNode} />
             </div>
           )}
