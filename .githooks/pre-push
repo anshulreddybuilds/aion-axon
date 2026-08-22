@@ -1,0 +1,34 @@
+#!/bin/sh
+# Refuse to push a red suite.
+#
+# On 22 Aug a signature change was committed AND deployed with two failing
+# tests. They passed file-by-file and the full suite was not re-run before
+# pushing. That is the same gap that let 121 collection errors sit green in
+# CI for weeks: a check that depends on remembering to run it is not a
+# check.
+#
+# Nine days from submission, a broken push can reach Cloud Run before
+# anyone notices. This makes the suite a gate rather than a habit.
+#
+# Bypass deliberately with: git push --no-verify
+
+PYTHON="C:/Users/sneha/Desktop/AION-AXON/.venv/Scripts/python.exe"
+
+if [ ! -f "$PYTHON" ]; then
+    echo "pre-push: venv python not found at $PYTHON — running suite skipped."
+    echo "pre-push: FIX THE PATH rather than pushing blind."
+    exit 1
+fi
+
+echo "pre-push: running the full test suite..."
+
+if ! "$PYTHON" -m pytest -q; then
+    echo ""
+    echo "=================================================="
+    echo " PUSH BLOCKED — the test suite is red."
+    echo " Fix it, or push with --no-verify if you mean it."
+    echo "=================================================="
+    exit 1
+fi
+
+echo "pre-push: suite green, pushing."
