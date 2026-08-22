@@ -285,9 +285,20 @@ def test_catalog_shows_parameter_names_so_the_planner_stops_guessing():
     """
     from app.capabilities.declarations import capability_catalog
 
+    # Registered here rather than leaning on write_brief: other suites
+    # deliberately unregister that one, and a test that depends on another
+    # file's fixture state is a test that fails for the wrong reason.
+    def render_report(findings, title="Report", recommendations=None):
+        return {"status": "SUCCESS"}
+
+    registry.register("echo_arg", "Renders a report.", "LOW", render_report)
+
     catalog = capability_catalog()
 
-    assert "write_brief(findings, title=<optional>," in catalog
+    assert (
+        "echo_arg(findings, title=<optional>, recommendations=<optional>)"
+        in catalog
+    ), "positional parameter names are missing from the catalog"
     assert "calculator(expression)" in catalog
     assert "read_dataset(sql)" in catalog
 

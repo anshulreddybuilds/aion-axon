@@ -80,10 +80,15 @@ def test_function_declarations_cover_every_capability():
 
 
 def test_catalog_marks_availability():
+    """The catalog now carries parameter names too, so an implemented
+    capability reads `name(args) (AVAILABLE...)`. Asserting on the state
+    marker rather than on the exact spacing keeps this test about
+    availability, which is what it is named for.
+    """
     catalog = capability_catalog()
 
-    assert "calculator (AVAILABLE" in catalog
-    assert "write_brief (NOT IMPLEMENTED" in catalog
+    assert "calculator(expression) (AVAILABLE" in catalog
+    assert "(NOT IMPLEMENTED" in catalog
 
 
 def test_plan_runs_all_low_risk_steps():
