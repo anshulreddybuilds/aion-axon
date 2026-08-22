@@ -14,7 +14,15 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* One hero effect only. Everything else stays calm (§5.1). */
+/* One hero effect only (§5.1) — and that hero is now the Synapse Theater.
+   Everything else stays calm.
+
+   This class is applied CONDITIONALLY, only while the system is actually
+   working. The `infinite` below describes how long one episode of work
+   breathes for, not a permanent property of the page: the element drops
+   the class the moment work stops. Motion that ran regardless of events
+   would be decoration, and this page's entire claim is that it does not
+   decorate. */
 @keyframes orbBreathe {
   0%, 100% { opacity: 0.55; transform: scale(1); }
   50%      { opacity: 0.9;  transform: scale(1.04); }

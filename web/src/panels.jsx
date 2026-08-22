@@ -25,12 +25,16 @@ export function Empty({ children }) {
 }
 
 export function LiveBadge({ online }) {
+  // The dot used to breathe continuously whenever the API was reachable.
+  // "Still connected" is a state, not an event, so that motion narrated
+  // nothing and quietly contradicted the rule the rest of the page keeps.
+  // Colour already carries the whole meaning: green reachable, red not.
   return (
     <div className="flex items-center gap-2 text-[11px]">
       <span
         className={`h-2 w-2 rounded-full ${
           online ? "bg-ok" : "bg-danger"
-        } ${online ? "orb-breathe" : ""}`}
+        }`}
       />
       <span className={online ? "text-ok" : "text-danger"}>
         {online ? "LIVE — Cloud Run / aion-core" : "OFFLINE"}

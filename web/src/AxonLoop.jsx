@@ -67,7 +67,19 @@ export default function AxonLoop({ state, activePhase }) {
         />
       )}
 
-      <circle cx="180" cy="170" r="74" fill="url(#core)" className="orb-breathe" />
+      {/* The glow is always drawn; it only BREATHES while the system is
+          actually working. It used to breathe unconditionally, which made
+          it the one piece of motion on the page that narrated nothing —
+          a page that claims every animation is a real event cannot also
+          have a pulse that means "still on". An idle orb is now still. */}
+      <circle
+        cx="180"
+        cy="170"
+        r="74"
+        fill="url(#core)"
+        className={busy ? "orb-breathe" : undefined}
+        opacity={busy ? 1 : 0.55}
+      />
 
       <motion.circle
         cx="180"
