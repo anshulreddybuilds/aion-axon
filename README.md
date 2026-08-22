@@ -7,6 +7,7 @@ Google "All Things Agentic" Hackathon · Category: **Taskmaster**
 | | |
 |---|---|
 | Live API | https://aion-core-638298765129.asia-south1.run.app |
+| Holo-Deck | https://aion-axon-2026.web.app (read-only — see [Limitations](#limitations)) |
 | Sandbox | `https://aion-sandbox-638298765129.asia-south1.run.app` (authenticated only — see [Security](#security)) |
 | Stack | Gemini 3.6 Flash · Google ADK 2.7 · Cloud Run ×2 · Firestore · Secret Manager · BigQuery · Gemma 4 |
 
@@ -33,31 +34,62 @@ The capabilities are the means. **The finished work is the product.**
 
 ## 90-second happy path
 
+**Reads are public; writes need the owner token.** Every state-changing call
+below sends `X-Axon-Token`, because an agent whose kill switch any passerby
+can flip is not under its owner's control. If you are the owner:
+
+```bash
+export AXON_OWNER_TOKEN=$(gcloud secrets versions access latest \
+  --secret=axon-owner-token --project=aion-axon-2026)
+```
+
 ```bash
 CORE=https://aion-core-638298765129.asia-south1.run.app
 
-# 1. The agent is live on Google Cloud
+# 1. The agent is live on Google Cloud — no token needed, this is a read
 curl -s $CORE/
 
-# 2. It cannot write a business brief — an honest capability gap, not a crash
+# 2. It CAN write the business brief — the mission's product.
+#    Deterministic and model-free, so it cannot invent a figure and cannot
+#    be rate-limited. Every number here came from the findings passed in.
 curl -s -X POST $CORE/missions -H "Content-Type: application/json" \
-  -d '{"request":"brief","tool":"write_brief","action":"write it","risk":"LOW","args":[]}'
-# -> {"status": "BLOCKED", "missing_capability": "write_brief"}
+  -H "X-Axon-Token: $AXON_OWNER_TOKEN" \
+  -d '{"request":"brief","tool":"write_brief","action":"write it","risk":"LOW",
+       "args":["[{\"metric\":\"churn\",\"value\":\"4.1%\"}]"]}'
+# -> "status": "SUCCESS", with a rendered Business Action Brief
+
+# 2b. Ask for something it genuinely cannot do yet — an honest capability
+#     gap, not a crash and not an improvised answer.
+curl -s -X POST $CORE/missions -H "Content-Type: application/json" \
+  -H "X-Axon-Token: $AXON_OWNER_TOKEN" \
+  -d '{"request":"x","tool":"extract_entities","action":"extract","risk":"LOW","args":[]}'
+# -> {"status": "BLOCKED", "missing_capability": "extract_entities"}
 
 # 3. Ask SYNAPSE to acquire a capability. It stops at approval.
 curl -s -X POST $CORE/synapse/propose -H "Content-Type: application/json" \
+  -H "X-Axon-Token: $AXON_OWNER_TOKEN" \
   -d '{"need":"Given a JSON list of numbers, return their mean and median."}'
 # -> "status": "AWAITING_APPROVAL"
 
-# 4. Nothing installs without a human.
+# 4. Nothing installs without a human. Approval and install are separate
+#    calls, and install re-reads the approval from Firestore rather than
+#    trusting the proposal record.
 python scripts/approve.py <approval_request_id>
-curl -s -X POST $CORE/synapse/install/<capability> -d '{}' -H "Content-Type: application/json"
+curl -s -X POST $CORE/synapse/install/<capability> \
+  -H "Content-Type: application/json" -H "X-Axon-Token: $AXON_OWNER_TOKEN" -d '{}'
 
 # 5. Ask for something forbidden. It refuses, citing policy.
 curl -s -X POST $CORE/missions -H "Content-Type: application/json" \
+  -H "X-Axon-Token: $AXON_OWNER_TOKEN" \
   -d '{"request":"t","tool":"calculator","action":"read credentials from the runtime","risk":"MEDIUM","args":["1+1"]}'
 # -> "policy_id": "G-04"
 ```
+
+Step 3 is the only step that spends Gemini quota. On the free tier that is
+**20 requests per day**; past it, SYNAPSE records `FAILED` with the real
+`RESOURCE_EXHAUSTED` reason rather than inventing a capability. Steps 1, 2
+and 5 keep working — and step 2 in particular is deliberately model-free, so
+**the brief is still produced when the model layer is entirely unavailable.**
 
 Or run all four demo moments at once:
 

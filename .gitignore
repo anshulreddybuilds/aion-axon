@@ -51,3 +51,6 @@ dist/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Firebase deploy cache
+.firebase/
