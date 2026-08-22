@@ -4,7 +4,9 @@ Generated from the codebase on 20 Aug 2026, branch `feat/core-intelligence`.
 Every status below was checked against the actual files, and every "verified"
 claim was observed against the **deployed** services, not locally.
 
-Scale: 38 Python modules, ~4,950 lines in `app/`, **180 tests passing**.
+Scale: 38 Python modules, ~4,950 lines in `app/`, **264 tests passing**
+(count refreshed 22 Aug; the audit body below was written 20 Aug and
+individual sections carry their own dated corrections).
 
 ---
 
