@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import AxonLoop from "./AxonLoop.jsx";
-import SynapseTheater from "./SynapseTheater.jsx";
+import Topology, { computeStages } from "./Topology.jsx";
+import Inventory from "./Inventory.jsx";
+import { CompletionRing, Hero, Sidebar, TopStrip } from "./Shell.jsx";
 import { api, loadAll } from "./api.js";
 import {
   ApprovalCard,
@@ -9,7 +10,6 @@ import {
   CapabilityCounter,
   EvidencePanel,
   KillSwitch,
-  LiveBadge,
   MonitorPanel,
   SkillPassport,
   TrustBoundary,
@@ -17,17 +17,40 @@ import {
 
 const REFRESH_MS = 3000;
 
+const HEROES = {
+  command: {
+    crumb: "LIVE OVERVIEW",
+    title: "Command the spine.",
+    blurb:
+      "A governed execution surface for seeing what the system knows, what it is allowed to do, and where a human must decide.",
+  },
+  pipeline: {
+    crumb: "PIPELINE",
+    title: "Inspect every handoff.",
+    blurb:
+      "The capability spine is intentionally visible: no package moves from intent to evolution without evidence.",
+  },
+  ledger: {
+    crumb: "AUTONOMY LEDGER",
+    title: "Trust is earned, and losable.",
+    blurb:
+      "Autonomy rises on verified outcomes and falls when reality disagrees. Below the supervision threshold, a human is asked again.",
+  },
+  evidence: {
+    crumb: "EVIDENCE",
+    title: "Why this skill exists.",
+    blurb:
+      "Every acquired capability keeps its chain of custody — the need, the research, the screen, the sandbox, the score, and who approved it.",
+  },
+};
+
 export default function App() {
   const [data, setData] = useState(null);
   const [passport, setPassport] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-
-  // Refusals are transient — they are an EVENT, not a state the system
-  // stays in, so the red flash is driven by a timer rather than by polling
-  // finding a leftover flag.
-  const [refusal, setRefusal] = useState(false);
-  const refusalTimer = useRef(null);
+  const [view, setView] = useState("command");
+  const [node, setNode] = useState(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -45,13 +68,11 @@ export default function App() {
     return () => clearInterval(id);
   }, [refresh]);
 
-  const acquired = useMemo(() => {
-    const tracked = data?.autonomy?.capabilities || [];
-    return tracked.filter((c) => c.passport);
-  }, [data]);
+  const acquired = useMemo(
+    () => (data?.autonomy?.capabilities || []).filter((c) => c.passport),
+    [data]
+  );
 
-  // Show the most recently acquired capability by default: the passport
-  // people want is almost always the newest one.
   useEffect(() => {
     if (!passport && acquired.length) {
       setPassport(acquired[acquired.length - 1].name);
@@ -60,7 +81,6 @@ export default function App() {
 
   useEffect(() => {
     if (!passport) return;
-
     api
       .passport(passport)
       .then((body) => setData((d) => ({ ...d, selected: body })))
@@ -70,35 +90,19 @@ export default function App() {
   const pending = data?.pending?.pending || [];
   const killed = !!data?.root?.kill_switch_active;
 
-  const loopState = refusal
-    ? "refusal"
-    : killed
-    ? "refusal"
-    : pending.length
-    ? "approval"
-    : busy
-    ? "working"
-    : "idle";
-
-  const activePhase = refusal || killed
-    ? "govern"
-    : pending.length
-    ? "govern"
-    : busy
-    ? "execute"
-    : null;
-
-  const flashRefusal = () => {
-    setRefusal(true);
-    clearTimeout(refusalTimer.current);
-    refusalTimer.current = setTimeout(() => setRefusal(false), 2000);
-  };
+  // One computation, shared by the ring, the grid and the table, so the
+  // three can never quietly disagree about the same stage.
+  const stages = useMemo(() => computeStages(data), [data]);
+  const stageStates = useMemo(
+    () =>
+      Object.fromEntries(Object.entries(stages).map(([k, v]) => [k, v.state])),
+    [stages]
+  );
 
   const decide = async (id, approved) => {
     setBusy(true);
     try {
       await api.decide(id, approved);
-      if (!approved) flashRefusal();
       await refresh();
     } catch (err) {
       setError(err.message);
@@ -111,7 +115,6 @@ export default function App() {
     setBusy(true);
     try {
       await api.setKillSwitch(next);
-      if (next) flashRefusal();
       await refresh();
     } catch (err) {
       setError(err.message);
@@ -120,86 +123,108 @@ export default function App() {
     }
   };
 
+  const hero = HEROES[view];
+
   return (
-    <main className="min-h-screen px-5 py-6 max-w-[1180px] mx-auto">
-      <header className="flex flex-wrap items-center justify-between gap-3 mb-6">
-        <div>
-          <h1 className="text-lg tracking-[0.2em] font-semibold">AION AXON</h1>
-          <p className="text-[11px] text-muted">
-            A governed agent that earns permission to become more capable.
-          </p>
-        </div>
-        <LiveBadge online={!!data?.online} />
-      </header>
+    <div className="min-h-screen flex">
+      <Sidebar view={view} onView={setView} />
 
-      {error && (
-        <p className="mb-4 text-[11px] text-danger border border-danger/40 rounded px-3 py-2">
-          {error}
-        </p>
-      )}
+      <main className="flex-1 min-w-0">
+        <TopStrip online={!!data?.online} killed={killed} />
 
-      {/* The hero, full width, above everything (§5.1: one hero effect). */}
-      <div className="mb-4">
-        <SynapseTheater
-          telemetry={data?.telemetry}
-          sandbox={data?.sandbox}
-          capabilities={data?.capabilities}
-          pending={pending}
-          killed={killed}
+        <Hero
+          crumb={hero.crumb}
+          title={hero.title}
+          blurb={hero.blurb}
+          pendingCount={pending.length}
         />
-      </div>
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_1.15fr_1fr]">
-        <div className="space-y-4">
-          <CapabilityCounter
-            implemented={data?.capabilities?.implemented}
-            total={data?.capabilities?.total}
-          />
-          <AutonomyLedger
-            tracked={data?.autonomy?.capabilities || []}
-            threshold={data?.autonomy?.supervision_threshold ?? 40}
-          />
-          <TrustBoundary sandbox={data?.sandbox} />
-        </div>
+        <div className="px-5 pb-8">
+          {error && (
+            <p className="mb-4 text-[11px] text-danger border border-danger/40 rounded px-3 py-2">
+              {error}
+            </p>
+          )}
 
-        <div className="space-y-4">
-          <section className="bg-panel border border-edge rounded-lg p-4">
-            <AxonLoop state={loopState} activePhase={activePhase} />
-          </section>
-          <ApprovalCard pending={pending} onDecide={decide} busy={busy} />
-          <KillSwitch active={killed} onToggle={toggleKill} busy={busy} />
-        </div>
+          {view === "command" && (
+            <div className="space-y-4">
+              <div className="grid gap-4 xl:grid-cols-[300px_1fr]">
+                <CompletionRing stageStates={stageStates} />
+                <Topology stages={stages} selected={node} onSelect={setNode} />
+              </div>
 
-        <div className="space-y-4">
-          <EvidencePanel capability={data?.selected} />
-          <SkillPassport capability={data?.selected} />
-          {acquired.length > 1 && (
-            <div className="flex flex-wrap gap-2">
-              {acquired.map((c) => (
-                <button
-                  key={c.name}
-                  onClick={() => setPassport(c.name)}
-                  className={`text-[10px] px-2 py-1 rounded border ${
-                    passport === c.name
-                      ? "border-cyan text-cyan"
-                      : "border-edge text-muted hover:border-cyan/50"
-                  }`}
-                >
-                  {c.name}
-                </button>
-              ))}
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="space-y-4">
+                  <CapabilityCounter
+                    implemented={data?.capabilities?.implemented}
+                    total={data?.capabilities?.total}
+                  />
+                  <TrustBoundary sandbox={data?.sandbox} />
+                  <ApprovalCard
+                    pending={pending}
+                    onDecide={decide}
+                    busy={busy}
+                  />
+                  <KillSwitch active={killed} onToggle={toggleKill} busy={busy} />
+                </div>
+                <div className="space-y-4">
+                  <AuditFeed events={data?.evolution?.events || []} />
+                  <MonitorPanel monitors={data?.monitors?.monitors || []} />
+                </div>
+              </div>
             </div>
           )}
-          <AuditFeed events={data?.evolution?.events || []} />
-          <MonitorPanel monitors={data?.monitors?.monitors || []} />
-        </div>
-      </div>
 
-      <footer className="mt-6 text-[10px] text-muted">
-        Every number on this page comes from the live aion-core API. Nothing
-        here is mocked; an empty panel means the system genuinely has nothing
-        to show.
-      </footer>
-    </main>
+          {view === "pipeline" && (
+            <div className="space-y-4">
+              <Topology stages={stages} selected={node} onSelect={setNode} />
+              <Inventory stages={stages} onSelect={setNode} />
+            </div>
+          )}
+
+          {view === "ledger" && (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <AutonomyLedger
+                tracked={data?.autonomy?.capabilities || []}
+                threshold={data?.autonomy?.supervision_threshold ?? 40}
+              />
+              <AuditFeed events={data?.evolution?.events || []} />
+            </div>
+          )}
+
+          {view === "evidence" && (
+            <div className="space-y-4">
+              {acquired.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {acquired.map((c) => (
+                    <button
+                      key={c.name}
+                      onClick={() => setPassport(c.name)}
+                      className={`text-[10px] px-2.5 py-1.5 rounded border ${
+                        passport === c.name
+                          ? "border-cyan text-cyan"
+                          : "border-edge text-muted hover:border-cyan/50"
+                      }`}
+                    >
+                      {c.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="grid gap-4 lg:grid-cols-2">
+                <EvidencePanel capability={data?.selected} />
+                <SkillPassport capability={data?.selected} />
+              </div>
+            </div>
+          )}
+
+          <footer className="mt-6 text-[9px] text-muted">
+            Every number on this surface comes from the live aion-core API.
+            Nothing here is mocked; an empty panel means the system genuinely
+            has nothing to show.
+          </footer>
+        </div>
+      </main>
+    </div>
   );
 }

@@ -10,6 +10,7 @@ export default {
         cyan: "#37e0d8",
         ok: "#4ade80",
         danger: "#f87171",
+        warn: "#fbbf24",
         muted: "#7d8899",
       },
       fontFamily: {
