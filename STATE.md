@@ -89,10 +89,22 @@ meaning anything, because it turned on ambient environment rather than code.
 stored as **version 2** of the `gemini-api-key` secret; `aion-core-00027-jwn`
 is running on it. The 22 Aug exhaustion (real 429 at ~21:30 IST) is history.
 
-⚠️ **Headroom is UNVERIFIED.** Trial credits on a Cloud project do not
-automatically move the Gemini API off its free-tier per-day limit — those
-are separate systems. No real generation call has been made on the new key
-yet, so the first one is what proves it. On 429: check once, record, stop.
+**Headroom was verified, then re-spent the same day.** The new key generates
+correctly (proven directly: a plain research call returned a real, correct
+answer). But the free tier's 20/day generation limit is per-key, not raised
+by trial billing credits, and this session's own testing — the model-list
+probe, three grounding attempts, one `golden_path` run — used enough of it
+that `scripts/golden_path.py` hit a genuine 429 on the one step that
+generates a candidate (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`,
+`quotaValue: 20`, confirmed by the full `QuotaFailure` shape, not guessed).
+
+**`scripts/golden_path.py` run live 23 Aug against `aion-core-00027-jwn`:
+13 PASS, 0 FAIL, 1 BLOCKED (quota).** Every step that doesn't generate a new
+capability passed live: BigQuery query, the acquired anomaly detector
+running in the sandbox, background monitors, both refusals (G-04, G-06),
+kill switch halt + release, restart survival, evolution trail. Only
+`SYNAPSE generates a candidate` was quota-blocked — reported as BLOCKED, not
+faked. Re-run after the ~12:30 IST reset to close the loop.
 
 **Model IDs were checked before anything was switched, and nothing was
 switched.** A proposal to move to `gemini-1.5-flash` / `gemini-1.5-pro` was
