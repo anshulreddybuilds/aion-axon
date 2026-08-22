@@ -434,26 +434,52 @@ the new test fail against the original defaults, restored the fix,
 watched it pass. All 67 tests in `test_api.py`/`test_reliability.py`/
 `test_owner_auth.py` green.
 
-## Known issue, NOT FIXED — full-suite cross-test-file state leak (found 21 Aug)
+## Full-suite state leak — FIXED (22 Aug, found 21 Aug)
 
-Running the full suite (`pytest -q`, no path filter) produces **121
-errors** that do not occur when the same tests run file-by-file or in
-smaller groups. Root cause identified but not fixed: `firestore_store`
-(`app/memory/firestore_store.py`) is a **module-level singleton** whose
-concrete class is picked once, at import time, based on
-`AXON_FIRESTORE_MODE` (`== "memory"` → the in-memory store with a
-`.capabilities` dict; anything else → real `AxonFirestore`, which has no
-such attribute). `tests/test_adversarial.py`'s `clean` fixture calls
-`firestore_store.capabilities.clear()` and blows up with `AttributeError:
-'AxonFirestore' object has no attribute 'capabilities'` when the full
-suite's collection/import order causes some other test file to trigger
-the real-mode class before `test_adversarial.py` runs. Confirmed
-pre-existing on clean `HEAD` before any change in this session — not
-introduced by the mission-args fix above, not fixed here (out of scope
-for that fix; whoever picks this up next should look at making the
-memory-vs-real backend a fixture-scoped dependency injection rather than
-an env-var-gated module singleton, so test order can't change which
-backend a test gets).
+A bare `pytest -q` produced **121 errors** that never appeared file-by-file,
+or in CI. Root cause was not a test bug: `app.memory.firestore_store` picks
+its backend ONCE at import time from `AXON_FIRESTORE_MODE`, so the choice
+belongs to whichever module imports it first. Every file under `tests/` sets
+the variable itself, which looks like protection but is not — it only works
+if a test file imports first.
+
+It did not. **`scripts/test_approval_resume.py`** was a manual probe, not a
+test, and matched pytest's `test_*.py` pattern; `scripts/` sorts before
+`tests/`, so a bare run imported it first, built a real `AxonFirestore`, and
+every later fixture calling `.capabilities.clear()` died with
+`AttributeError` — 121 errors from one stray import.
+
+**CI never saw it, because CI passes `tests` explicitly.** So the suite was
+green for the maintainers and broken for anyone who cloned the repo and ran
+`pytest`. That gap mattered more than the errors.
+
+Fixed in three layers, deepest first:
+
+1. **Rootdir `conftest.py`** sets `AXON_FIRESTORE_MODE=memory` (via
+   `setdefault`, so a deliberate integration run can still override).
+   pytest loads it before any test module, so import order stops mattering.
+2. **`pytest.ini` with `testpaths = tests`** — a bare `pytest` now does what
+   CI does instead of wandering into `scripts/` and `sandbox/`.
+3. **`scripts/test_approval_resume.py` renamed to
+   `scripts/probe_approval_resume.py`** so it cannot masquerade as a test
+   again; the subprocess reference in `tests/test_approval_resume_e2e.py`
+   was updated with it.
+
+`tests/test_store_isolation.py` guards the guard, and deliberately does NOT
+set the env var itself — it tests the conftest rather than its own preamble.
+Proven by deleting `conftest.py` and watching it fail against a real
+`AxonFirestore`.
+
+**The property this protects is not a green suite.** It is that a test run
+never reads or writes the live project's Firestore.
+
+Result: **264 passed, 0 failed, 0 errors** on both `pytest -q` and
+`pytest -q tests`. One genuine regression surfaced along the way and was
+fixed: `test_declared_capability_cannot_be_invoked_at_all` hardcoded
+`write_brief` as its declared-but-unbuilt example, and `write_brief` was
+implemented in `7ac0125`. It now picks an unimplemented capability
+dynamically, so it keeps testing the property as capabilities get built
+rather than decaying as the codebase improves.
 
 **Explicitly NOT priorities:** Search grounding (Stage 4) and the upward
 autonomy arc (Stage 13) are blocked on Gemini quota, not on code. They are

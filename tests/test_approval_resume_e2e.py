@@ -11,7 +11,7 @@ def test_approval_resume_end_to_end():
     env["PYTHONPATH"] = str(project_root)
 
     result = subprocess.run(
-        [sys.executable, "scripts/test_approval_resume.py"],
+        [sys.executable, "scripts/probe_approval_resume.py"],
         cwd=project_root,
         env=env,
         capture_output=True,

@@ -99,8 +99,31 @@ def test_refusal_cannot_be_unlocked_by_a_prior_approval():
 
 
 def test_declared_capability_cannot_be_invoked_at_all():
+    """A capability AION has DECLARED but not built must be unreachable.
+
+    The subject is chosen dynamically rather than hardcoded. This test used
+    to name `write_brief`, and the day `write_brief` was actually
+    implemented it began asserting "a real, working capability refuses to
+    run" -- false, so it failed loudly. It could just as easily have been
+    written to pass vacuously instead, and would then have gone on
+    reporting green while testing nothing.
+
+    Anchoring to "whatever is still unbuilt" keeps the property covered as
+    capabilities get implemented, instead of decaying as the code improves.
+    """
+    declared_only = [
+        tool["name"] for tool in registry.list_tools()
+        if not tool["implemented"]
+    ]
+
+    assert declared_only, (
+        "Every capability is implemented, so there is nothing left to "
+        "prove this property against. It still matters -- declare a "
+        "throwaway capability here rather than deleting the test."
+    )
+
     with pytest.raises(CapabilityNotImplemented):
-        registry.get("write_brief")
+        registry.get(declared_only[0])
 
 
 # --- §8.2 The sandbox must not be able to read secrets --------------------

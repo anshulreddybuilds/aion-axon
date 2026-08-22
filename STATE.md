@@ -13,11 +13,10 @@
 | Registry (live) | **18 declared, 10 implemented** |
 | Implemented | calculator · web_research · read_dataset · convert_currency_amount · detect_yoy_anomalies · analyze_yoy_alert · summarize_performance_text · analyze_complaint_urgency · **write_brief** |
 | Telemetry (live) | 18 model calls, all measured, 65,486 tokens; 26 tool executions |
-| Tests | **83 passing** across test_loop_closure / test_synapse / test_mission_engine / test_api / test_reliability / test_brief_writer |
+| Tests | **264 passing, 0 errors** — full suite, bare `pytest -q` |
 | current_amendment | 13 |
 
-**Test-count caveat:** 83 is the count for those five files run together. The
-FULL suite (`pytest -q`, no path filter) does NOT pass — see blocker 2.
+(The full suite genuinely passes now; there is no longer a per-file caveat.)
 
 ## Blockers
 
@@ -27,16 +26,15 @@ The `retryDelay: 9s` in the error is misleading — it is the daily cap, not a
 rate limit. Resets ~12:30 IST. Do not retry or poll before then. Unblocks
 permanently when the $150 credits land (~25 Aug).
 
-**2. Full-suite cross-test-file state leak — 121 errors, NOT FIXED.**
-Pre-existing on clean HEAD, not caused by this session's changes. Root cause
-found: `firestore_store` (`app/memory/firestore_store.py`) is a module-level
-singleton whose class is chosen ONCE at import time from `AXON_FIRESTORE_MODE`
-(memory-store has `.capabilities`; real `AxonFirestore` does not). Full-suite
-import order can hand `tests/test_adversarial.py`'s `clean` fixture the real
-class → `AttributeError: 'AxonFirestore' object has no attribute
-'capabilities'`. Fix direction: make the backend a fixture-scoped injected
-dependency, not an env-var-gated module singleton. Full detail in
-`docs/audit.md`.
+**2. RESOLVED 22 Aug — full-suite state leak.** Was 121 errors on a bare
+`pytest -q`. Cause: `scripts/test_approval_resume.py` was a probe matching
+`test_*.py`, imported before `tests/` alphabetically, which built a real
+`AxonFirestore` before any test set `AXON_FIRESTORE_MODE`. CI never saw it
+(CI passes `tests` explicitly), so the repo was green for maintainers and
+broken for anyone cloning it. Fixed with a rootdir `conftest.py`,
+`pytest.ini testpaths = tests`, and renaming the probe. Guarded by
+`tests/test_store_isolation.py`, proven by deleting the conftest and
+watching it fail. **264 passed, 0 errors, both invocations.**
 
 ## Next 3 priorities
 
@@ -52,10 +50,8 @@ Verified live on mission `e37b2464` — and it rendered a full brief **while the
 Gemini planner was returning 429**, evidencing that the mission's product does
 not depend on model availability. The real priority 2 is below.
 
-**2. Fix the full-suite test leak (blocker 2 above).** With the queue clear
-and the demo path proven, this is the largest remaining correctness debt and
-the only thing standing between the repo and a full green `pytest -q`. Judges
-who clone and run the suite will hit 121 errors.
+**2. Reliability (Phase 10) — run the full demo unattended twice in a row.**
+With the suite green and the queue clear, this is the next roadmap gate.
 
 **3. Wire owner-token entry into the Holo-Deck (or accept read-only).**
 The dashboard is LIVE at **https://aion-axon-2026.web.app** (deployed 22 Aug;
