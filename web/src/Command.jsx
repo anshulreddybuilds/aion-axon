@@ -33,10 +33,51 @@ const STATUS_TONE = {
   REFUSED: "text-danger",
 };
 
-function Speech({ onText, busy }) {
+// Why the mic goes quiet, in words a listener can act on.
+//
+// The API reports these as bare slugs. "not-allowed" on screen tells the
+// operator nothing about which of the two very different fixes to reach
+// for -- the browser permission chip, or the OS privacy setting.
+const SPEECH_ERRORS = {
+  "not-allowed":
+    "Microphone blocked. Click the 🔒 icon left of the address bar → " +
+    "Microphone → Allow, then reload.",
+  "service-not-allowed":
+    "The browser refused speech recognition. Chrome sends audio to Google " +
+    "to transcribe it; a privacy blocker or managed policy can veto that.",
+  network:
+    "Speech recognition needs the network and could not reach it. This is " +
+    "the browser's transcription service, not aion-core.",
+  "no-speech": "Nothing was heard. Click the mic and speak once it turns red.",
+  aborted: "Listening was interrupted before anything was transcribed.",
+  "audio-capture":
+    "No microphone found. Check that one is connected and selected as the " +
+    "input device.",
+};
+
+function Speech({ onText, onError, busy }) {
   const [listening, setListening] = useState(false);
   const [supported, setSupported] = useState(true);
   const recognition = useRef(null);
+
+  // The callbacks live in refs so the effect below can depend on NOTHING.
+  //
+  // It used to depend on [onText], and the parent passes an inline arrow --
+  // a new function identity on every single render. App.jsx polls the API
+  // every 3 seconds and re-renders the tree, so the effect tore itself down
+  // and its cleanup called r.abort() about three seconds after the mic was
+  // switched on. Every time. A one-word request could sneak through; the
+  // demo request is thirty words and never survived.
+  //
+  // It presented as "the mic isn't listening, I don't know why", which sent
+  // the search to microphone permissions and browser settings -- none of
+  // which were ever wrong. Recognition must outlive a render, so it is
+  // built once and the callbacks are read at fire time.
+  const onTextRef = useRef(onText);
+  const onErrorRef = useRef(onError);
+
+  onTextRef.current = onText;
+  onErrorRef.current = onError;
 
   useEffect(() => {
     const Impl =
@@ -52,8 +93,21 @@ function Speech({ onText, busy }) {
     r.interimResults = false;
     r.maxAlternatives = 1;
 
-    r.onresult = (event) => onText(event.results[0][0].transcript);
-    r.onerror = () => setListening(false);
+    r.onresult = (event) =>
+      onTextRef.current?.(event.results[0][0].transcript);
+
+    // Say WHY. Silently dropping the reason is what made this bug cost an
+    // evening: a blocked mic and a dead mic looked exactly alike on screen.
+    r.onerror = (event) => {
+      setListening(false);
+
+      const code = event?.error || "unknown";
+
+      onErrorRef.current?.(
+        SPEECH_ERRORS[code] || `Speech input failed (${code}).`
+      );
+    };
+
     r.onend = () => setListening(false);
 
     recognition.current = r;
@@ -65,7 +119,7 @@ function Speech({ onText, busy }) {
         /* already stopped */
       }
     };
-  }, [onText]);
+  }, []);
 
   if (!supported) return null;
 
@@ -189,7 +243,13 @@ export default function Command({ onChanged }) {
           placeholder="Pull the US birth totals from 2005 and brief me"
           className="flex-1 bg-void border border-edge rounded-md px-3 py-2 text-[12px] outline-none focus:border-cyan disabled:opacity-50"
         />
-        <Speech onText={(t) => setText(t)} busy={busy} />
+        <Speech
+          onText={setText}
+          onError={(message) =>
+            add({ kind: "error", text: message, at: Date.now() })
+          }
+          busy={busy}
+        />
         <button
           type="submit"
           disabled={busy || !text.trim()}
