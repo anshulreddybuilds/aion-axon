@@ -1,146 +1,154 @@
 # STATE — AION Axon (Session A)
 
-**Rewritten 22 Aug 2026 ~07:00 IST. Replace this file wholesale each session; never append.**
+**Rewritten 22 Aug 2026 ~13:45 IST. Replace this file wholesale each session; never append.**
 
-Session A now owns the whole repo — Session B is dead by owner ruling
-(22 Aug), recorded in `CLAUDE.md`. `web/`, `README.md` and `docs/` are all
-in scope; the old do-not-touch list is void.
+Session A owns the whole repo — Session B is dead by owner ruling (22 Aug),
+recorded in `CLAUDE.md`. `web/`, `README.md` and `docs/` are all in scope.
 
 ## Where things stand
 
 | | |
 |---|---|
 | Branch | `feat/core-intelligence`, pushed, level with origin |
-| HEAD | `da8d8e6` |
-| aion-core | `aion-core-00018-hph` · https://aion-core-638298765129.asia-south1.run.app |
-| Holo-Deck | **LIVE** · https://aion-axon-2026.web.app |
-| Registry | **18 declared, 10 implemented** |
-| Implemented | calculator · web_research · read_dataset · write_brief · convert_currency_amount · detect_yoy_anomalies · analyze_yoy_alert · summarize_performance_text · analyze_complaint_urgency · analyze_review_sentiment |
-| Telemetry | 18 model calls (all measured), 65,486 tokens, 33 gated runs |
+| HEAD | `989115b` |
+| aion-core | `aion-core-00023-bvv` · https://aion-core-638298765129.asia-south1.run.app |
+| Holo-Deck | **LIVE** · https://aion-axon-2026.web.app (noindex + robots.txt) |
+| Registry | **19 declared, 11 implemented** |
+| Telemetry | 26 model calls, 92,390 tokens, 48 gated runs |
+| Evolution events | 7 |
 | Approval queue | 0 |
-| Tests | **266 passing, 0 errors** on a bare `pytest -q` |
+| Tests | **279 passing**, enforced by a pre-push hook |
 | current_amendment | 13 |
+
+## 🔴 PHASE 8 FIRE DRILL — PASSED (22 Aug)
+
+The locked demo story ran end to end, unbroken, on the live stack.
+Mission `19bf2bf0-bef3-4208-a1f3-20013852c244`:
+
+```
+1. read_dataset            9 rows from BigQuery public data (~89MB)
+2. GAP — no CAGR tool      mission BLOCKED mid-flight
+3. SYNAPSE acquires        safety PASS · sandbox PASS · Gemma 100/PASS
+4. STOPS at approval       owner approved calculate_birth_cagr
+5. install                 registry 10 -> 11, autonomy 32% -> 47%
+6. MISSION FINISHES ITSELF CAGR -0.9987%/yr across 2005-2013
+```
+
+Nobody re-ran anything. Earlier the same day a no-gap variant also
+completed (mission `6337bd7c`), finding the **2006 / 2009 / 2010**
+anomalies — the post-2008 US birth decline, checkable against the outside
+world rather than against the system's own claims.
 
 ## Blockers
 
-**1. Gemini free-tier DAILY quota exhausted** (hit 21 Aug 23:15 UTC).
-`limit: 20, GenerateRequestsPerDayPerProjectPerModel-FreeTier`. The
-`retryDelay` in that error is misleading — it is the daily cap, not a rate
-limit. Resets ~12:30 IST. Do not poll. Unblocks permanently when the $150
-credits land (~25 Aug).
+**Gemini free-tier daily quota** — 20 requests/day. Roughly 15 spent on
+22 Aug across five drill runs. Resets ~12:30 IST. On 429: check once,
+record, stop. Unblocks permanently when the $150 credits land (~25 Aug).
 
 Nothing else is blocked.
 
 ## Next 3 priorities
 
-**1. Phase 8 fire drill — the ONE continuous messy-workflow run.**
-Every ingredient exists and each is individually proven live: acquisition,
-BigQuery dataset, anomaly analysis, and now the brief. They have never run
-as a single unbroken mission, which is exactly what the locked §9 demo
-shows. **Needs quota.** This is the highest-value remaining item.
+**1. 🎬 THE VIDEO — the real deadline risk.**
+Nothing has been shot. It is 30% of the score and the only deliverable
+that cannot be crammed at the end. The system is now demo-ready and the
+shot list is corrected; this is the thing most likely to cost the
+submission. **Start filming before adding anything else.**
 
 **2. Phase 10 reliability — the full demo unattended, twice in a row.**
-The next roadmap gate after the fire drill. Needs quota.
+`scripts/golden_path.py` is the rehearsal. Needs quota.
 
-**3. Holo-Deck write access — owner decision, not a bug.**
-Approve / Reject / kill switch return **401** in the browser, because the
-browser holds no owner token by design (same property the sandbox has).
-Either add a paste-your-token field held in memory only, or accept that the
-demo drives writes from `scripts/approve.py` and the Holo-Deck stays a read
-surface. **A judge clicking a dead Approve button is worse than no button.**
-Rollback also has a working API route with no UI.
+**3. Holo-Deck write access — owner decision, still open.**
+Approve / Reject / kill switch return 401 in the browser by design, since
+the browser holds no owner token. Either add an in-memory token field or
+accept that the demo drives writes from `scripts/approve.py`. **A judge
+clicking a dead button on camera is worse than no button.** Also open:
+the owner asked about voice + chat input, which is legal under the Google
+rules (nothing forbids it; Best Multimodal UX is a $5,000 bonus) and
+should use the browser Web Speech API rather than a paid GCP service —
+but only after the video exists.
 
 ## Outstanding owner actions
 
-- **Wait for quota reset (~12:30 IST), then run priority 1.**
-- Decide priority 3 (Holo-Deck writes, or accept read-only).
-- The 3D mandate (22 Aug) is recorded in `docs/upgrade-plan.md`. The
-  Synapse Theater below now delivers the hero visual **without WebGL**;
-  decide whether that satisfies it or whether real 3D is still wanted.
-  If it is, the deadline is **27 Aug** or the current version gets filmed.
+- Decide priority 3.
+- Keep the URLs unshared until submission — see Secrecy below.
+
+## Secrecy posture (owner asked, 22 Aug)
+
+- GitHub repo: **PRIVATE**. The implementation was never exposed.
+- Sandbox: **403** to the public internet.
+- API + Holo-Deck: **publicly reachable** — they must be, since rules 5, 7
+  and 11 require a public video, judge repo access and a hosted URL. But
+  reachable is not findable: `noindex` + `robots.txt` now keep both out of
+  search results.
+- Nothing forbids staying quiet until 30 Aug. Publishing then, timestamped
+  on Devpost, is what actually establishes authorship — staying hidden
+  forever is the riskier option.
 
 ## DONE 21–22 Aug — do not rebuild
 
-**Capabilities and the loop**
-- **`write_brief` (`7ac0125`)** — the mission's product, declared since day
-  one and never built. Deterministic and model-free: cannot invent a figure,
-  cannot be rate-limited. Verified live on mission `e37b2464` **while the
-  Gemini planner was returning 429**, which is real evidence that the
-  deliverable does not depend on model availability.
-- **Acquisition #3 `analyze_yoy_alert`** (Gemma 100/PASS) after the 20 Aug
-  quota block.
-- **Both Stage 12 fixes VERIFIED LIVE** (`e9a44a5`, `655102c`) on mission
-  `ab1f0b35` / `analyze_review_sentiment`: `COMPLETED`, `tool` backfilled,
-  original request text passed as args, returned
-  `sentiment: Negative, rationale: "crushed"`. Cost **zero quota** — the
-  SYNAPSE proposal had been banked before the cap hit.
-- **Approval queue cleared** — 11 stale requests rejected; the installed
-  capability verified still READY at version 1 afterwards.
+**The loop**
+- `write_brief` (`7ac0125`) — the mission's product. Deterministic and
+  model-free; verified live **during a total Gemini outage**, which is
+  real evidence the deliverable does not depend on model availability.
+- Both Stage 12 auto-resume fixes verified live (`e9a44a5`, `655102c`).
+- Phase 8 fire drill passed (above).
+- Approval queue cleared; 11 stale requests rejected.
 
 **The Holo-Deck**
-- **Deployed to Firebase Hosting.** Required adding Firebase to a
-  Cloud-only project: Management API enabled, then adoption **through the
-  console** (`firebase projects:addfirebase` 403s until terms are accepted).
-  On **Blaze** because billing was already enabled; free-tier allowances
-  cover ~275 kB against 360 MB/day.
+- Deployed to Firebase Hosting. Firebase had to be added to a Cloud-only
+  project via the console (`projects:addfirebase` 403s until terms are
+  accepted). On **Blaze** because billing was already enabled; free-tier
+  allowances cover ~275 kB against 360 MB/day.
   ⚠️ **Never delete the project from the Firebase console — it deletes the
   Cloud project and everything in it.**
-- **Synapse Theater built (`8dcbd44`)** — the §5.1 hero that was never
-  built. The six §6.1 runtime agents side by side, each showing a real
-  number from the live API. A pulse fires **only** when that agent's own
-  counter moves between polls; the first poll only sets a baseline. Proven
-  with a DOM observer: a real mission produced 9 pulse mutations, 12s of
-  idle produced 0. Depth from layered SVG gradients, blur and a 9° CSS
-  tilt — **no WebGL**, so the recorded video cannot stutter.
-- **Zero decorative motion (`da8d8e6`)** — the AXON orb and the LiveBadge
-  dot both breathed unconditionally. Both now still when idle. Verified by
-  walking every element on the deployed page and reading computed
-  `animationName`: 0 animating while idle.
+- Command-surface redesign from the owner's Replit mockup (`989115b` line):
+  four views — Command, Pipeline, Autonomy ledger, Evidence — with the
+  twelve-node execution topology, completion ring and inventory table.
+  The design was adopted; its numbers were not. The mockup hard-coded 42%
+  and six LOCKED stages; the live surface reads **92%** because it counts
+  what is genuinely verified.
+- Zero decorative motion, verified on the deployed DOM.
 
-**Fixes found by actually running things**
-- `3c6d488` — `POST /missions` defaulted `tool`/`args`, so a free-text
-  request built a mission that failed later with a bare `TypeError`.
-- `5b19070` — **full-suite state leak, 121 errors → 0.**
-  `scripts/test_approval_resume.py` was a probe matching `test_*.py`, and
-  `scripts/` sorts before `tests/`, so it built a real `AxonFirestore`
-  before any test set `AXON_FIRESTORE_MODE`. **CI never saw it because CI
-  passes `tests` explicitly** — green for maintainers, broken for anyone who
-  cloned the repo. Fixed with a rootdir `conftest.py`, `pytest.ini
-  testpaths`, and renaming the probe. Guarded by
-  `tests/test_store_isolation.py`, which deliberately does not set the env
-  var so it tests the conftest rather than its own preamble.
-- `b1a6bf0` — **CORS blocked every Firebase preview channel.** Channels get
-  a generated subdomain that cannot be listed ahead of time, so the whole
-  review-before-live process was dead. Fixed with an anchored regex pinned
-  to this project's prefix; four near-miss hostile origins are tested.
-- `f94cc91` — **the cache header never applied.** Rules match the REQUEST
-  path, not the file served, so a rule on `/index.html` never fired for
-  visitors requesting `/`. Every visitor had a **one-hour stale window**;
-  it bit live immediately after promoting the Theater. `no-cache` is now the
-  catch-all with hashed assets overriding it.
+**Six real bugs, all found by RUNNING it**
+| Fix | What it was |
+|---|---|
+| `3c6d488` | `POST /missions` defaulted tool/args |
+| `d19f88e` | **mission reported COMPLETED on failed steps** |
+| `d19f88e` | no data flowed between steps — added `$STEP_n` |
+| (same) | `$STEP_n.field` for reaching inside a result envelope |
+| — | SYNAPSE never saw the real input, so it guessed the data shape |
+| — | generator wrote brittle float assertions, discarding working code |
+| — | planner could not see parameter names, so it put the CAGR in the title |
 
-**Documentation corrected (5 stale claims)**
-- `docs/audit.md` listed Stages 12, 14 and 10 as the top-3 not-started
-  priorities when all three had shipped that same morning.
-- The README's **90-second happy path would have 401'd a judge** — every
-  write example was missing `X-Axon-Token` — and it claimed `write_brief`
-  was an unimplemented gap after it had been built. Both fixed and the
-  documented outputs re-run against the live service.
-- `PROGRESS.md` listed phases 3–8 as NOT STARTED when all six were live.
-- README's Holo-Deck limitation rewritten twice: "not built" → "built, not
-  deployed" → "live but read-only".
+**Infrastructure**
+- `5b19070` — full-suite state leak, 121 errors to 0.
+- `b1a6bf0` — CORS blocked every Firebase preview channel.
+- `f94cc91` — cache header never applied; every visitor had a stale hour.
+- **Pre-push hook** (`989115b`) — see below.
 
-## The lessons worth carrying
+## The mistake, and the mechanism that replaces the promise
 
-**"Implemented and tested" had not yet meant "run once for real."**
-Stage 12 was marked IMPLEMENTED with passing tests, but every test covered
-only one gap shape. The first real live run hit the other shape and found
-two bugs back to back.
+On 22 Aug the catalog-signature change was committed **and deployed** with
+two failing tests. They passed file-by-file and the full suite was not
+re-run before pushing.
 
-**Green CI is not the same as a working repo.** The suite passed for
-maintainers and failed for anyone who cloned it, for months of commits,
-because CI happened to invoke pytest differently than a human would.
+That is the same shape as the 121 collection errors: **a check that depends
+on remembering to run it is not a check.** The fix is therefore not "be
+more careful" but `.githooks/pre-push`, wired via `core.hooksPath` so it
+survives a fresh clone. Proven in both directions — a deliberately broken
+test was refused, and the green suite went through.
 
-**Deploying is a test.** The preview channel found a CORS hole, a stale-cache
-bug and one of my own bugs within minutes — none of which any amount of
-local testing would have surfaced.
+## Lessons worth carrying
+
+**"Implemented and tested" is not "run once for real."** Every bug in the
+table above survived code review and a green suite. All six died the first
+time the thing actually ran.
+
+**Green CI is not a working repo.** The suite passed for maintainers and
+failed for anyone who cloned it, for many commits.
+
+**Three of the six bugs were the same disease:** the model was guessing at
+something nobody had shown it — the data shape, the argument names, how to
+write a test that does not throw away its own work. The fix each time was
+to show it, not to prompt harder.
