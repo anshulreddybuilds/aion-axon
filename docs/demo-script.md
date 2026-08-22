@@ -19,7 +19,10 @@ Acquisition #1 rather than becoming a fifth act).
 | 4 | `python -m scripts.golden_path` | If the rehearsal is not green, the take will not be either. |
 | 5 | Open the Holo-Deck at **https://aion-axon-2026.web.app**, one browser tab, no bookmarks bar | Now hosted — see constraint 4. |
 | 6 | Second tab: Cloud Run console, `aion-core` revisions page | This is the row-6 proof shot. |
-| 7 | Screen at 1920×1080, editor font ≥16pt | Judges watch small. |
+| 7 | Screen at 1920×1080, and **Ctrl+scroll the terminal until only ~15 lines fill it** | A reviewed take at normal font size was called illegible — a digit was transcribed as "?" because it could not be read. Too big is the safe error. |
+| 8 | `cd` to the repo and invoke everything as **`.\demo`** | The long absolute path wraps across two lines, sits on screen for the whole take, and publishes the operator name to a public video. `.\demo` fixes all three. |
+| 9 | `function prompt { "PS> " }` then `cls`, **before** recording starts | Same reason: the default prompt carries the user folder. |
+| 10 | Park the mouse off-screen; F11 for a frameless terminal | A stationary cursor and the OS title bar both drew review comments. |
 
 **Recording rule:** if a take needs a retry, restart the whole act. Splicing
 mid-act produces the state jumps that read as fakery.
