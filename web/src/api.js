@@ -62,8 +62,10 @@ export const api = {
  *  blank panel reads as "the system is down" when only one call failed.
  */
 export async function loadAll() {
-  const [root, capabilities, autonomy, evolution, monitors, pending, sandbox] =
-    await Promise.allSettled([
+  const [
+    root, capabilities, autonomy, evolution, monitors, pending, sandbox,
+    telemetry,
+  ] = await Promise.allSettled([
       api.root(),
       api.capabilities(),
       api.autonomy(),
@@ -71,6 +73,10 @@ export async function loadAll() {
       api.monitors(),
       api.pending(),
       api.sandboxProof(),
+      // The Synapse Theater reads this to decide which agents have
+      // actually done work. Settled with the rest, so a telemetry outage
+      // costs one quiet panel rather than the whole dashboard.
+      api.telemetry(),
     ]);
 
   const value = (settled, fallback) =>
@@ -84,6 +90,7 @@ export async function loadAll() {
     monitors: value(monitors, { monitors: [] }),
     pending: value(pending, { pending: [] }),
     sandbox: value(sandbox, null),
+    telemetry: value(telemetry, null),
     online: root.status === "fulfilled",
   };
 }

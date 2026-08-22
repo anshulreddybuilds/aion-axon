@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AxonLoop from "./AxonLoop.jsx";
+import SynapseTheater from "./SynapseTheater.jsx";
 import { api, loadAll } from "./api.js";
 import {
   ApprovalCard,
@@ -136,6 +137,17 @@ export default function App() {
           {error}
         </p>
       )}
+
+      {/* The hero, full width, above everything (§5.1: one hero effect). */}
+      <div className="mb-4">
+        <SynapseTheater
+          telemetry={data?.telemetry}
+          sandbox={data?.sandbox}
+          capabilities={data?.capabilities}
+          pending={pending}
+          killed={killed}
+        />
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_1.15fr_1fr]">
         <div className="space-y-4">
