@@ -70,9 +70,22 @@ ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 
+# Firebase Hosting preview channels get a generated subdomain of the form
+# https://aion-axon-2026--<channel>-<hash>.web.app, which cannot be listed
+# ahead of time. Without this, every preview channel loads but shows
+# "aion-core unreachable" -- found the first time one was deployed.
+#
+# The pattern is deliberately anchored and pinned to THIS project's
+# prefix. A looser `.*\.web\.app` would hand every Firebase site on the
+# internet the right to drive this API from a visitor's browser, which is
+# the exact thing the explicit allowlist above exists to prevent. Writes
+# still require the owner token regardless of origin.
+PREVIEW_CHANNEL_ORIGIN = r"^https://aion-axon-2026--[a-z0-9-]+\.web\.app$"
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=PREVIEW_CHANNEL_ORIGIN,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],

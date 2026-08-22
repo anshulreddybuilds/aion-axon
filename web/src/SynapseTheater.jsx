@@ -90,9 +90,14 @@ function readAgents({ telemetry, sandbox, pending, killed, capabilities }) {
   return {
     orchestrator: {
       count: capabilities?.implemented ?? 0,
-      stat: capabilities
-        ? `${capabilities.implemented}/${capabilities.total} skills`
-        : "—",
+      // Checking the FIELD, not the object. loadAll falls back to
+      // `{ capabilities: [] }` on a failed fetch, which is truthy and
+      // rendered "undefined/undefined skills" the first time this hit a
+      // live endpoint it could not reach.
+      stat:
+        capabilities?.implemented != null
+          ? `${capabilities.implemented}/${capabilities.total} skills`
+          : "unreachable",
       detail: "capabilities it can delegate to",
       live: (capabilities?.implemented ?? 0) > 0,
     },

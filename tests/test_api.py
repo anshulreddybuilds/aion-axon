@@ -292,6 +292,41 @@ def test_unknown_origin_is_not_granted_access():
     assert "access-control-allow-origin" not in response.headers
 
 
+def test_firebase_preview_channel_origin_is_allowed():
+    """Preview channels get a generated subdomain that cannot be listed.
+
+    Found live: the first channel deploy rendered fine and then showed
+    "aion-core unreachable", because
+    https://aion-axon-2026--<channel>-<hash>.web.app was not in the
+    allowlist. Preview channels are how UI changes get reviewed without
+    touching the live site, so a channel that cannot reach the API makes
+    the review worthless.
+    """
+    origin = "https://aion-axon-2026--synapse-theater-vmwbuw8t.web.app"
+
+    response = client.get("/health", headers={"Origin": origin})
+
+    assert response.headers.get("access-control-allow-origin") == origin
+
+
+def test_the_preview_pattern_does_not_open_the_api_to_every_web_app():
+    """The regex is pinned to THIS project's prefix on purpose.
+
+    A looser `.*\\.web\\.app` would hand every Firebase site on the
+    internet the right to drive this API from a visitor's browser — the
+    exact thing the explicit allowlist exists to prevent.
+    """
+    for hostile in (
+        "https://attacker.web.app",
+        "https://aion-axon-2026.evil.web.app",
+        "https://notaion-axon-2026--x.web.app",
+        "https://aion-axon-2026--x.web.app.evil.com",
+    ):
+        response = client.get("/health", headers={"Origin": hostile})
+
+        assert "access-control-allow-origin" not in response.headers, hostile
+
+
 def test_review_returns_the_code_being_approved():
     """An approval must be traceable to the source it authorises."""
     from app.memory.firestore_store import firestore_store
