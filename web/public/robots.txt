@@ -1,0 +1,6 @@
+# Keep the Holo-Deck out of search engines until submission.
+# Judges reach it from the Devpost link, never from a search result, so
+# this costs nothing and stops the work being found by someone idly
+# searching before it is published on the owner's terms.
+User-agent: *
+Disallow: /
