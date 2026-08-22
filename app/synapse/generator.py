@@ -47,6 +47,19 @@ it ever runs:
    {"status": "ERROR", "error": "..."} instead.
 7. The test must be plain `assert` statements followed by print("OK").
    It must cover a normal case AND a bad-input case.
+8. NEVER assert exact equality on a float. `assert x == -0.010027` fails
+   on binary rounding even when the maths is right, and a candidate whose
+   own test fails is rejected outright — so a brittle assertion throws
+   away working code. Use `round(x, 4) == ...`, or
+   `abs(x - expected) < 1e-6`, or assert a range.
+9. Assert what the function GUARANTEES, not incidental detail. Prefer
+   status, sign, ordering, key presence and magnitude over exact
+   arithmetic you worked out in your head and may have got wrong.
+
+If the need includes a sample of the real input, parse THAT shape
+exactly. Do not rename its fields to ones you find more natural: the
+capability is called with that data and nothing else, so a tidier field
+name is just a capability that does not work.
 
 Return only the structured candidate.
 """
