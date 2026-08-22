@@ -1,6 +1,6 @@
 # STATE — AION Axon (Session A)
 
-**Rewritten 22 Aug 2026 ~21:40 IST. Replace this file wholesale each session; never append.**
+**Rewritten 23 Aug 2026. Replace this file wholesale each session; never append.**
 
 Session A owns the whole repo — Session B is dead by owner ruling (22 Aug),
 recorded in `CLAUDE.md`. `web/`, `README.md` and `docs/` are all in scope.
@@ -10,8 +10,8 @@ recorded in `CLAUDE.md`. `web/`, `README.md` and `docs/` are all in scope.
 | | |
 |---|---|
 | Branch | `feat/core-intelligence`, pushed, level with origin |
-| HEAD | `1e5f5c3` |
-| aion-core | `aion-core-00026-5sf` · https://aion-core-638298765129.asia-south1.run.app |
+| HEAD | `943104f` |
+| aion-core | `aion-core-00027-jwn` · https://aion-core-638298765129.asia-south1.run.app |
 | Holo-Deck | **LIVE** · https://aion-axon-2026.web.app (noindex + robots.txt) |
 | Registry | **19 declared, 11 implemented** |
 | Telemetry | 26 model calls, 92,390 tokens, 48 gated runs |
@@ -61,13 +61,47 @@ sent a simple request and a simple request is never preflighted. The
 regression test now asks the question a browser asks. Proven by reverting the
 fix and watching it fail.
 
+## 🔴 The test suite spent live quota, and green depended on the shell (FIXED)
+
+`f65c2bc`. `conftest.py` fenced off production Firestore but left the model
+API open, so the suite's behaviour turned on whether a real key happened to
+be exported in the terminal that ran it:
+
+| shell | result |
+|---|---|
+| no key | 280 passed, **4.5s**, zero network |
+| key exported | ~**4 minutes** of real calls — one run `14 failed`, the next `280 passed`, **identical commit** |
+
+Found when a key was exported to probe a new API key's model list and the
+next `pytest -q` in that terminal came back red. Time went to hunting a
+regression that did not exist.
+
+Three problems: running tests silently spent the daily quota the demo
+depends on; `.githooks/pre-push` runs this suite, so a push from a
+key-holding terminal burned quota and could be blocked by a network blip on
+a repo whose discipline is that red means a real defect; and green stopped
+meaning anything, because it turned on ambient environment rather than code.
+`AXON_LIVE_MODEL_TESTS=1` opts back in deliberately.
+
 ## Blockers
 
-**Gemini free-tier daily quota — EXHAUSTED on 22 Aug.** Confirmed by a real
-429 at ~21:30 IST when the demo request was sent through the chat panel; the
-earlier "roughly 15 spent" estimate was low. Resets ~12:30 IST 23 Aug. On
-429: check once, record, stop. Unblocks permanently when the $150 credits
-land (~25 Aug).
+**Gemini quota — unblocked 23 Aug.** A new API key was provisioned and
+stored as **version 2** of the `gemini-api-key` secret; `aion-core-00027-jwn`
+is running on it. The 22 Aug exhaustion (real 429 at ~21:30 IST) is history.
+
+⚠️ **Headroom is UNVERIFIED.** Trial credits on a Cloud project do not
+automatically move the Gemini API off its free-tier per-day limit — those
+are separate systems. No real generation call has been made on the new key
+yet, so the first one is what proves it. On 429: check once, record, stop.
+
+**Model IDs were checked before anything was switched, and nothing was
+switched.** A proposal to move to `gemini-1.5-flash` / `gemini-1.5-pro` was
+tested against the new key first: both **MISSING** from the 50 models it can
+see. `gemini-3.6-flash` and the `gemma-4-26b-a4b-it` evaluator are both
+**FOUND**. Adopting that proposal would have 404'd every call — and the
+Gemma check mattered independently, since a key from a different project
+could have silently lost evaluator access and killed the acquisition act on
+camera.
 
 Nothing else is blocked.
 
@@ -89,7 +123,7 @@ The acquisition act is the only part that spends quota: roughly 4 calls
 against a daily 20. Shoot it FIRST in the session, while there is room to
 retry.
 
-**2. Try the chat + voice panel and decide whether it stars in the demo.**
+**2. The chat panel ships TYPED. Decided — see below.**
 Live on a preview channel:
 https://aion-axon-2026--command-chat-du1686ek.web.app
 Paste the owner token once, then type or speak a request. "Watch me talk
@@ -97,15 +131,38 @@ to it" is a much stronger four minutes than "watch me type curl", and it
 targets the $5,000 Best Multimodal UX bonus. Not yet promoted to the main
 site — that is a deliberate owner call, not an oversight.
 
-**STILL UNANSWERED.** Attempted 22 Aug ~21:30 IST: unlock now holds green
-(the CORS fix above), the request was submitted, and it came back
-`AXON — FAILED` on a real 429 — quota was already gone. **The mic was
-never tested.** Two open questions carry to 23 Aug: does browser speech
-transcribe the request correctly, and does watching it beat watching curl?
+**DECIDED 23 Aug: film the TYPED version. Voice is dropped from the demo.**
 
-Worth recording from the attempt: the panel printed `AXON — FAILED` with
-the real error rather than dressing it as a chat reply. That is the
-honesty design holding under a live failure.
+Not because it is unimportant — because it is a bonus, no footage exists
+yet, and it had already eaten an evening. The typed one-sentence request
+carries the whole premise ("a human asks in plain English" vs "a human
+hand-writes curl"); voice was only ever the cherry.
+
+Voice is **unproven end to end** and the reason is NOT in this codebase:
+
+- Windows reports Microphone Array healthy, default, input level 94
+- Chrome's site permission is granted and reads "Recently used"
+- The browser still alternates `audio-capture` ("no microphone found") and
+  `no-speech` ("nothing was heard")
+
+Two real defects were found and fixed on the way (`943104f`) and are worth
+keeping whether or not voice ever ships:
+
+1. **Recognition could not survive a render.** The effect depended on
+   `[onText]`, the parent passed an inline arrow, and `App.jsx` polls every
+   3 seconds — so cleanup called `r.abort()` ~3s after the mic was switched
+   on, every time. The 30-word demo request never survived.
+2. **`onerror` threw the reason away.** Blocked mic, dead mic, network
+   failure and plain silence all looked identical: the button just stopped
+   glowing.
+
+The second is why the first cost an evening. **No automated test** — there
+is no JS test framework here, and standing one up now is a larger risk
+than the bug. Recorded as a known gap, not dressed up as covered.
+
+Also recorded from the 22 Aug attempt: the panel printed `AXON — FAILED`
+with the real 429 rather than dressing it as a friendly chat reply. That is
+the honesty design holding under a live failure.
 
 **3. Phase 10 reliability: the full demo unattended, twice in a row.**
 `scripts/golden_path.py` is the rehearsal. Needs quota.
