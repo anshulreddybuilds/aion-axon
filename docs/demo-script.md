@@ -40,27 +40,33 @@ mid-act produces the state jumps that read as fakery.
 > This is AION Axon. When it hits a gap, it builds the missing capability —
 > and then has to ask permission to keep it."
 
-**Shot:** the blocked mission, real:
+**Shot:** the blocked mission, real. Use `/missions/planned` — the messy
+one-sentence request, which is the whole premise:
 
 ```bash
-curl -s -X POST $CORE/missions -H "Content-Type: application/json" \
+curl -s -X POST $CORE/missions/planned -H "Content-Type: application/json" \
   -H "X-Axon-Token: $AXON_OWNER_TOKEN" \
-  -d '{"request":"x","tool":"extract_entities","action":"extract","risk":"LOW","args":[]}'
+  -d '{"request":"It'"'"'s Monday. Pull the yearly US birth totals from 2005 onward out of the public BigQuery dataset, work out the compound annual growth rate across that whole period, and write me an executive Business Action Brief."}'
 ```
 
-Land on `"status": "BLOCKED"`, `"missing_capability": "extract_entities"`.
+Land on `"status": "BLOCKED"` with step 1 already `EXECUTED` — it got the
+real data, then hit a wall. **Keep the `mission_id`; 0:30 needs it.**
 
-> ⚠️ **Changed 22 Aug — this shot used to use `write_brief`, and would now
-> fail on camera.** `write_brief` was implemented (`7ac0125`), so it no
-> longer blocks: without the token it returns `401`, and with the token it
-> returns `FAILED — missing 1 required positional argument`. Neither is the
-> `BLOCKED` the narration promises. `extract_entities` is genuinely still
-> declared-and-unbuilt, and was re-run against the live service on 22 Aug to
-> confirm it returns exactly the output above.
+> 🔴 **Changed 22 Aug — the previous version of this shot would have died
+> on camera at 0:30.** It used `POST /missions` (a direct single-tool
+> call), and `/missions/{id}/acquire` returns
+> `{"status":"FAILED","error":"Mission records no gap."}` for those,
+> because a direct mission has no plan to read a gap from. Only a
+> `/missions/planned` mission can be acquired against and auto-resumed.
+> Caught in rehearsal, not in the take.
 >
-> **Before recording, re-verify this shot.** Any capability named here can
-> be implemented between now and the take; `GET /capabilities` lists what is
-> still unbuilt.
+> This shot costs ONE Gemini call (the planner). See "If a step 429s".
+
+> **Why a CAGR request:** the gap has to be real on the day. There is no
+> CAGR capability, so the planner sets `tool: null` on step 2 and the
+> mission blocks there honestly. If you build one before filming, pick
+> another genuine gap — `GET /capabilities` lists what is still unbuilt.
+> Do not manufacture a gap by naming a capability you have.
 
 ---
 
@@ -89,9 +95,10 @@ The longest act. Do not rush it; this is what the submission is about.
 | 0:48 | **Skill Passport / approval card, code expanded** | "Before I approve anything, I can read the actual source it wrote — not a summary of it." |
 | 1:00 | Evidence checklist: safety screen ✓, sandbox ✓, Gemma score | "It's been screened for dangerous imports, run in an isolated sandbox, and graded by a second model." |
 | 1:12 | **`GET /sandbox/proof`** | "That sandbox has zero credentials and zero permissions. Core can reach it — the public internet gets a 403." |
-| 1:25 | Click **Approve** | "Nothing installs without me." |
-| 1:32 | Counter animates, autonomy **32% → 47%** | "It gains autonomy — because I verified it, not because it says so." |
-| 1:40 | **The mission finishes itself** | "And the job I originally asked for completes. It didn't just learn a skill — it finished the work." |
+| 1:22 | **`python scripts/approve.py <id>`** in the terminal | "Nothing installs without me." |
+| 1:30 | **`POST /synapse/install/<capability>`** | Approval and install are separate calls, and install re-reads the approval from Firestore — that separation is the point. |
+| 1:36 | Counter animates, autonomy **32% → 47%** | "It gains autonomy — because I verified it, not because it says so." |
+| 1:40 | **The mission finishes itself** — `mission_resumed: COMPLETED` in the SAME response | "And the job I originally asked for completes. It didn't just learn a skill — it finished the work." |
 
 **The line that matters at 1:40.** The mission auto-resumes; do not cut away
 before the result appears.
