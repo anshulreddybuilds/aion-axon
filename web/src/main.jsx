@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 import AppV2 from "./v2/AppV2.jsx";
+import AppV3 from "./v3/AppV3.jsx";
 import "./index.css";
 
 /**
@@ -18,8 +19,16 @@ import "./index.css";
  * eight days from submission, the thing that already works has to remain
  * reachable while the new thing is still being judged on real hardware.
  */
-const useV2 = window.location.pathname.replace(/\/+$/, "").endsWith("/v2");
+const path = window.location.pathname.replace(/\/+$/, "");
+
+function Surface() {
+  if (path.endsWith("/v3")) return <AppV3 />;
+  if (path.endsWith("/v2")) return <AppV2 />;
+  return <App />;
+}
 
 ReactDOM.createRoot(document.getElementById("root")).render(
-  <React.StrictMode>{useV2 ? <AppV2 /> : <App />}</React.StrictMode>
+  <React.StrictMode>
+    <Surface />
+  </React.StrictMode>
 );
