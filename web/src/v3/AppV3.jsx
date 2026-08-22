@@ -23,7 +23,14 @@ import { buildBeats, buildDecision, humanMs, loadReplay } from "./replay.js";
  * it is, and it costs nothing, because the underlying run was real.
  */
 
-const STEP_MS = 900;
+// Pacing per node, tuned for camera rather than for impatience.
+//
+// 900ms read as a blur on playback: twelve stages went by in under 11
+// seconds, which is too fast for a viewer to read a node's name AND its
+// metric before the next one lights. At 1500ms the full spine is ~18s,
+// which still fits comfortably inside a 4-minute cut and gives each
+// stage time to be understood rather than merely seen.
+const STEP_MS = 1500;
 
 const TONE_HEX = {
   ok: "#10b981",
