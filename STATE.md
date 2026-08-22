@@ -10,7 +10,7 @@ recorded in `CLAUDE.md`. `web/`, `README.md` and `docs/` are all in scope.
 | | |
 |---|---|
 | Branch | `feat/core-intelligence`, pushed, level with origin |
-| HEAD | `943104f` |
+| HEAD | `181ecd1` |
 | aion-core | `aion-core-00027-jwn` · https://aion-core-638298765129.asia-south1.run.app |
 | Holo-Deck | **LIVE** · https://aion-axon-2026.web.app (noindex + robots.txt) |
 | Registry | **19 declared, 11 implemented** |
@@ -19,6 +19,39 @@ recorded in `CLAUDE.md`. `web/`, `README.md` and `docs/` are all in scope.
 | Approval queue | 0 |
 | Tests | **280 passing**, enforced by `.githooks/pre-push` |
 | current_amendment | 13 |
+
+## 🟡 3D Execution Topology — v1 shipped to preview, NOT yet proven under recording load (23 Aug)
+
+`181ecd1`. Tier 2 owner mandate. Same twelve real stages as the 2D grid,
+on a draggable CSS-3D ring — `perspective`/`rotateY`/`translateZ`, no
+WebGL, no Three.js, per the plan's own stated preference. Behind a
+toggle in the Pipeline view ("TRY 3D (PREVIEW)"); 2D stays the default
+everywhere. Live at
+https://aion-axon-2026--holodeck-3d-w3tf1b40.web.app — main production
+site's asset hash confirmed unchanged.
+
+**Verified directly against the live preview** (pointer events dispatched
+programmatically, DOM state inspected): dragging −300px produced exactly
+`rotateY(−105deg)` on the ring and the correspondingly exact
+counter-rotations on individual cards (+105/+75/+45deg on the first
+three); clicking node index 2 rotated the ring to exactly `300deg`
+(`−2×30` normalized) and opened the detail panel; per-node opacity varies
+continuously (0.55–0.99), proving the depth effect is computed, not
+decorative. No console errors, no `NaN` in any transform, all 12 nodes
+present.
+
+One real bug caught before shipping: a raw CSS `transform` string on a
+`motion.button` fought framer-motion's own `animate={{scale}}`, which
+would have silently dropped the counter-rotation the instant a node
+pulsed — cards would have gone sideways exactly when something real
+happened. Fixed by using framer-motion's `rotateY`/`scale` style props
+instead of a transform string.
+
+**What is NOT verified: frame rate under actual screen-recording load on
+the real machine.** That is the plan's own named failure mode ("it works
+until OBS is also running") and can only be checked on the owner's
+hardware. **Time-boxed to 27 Aug** — if it isn't proven smooth under
+recording by then, 2D is what gets filmed, per the plan already on record.
 
 ## 🔴 PHASE 8 FIRE DRILL — PASSED (22 Aug)
 
