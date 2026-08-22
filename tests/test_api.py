@@ -309,6 +309,42 @@ def test_firebase_preview_channel_origin_is_allowed():
     assert response.headers.get("access-control-allow-origin") == origin
 
 
+def test_preflight_allows_the_owner_token_header():
+    """Unlocking the Holo-Deck must not take the whole surface down.
+
+    Found live 22 Aug, in two browsers, while trying the chat panel. The
+    dashboard rendered perfectly until the owner token was pasted in, then
+    every panel went red with "aion-core unreachable" -- while curl against
+    the same API answered 200. That asymmetry sent the diagnosis chasing
+    antivirus and proxy settings on the operator's machine for half an
+    hour.
+
+    The cause was here: a browser preflights any request carrying a custom
+    header, allow_headers listed only Content-Type, so the preflight 400ed
+    and the browser cancelled every request. Locked = fine, unlocked = dead.
+
+    The demo unlocks on camera. This test asks the question the browser
+    asks, because the earlier CORS tests only ever sent simple requests and
+    a simple request is never preflighted.
+    """
+    response = client.options(
+        "/autonomy",
+        headers={
+            "Origin": "https://aion-axon-2026.web.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "content-type,x-axon-token",
+        },
+    )
+
+    assert response.status_code == 200, (
+        "preflight rejected the owner token header — the Holo-Deck will go "
+        "dark the moment it is unlocked"
+    )
+
+    allowed = response.headers.get("access-control-allow-headers", "").lower()
+    assert "x-axon-token" in allowed
+
+
 def test_the_preview_pattern_does_not_open_the_api_to_every_web_app():
     """The regex is pinned to THIS project's prefix on purpose.
 

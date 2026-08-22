@@ -22,7 +22,7 @@ from app.governance.autonomy_ledger import (
 )
 from app.governance.ground_truth import all_facts, lookup, record_fact
 from app.governance.kill_switch import kill_switch
-from app.governance.owner_auth import require_owner
+from app.governance.owner_auth import HEADER as OWNER_TOKEN_HEADER, require_owner
 from app.governance.review import review_package
 from app.memory.firestore_store import firestore_store
 from app.missions.service import mission_service
@@ -82,13 +82,26 @@ ALLOWED_ORIGINS = [
 # still require the owner token regardless of origin.
 PREVIEW_CHANNEL_ORIGIN = r"^https://aion-axon-2026--[a-z0-9-]+\.web\.app$"
 
+# The owner token header MUST be listed here, not just Content-Type.
+#
+# A browser preflights any request carrying a custom header. With
+# X-Axon-Token missing from this list that preflight returned 400, so the
+# browser cancelled the request before sending it -- which meant the
+# Holo-Deck worked perfectly while LOCKED and went completely dark the
+# instant a token was pasted in. Every panel read "aion-core unreachable"
+# while the API was healthy and answering curl normally, so the failure
+# pointed at the machine rather than at the allowlist. Found live, in two
+# browsers, four days before submission.
+#
+# Listing the header grants no authority: it only lets the request be
+# sent. require_owner still decides whether the token inside it is valid.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_origin_regex=PREVIEW_CHANNEL_ORIGIN,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", OWNER_TOKEN_HEADER],
 )
 
 
