@@ -144,6 +144,59 @@ def test_an_unresolvable_reference_is_left_visible_not_blanked():
     assert seen["arg"] == "$STEP_9"
 
 
+def test_step_output_field_can_be_reached_with_a_dot():
+    """`$STEP_1.rows` must pass the records, not the whole envelope.
+
+    The second fire drill died exactly here: read_dataset returns
+    {status, rows, row_count, ...} and the analyser was handed all of it,
+    then refused with "JSON input must be a list of records".
+    """
+    seen = {}
+
+    registry.register(
+        "emits_rows", "Returns an envelope around its rows.", "LOW",
+        lambda *a: {"status": "SUCCESS", "row_count": 2,
+                    "rows": [{"year": 2005}, {"year": 2006}]},
+    )
+    registry.register(
+        "echo_arg", "Captures.", "LOW",
+        lambda *a: (seen.update(arg=a[0]), {"status": "SUCCESS"})[1],
+    )
+
+    plan = MissionPlan(goal="g", steps=[
+        step(1, "emits_rows", []),
+        step(2, "echo_arg", ["$STEP_1.rows"]),
+    ])
+
+    summary = mission_engine.run(WorkflowState(user_request="r"), plan)
+
+    assert summary["status"] == "COMPLETED"
+    assert json.loads(seen["arg"]) == [{"year": 2005}, {"year": 2006}], (
+        "the envelope was passed instead of the records"
+    )
+
+
+def test_a_missing_field_leaves_the_reference_visible():
+    seen = {}
+
+    registry.register(
+        "emits_rows", "No such field.", "LOW",
+        lambda *a: {"status": "SUCCESS", "rows": [1]},
+    )
+    registry.register(
+        "echo_arg", "Captures.", "LOW",
+        lambda *a: (seen.update(arg=a[0]), {"status": "SUCCESS"})[1],
+    )
+
+    plan = MissionPlan(goal="g", steps=[
+        step(1, "emits_rows", []),
+        step(2, "echo_arg", ["$STEP_1.nope"]),
+    ])
+    mission_engine.run(WorkflowState(user_request="r"), plan)
+
+    assert seen["arg"] == "$STEP_1.nope"
+
+
 def test_plain_args_are_untouched():
     seen = {}
 

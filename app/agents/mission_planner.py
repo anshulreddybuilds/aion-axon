@@ -54,6 +54,11 @@ Rules you must follow:
    sentence describing the data. A description is not data: passing one
    produces a confident answer about nothing.
 
+   Reach INSIDE a result with a dot: "$STEP_1.rows". Capabilities return
+   an envelope like {"status": ..., "rows": [...], "row_count": N}, and a
+   capability that wants the records themselves will reject the whole
+   envelope. read_dataset -> analysis is almost always "$STEP_1.rows".
+
 7. BIGQUERY COST — read_dataset refuses any query that would scan more
    than ~200 MB, and the query fails outright rather than running. Keep
    it narrow:

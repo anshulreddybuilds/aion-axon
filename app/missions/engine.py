@@ -168,7 +168,7 @@ class MissionEngine:
         """
         by_step = {r.get("step"): r for r in results}
 
-        def value_of(n: int) -> Optional[str]:
+        def value_of(n: int, path: Optional[str]) -> Optional[str]:
             record = by_step.get(n)
 
             if record is None:
@@ -181,6 +181,18 @@ class MissionEngine:
             if payload is None:
                 return None
 
+            # `$STEP_1.rows` reaches inside the envelope. Capabilities
+            # return {status, rows, row_count, ...}, so passing the whole
+            # object to one that wants the rows fails on a type it was
+            # never offered -- which is precisely how the second fire
+            # drill died: "JSON input must be a list of records".
+            if path:
+                for part in path.split("."):
+                    if isinstance(payload, dict) and part in payload:
+                        payload = payload[part]
+                    else:
+                        return None
+
             return (
                 payload if isinstance(payload, str)
                 else json.dumps(payload, default=str)
@@ -191,10 +203,12 @@ class MissionEngine:
                 return arg
 
             def repl(match: "re.Match[str]") -> str:
-                resolved = value_of(int(match.group(1)))
+                resolved = value_of(int(match.group(1)), match.group(2))
                 return match.group(0) if resolved is None else resolved
 
-            return re.sub(r"\$STEP_(\d+)", repl, arg)
+            return re.sub(
+                r"\$STEP_(\d+)(?:\.([A-Za-z_][A-Za-z0-9_.]*))?", repl, arg
+            )
 
         return [substitute(a) for a in args]
 
