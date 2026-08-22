@@ -75,15 +75,44 @@ without partially running.
 | Functions | `search_web`, `_generate_async`, `_receipts` |
 | GCP | Gemini API with `GoogleSearch` grounding tool |
 
-Google Search grounding is wired and returns source receipts when quota
-allows. **Currently returns `DEGRADED` with zero citations** because Search
-grounding is 429 quota-blocked on the free tier.
+Google Search grounding is wired and returns source receipts when the tier
+allows. **Currently returns `DEGRADED` with zero citations.**
 
 The fallback is deliberately incapable of looking sourced: `grounded` stays
 false and `sources` stays empty even if the fallback response carries chunks.
 
-**Blocker:** Gemini quota. Resolved by the \$150 credits (~25 Aug), not by
-code. **No fabricated citation will be added to close this.**
+**No fabricated citation will ever be added to close this.**
+
+### Corrected 23 Aug 2026 — this is a TIER limit, not a daily quota
+
+The entry above read "429 quota-blocked on the free tier" and implied a
+fresh allowance would clear it. **It does not.** Tested against a brand-new
+API key from a different project, with generation quota confirmed healthy on
+that same key in the same minute:
+
+| call | result |
+|---|---|
+| plain generation, `gemini-3.6-flash` | **SUCCESS** — full correct answer |
+| **grounded**, `gemini-3.6-flash` | **429** on the very first call |
+| **grounded**, `gemini-flash-latest` | **429** |
+| **grounded**, `gemini-2.5-flash` / `-flash-lite` | **404** — listed in the catalog, not callable on this key |
+
+The two 429s are shaped differently from a spent daily quota. A spent
+allowance names itself: the 20/day generation limit returns a `QuotaFailure`
+with `quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier`, a
+`quotaValue`, and a `RetryInfo` delay. **The grounding 429 carries no
+`QuotaFailure`, no `quotaId`, no limit and no retry delay** — the signature
+of a feature the tier does not offer at all, rather than one used up.
+
+**Consequence:** provisioning more keys or waiting for a daily reset cannot
+fix Stage 4. Only a billed Gemini API tier can. That is a spending decision
+and an OPEN OWNER DECISION — not made here, and not made by lowering the bar
+for what counts as a citation.
+
+**Until then Stage 4 stays DEGRADED, and that is the correct reading.** The
+spine reports 11/12 verified rather than 12/12 for exactly this reason. A
+system reporting 92% with one honestly degraded stage is telling the truth;
+the same system reporting 100% would not be.
 
 ---
 
