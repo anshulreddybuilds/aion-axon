@@ -53,7 +53,16 @@ not depend on model availability. The real priority 2 is below.
 **2. Reliability (Phase 10) — run the full demo unattended twice in a row.**
 With the suite green and the queue clear, this is the next roadmap gate.
 
-**3. Wire owner-token entry into the Holo-Deck (or accept read-only).**
+**3. 3D Holo-Deck (owner mandate 22 Aug) + write access.** Full plan in
+`docs/upgrade-plan.md`. The owner ruled the UI gets a 3D interface
+regardless; that overrides `CLAUDE.md` §P9's "no WebGL" line, but the
+reason for that line (frame drops on an 8GB machine *while screen
+recording*) becomes a build constraint. **The live 2D Holo-Deck stays
+deployed as the fallback, and 3D must be demo-ready by 27 Aug or the 2D
+version gets filmed.** The rule that must survive the rebuild: every
+animation is a real event, never idle decoration.
+
+Separately, on the same surface:
 The dashboard is LIVE at **https://aion-axon-2026.web.app** (deployed 22 Aug;
 `firebase.json` + `.firebaserc` at repo root, `web/dist` is the public dir).
 Reads all work. **Writes do not** — Approve / Reject / kill switch will 401,
