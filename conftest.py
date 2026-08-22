@@ -27,3 +27,41 @@ import os
 # setdefault, not assignment: an integration run that deliberately exports
 # AXON_FIRESTORE_MODE=real must still be able to.
 os.environ.setdefault("AXON_FIRESTORE_MODE", "memory")
+
+
+# The same guard, for the model API.
+#
+# Firestore was fenced off; the Gemini key was not. So the suite's behaviour
+# depended on whether a real key happened to be exported in the shell that
+# ran it:
+#
+#     no key   ->  280 passed in 4.5s, zero network
+#     key set  ->  ~4 MINUTES of real billed calls, and non-deterministic --
+#                  one run produced 14 failures, the next produced 280 passes
+#                  from the identical commit
+#
+# Found 23 Aug, when a key was exported to probe which models a new API key
+# could see and the very next `pytest -q` in that same terminal came back
+# red. Half the diagnosis was spent looking for a regression that did not
+# exist.
+#
+# Three separate problems, not one:
+#   1. Running tests silently spent daily quota -- the scarcest resource on
+#      this project, and the one the demo depends on.
+#   2. `.githooks/pre-push` runs this suite. A push from a terminal holding a
+#      key would burn quota and could be blocked by an unrelated network
+#      blip, on a repo whose whole discipline is that a red suite means a
+#      real defect.
+#   3. Green stopped meaning anything fixed, because it depended on ambient
+#      environment rather than on the code.
+#
+# No test in this suite is written to need a live model: there are no live
+# markers and nothing skips on a missing key. Reaching the network was never
+# intended, so the fix is to make it impossible by default.
+#
+# Opt back in deliberately with AXON_LIVE_MODEL_TESTS=1 for a genuine
+# integration run. That is an explicit, quota-spending choice -- which is
+# what it always should have been.
+if not os.environ.get("AXON_LIVE_MODEL_TESTS"):
+    for _key_var in ("GOOGLE_API_KEY", "GEMINI_API_KEY"):
+        os.environ.pop(_key_var, None)
