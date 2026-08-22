@@ -1,6 +1,6 @@
 # STATE — AION Axon (Session A)
 
-**Rewritten 22 Aug 2026 ~13:45 IST. Replace this file wholesale each session; never append.**
+**Rewritten 22 Aug 2026 ~20:15 IST. Replace this file wholesale each session; never append.**
 
 Session A owns the whole repo — Session B is dead by owner ruling (22 Aug),
 recorded in `CLAUDE.md`. `web/`, `README.md` and `docs/` are all in scope.
@@ -10,14 +10,14 @@ recorded in `CLAUDE.md`. `web/`, `README.md` and `docs/` are all in scope.
 | | |
 |---|---|
 | Branch | `feat/core-intelligence`, pushed, level with origin |
-| HEAD | `989115b` |
+| HEAD | `dba7f5e` |
 | aion-core | `aion-core-00023-bvv` · https://aion-core-638298765129.asia-south1.run.app |
 | Holo-Deck | **LIVE** · https://aion-axon-2026.web.app (noindex + robots.txt) |
 | Registry | **19 declared, 11 implemented** |
 | Telemetry | 26 model calls, 92,390 tokens, 48 gated runs |
 | Evolution events | 7 |
 | Approval queue | 0 |
-| Tests | **279 passing**, enforced by a pre-push hook |
+| Tests | **279 passing**, enforced by `.githooks/pre-push` |
 | current_amendment | 13 |
 
 ## 🔴 PHASE 8 FIRE DRILL — PASSED (22 Aug)
@@ -49,28 +49,38 @@ Nothing else is blocked.
 
 ## Next 3 priorities
 
-**1. 🎬 THE VIDEO — the real deadline risk.**
-Nothing has been shot. It is 30% of the score and the only deliverable
-that cannot be crammed at the end. The system is now demo-ready and the
-shot list is corrected; this is the thing most likely to cost the
-submission. **Start filming before adding anything else.**
+**1. SHOOT THE VIDEO. It is the only thing standing between this and a
+submission.** 30% of the score, nothing filmed yet, and it cannot be
+crammed on the last day. Everything it needs now exists and has been
+rehearsed.
 
-**2. Phase 10 reliability — the full demo unattended, twice in a row.**
+The setup is proven through THREE externally reviewed camera takes. The
+run sheet is in `docs/demo-script.md`; the short version:
+`cd` to the repo, `function prompt { "PS> " }`, `cls`, Ctrl+scroll until
+only ~15 lines fill the terminal, F11, mouse off-screen, then `.\demo`.
+`scripts/camera_test.py` rehearses every beat that costs NO quota, so the
+setup can be checked without burning a Gemini call.
+
+The acquisition act is the only part that spends quota: roughly 4 calls
+against a daily 20. Shoot it FIRST in the session, while there is room to
+retry.
+
+**2. Try the chat + voice panel and decide whether it stars in the demo.**
+Live on a preview channel:
+https://aion-axon-2026--command-chat-du1686ek.web.app
+Paste the owner token once, then type or speak a request. "Watch me talk
+to it" is a much stronger four minutes than "watch me type curl", and it
+targets the $5,000 Best Multimodal UX bonus. Not yet promoted to the main
+site — that is a deliberate owner call, not an oversight.
+
+**3. Phase 10 reliability: the full demo unattended, twice in a row.**
 `scripts/golden_path.py` is the rehearsal. Needs quota.
-
-**3. Holo-Deck write access — owner decision, still open.**
-Approve / Reject / kill switch return 401 in the browser by design, since
-the browser holds no owner token. Either add an in-memory token field or
-accept that the demo drives writes from `scripts/approve.py`. **A judge
-clicking a dead button on camera is worse than no button.** Also open:
-the owner asked about voice + chat input, which is legal under the Google
-rules (nothing forbids it; Best Multimodal UX is a $5,000 bonus) and
-should use the browser Web Speech API rather than a paid GCP service —
-but only after the video exists.
 
 ## Outstanding owner actions
 
-- Decide priority 3.
+- **Film.** Nothing else in scope is blocked on anyone.
+- Decide whether the chat/voice panel is promoted to the live site and
+  whether it stars in the demo.
 - Keep the URLs unshared until submission — see Secrecy below.
 
 ## Secrecy posture (owner asked, 22 Aug)
@@ -120,6 +130,34 @@ but only after the video exists.
 | — | SYNAPSE never saw the real input, so it guessed the data shape |
 | — | generator wrote brittle float assertions, discarding working code |
 | — | planner could not see parameter names, so it put the CAGR in the title |
+
+**The front door (22 Aug evening)**
+- **Chat + voice** (`dba7f5e`). `POST /missions/planned` always did the
+  whole job; it just had no interface, so reaching it meant a four-line
+  curl with two headers and a JSON file. The owner hit two errors in a row
+  doing exactly that, which was the argument for building this.
+- **Owner token is typed in and held in a module variable only** — not
+  localStorage, not sessionStorage, not a cookie, not the URL. Verified by
+  unlocking with a fake token and confirming every storage surface stayed
+  empty. It dies with the tab, which is the right trade for something that
+  can trip the kill switch.
+- Voice is the browser's own SpeechRecognition: no GCP speech service, no
+  key, no cost, and it hides itself where unsupported so the demo never
+  depends on a microphone.
+- The transcript reports BLOCKED as blocked and FAILED as failed. Dressing
+  those as friendly chat replies would hide the behaviour being judged.
+
+**Filming (22 Aug evening)**
+- `scripts/camera_test.py` — rehearses seven beats, no quota, ~26s.
+- `.\demo` launcher. The absolute path wrapped across two lines, sat on
+  screen for a whole take, and published the operator's real name to a
+  video bound for public YouTube.
+- `docs/demo-script.md` corrected twice. **Its opening shot would have
+  died on camera at 0:30**: it used a direct `POST /missions`, and
+  `/acquire` answers "Mission records no gap" for those. Only a
+  `/missions/planned` mission can be acquired against.
+- Three takes reviewed frame by frame. Readability went from "fails
+  legibility, a digit was transcribed as ?" to "legible without zooming".
 
 **Infrastructure**
 - `5b19070` — full-suite state leak, 121 errors to 0.
