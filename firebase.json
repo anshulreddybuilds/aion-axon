@@ -12,9 +12,20 @@
         "destination": "/index.html"
       }
     ],
+    "_comment_headers": [
+      "Header rules match the REQUEST path, not the file that ends up",
+      "being served. A rule on /index.html therefore never fires, because",
+      "visitors request / (and, via the SPA rewrite above, every other",
+      "path) -- those requests fell through to Firebase's default",
+      "max-age=3600, giving every visitor a one-hour stale window after a",
+      "deploy. Found by deploying and reading the response headers.",
+      "So: no-cache is the catch-all, and the content-hashed assets",
+      "override it. Assets are listed LAST because the last matching rule",
+      "wins; reversing these two would make every asset uncacheable."
+    ],
     "headers": [
       {
-        "source": "/index.html",
+        "source": "**",
         "headers": [
           {
             "key": "Cache-Control",
