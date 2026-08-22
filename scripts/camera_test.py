@@ -83,6 +83,18 @@ def main() -> None:
             "latest --secret=axon-owner-token --project=aion-axon-2026)")
         sys.exit(1)
 
+    # Warm both services BEFORE the timed beats. aion-sandbox is a
+    # second Cloud Run service and scales to zero, so its first call cold
+    # starts. On the first recording that put a five-second stall between
+    # two beats while everything else moved at ~2.6s, and an uneven rhythm
+    # reads as the system thinking hard rather than as infrastructure
+    # waking up.
+    try:
+        requests.get(f"{CORE}/health", timeout=30)
+        requests.get(f"{CORE}/sandbox/proof", timeout=90)
+    except Exception:  # noqa: BLE001 - warming is best effort
+        pass
+
     say()
     say(RULE)
     say("  AION AXON - governed capability spine")
