@@ -52,12 +52,10 @@ Verified live on mission `e37b2464` — and it rendered a full brief **while the
 Gemini planner was returning 429**, evidencing that the mission's product does
 not depend on model availability. The real priority 2 is below.
 
-**2. Clean the approval queue before filming.** The Holo-Deck shows **12
-waiting** approvals, most of them stale test artifacts. A queue that long
-trains a viewer (and an owner) to scroll past without reading, which is the
-opposite of what the demo argues. `scripts/clean_approvals.py` exists and is
-dry-run by default. Rejecting is a recorded decision, so this is an owner
-action, not housekeeping.
+**2. Fix the full-suite test leak (blocker 2 above).** With the queue clear
+and the demo path proven, this is the largest remaining correctness debt and
+the only thing standing between the repo and a full green `pytest -q`. Judges
+who clone and run the suite will hit 121 errors.
 
 **3. Wire owner-token entry into the Holo-Deck (or accept read-only).**
 The dashboard is LIVE at **https://aion-axon-2026.web.app** (deployed 22 Aug;
@@ -80,6 +78,14 @@ bug.**
   returning `sentiment: Negative, rationale: "crushed"`. Cost zero quota —
   the SYNAPSE proposal had already been banked before the cap hit.
 - **Holo-Deck deployed** — see priority 3.
+- **Approval queue cleared (22 Aug).** 11 stale requests rejected via
+  `scripts/clean_approvals.py --apply`: 7 `purchase item` and 2 other test
+  artifacts (13-64h old), plus 2 duplicate `install capability:
+  analyze_review_sentiment` proposals left over from the 429-ing acquire
+  attempts. All superseded — that capability was already READY at version 1,
+  and **verified still READY at version 1 after the rejections**, confirming
+  a rejected duplicate proposal does not disturb an installed capability.
+  Queue now 0. Rejections are recorded in the audit trail, not deleted.
 - **Firebase added to the GCP project.** It was a Cloud-only project; Firebase
   Management API had to be enabled AND the project adopted via the console
   (the CLI `addfirebase` 403s until terms are accepted). Now on the **Blaze**
