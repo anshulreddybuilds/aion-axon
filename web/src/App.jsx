@@ -49,6 +49,16 @@ const HEROES = {
 export default function App() {
   const [data, setData] = useState(null);
   const [passport, setPassport] = useState(null);
+  // The fetched passport lives in its OWN state, never inside `data`.
+  //
+  // It used to be stashed as `data.selected`, but refresh() does
+  // setData(await loadAll()) every 3 seconds and loadAll() has no
+  // `selected` key -- so the poll wiped the passport within one tick of
+  // it arriving. The Evidence view showed a capability visibly selected
+  // (cyan border on its chip) while both panels read "No acquired
+  // capability selected", because the chip's state and the passport's
+  // state were being stored in two places with different lifetimes.
+  const [selected, setSelected] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [view, setView] = useState("command");
@@ -87,10 +97,18 @@ export default function App() {
 
   useEffect(() => {
     if (!passport) return;
+    let cancelled = false;
     api
       .passport(passport)
-      .then((body) => setData((d) => ({ ...d, selected: body })))
+      .then((body) => {
+        if (!cancelled) setSelected(body);
+      })
       .catch(() => {});
+    // Guards against a slow fetch for a previously-clicked capability
+    // landing after a newer one and overwriting it.
+    return () => {
+      cancelled = true;
+    };
   }, [passport, data?.capabilities?.implemented]);
 
   const pending = data?.pending?.pending || [];
@@ -232,8 +250,8 @@ export default function App() {
                 </div>
               )}
               <div className="grid gap-4 lg:grid-cols-2">
-                <EvidencePanel capability={data?.selected} />
-                <SkillPassport capability={data?.selected} />
+                <EvidencePanel capability={selected} />
+                <SkillPassport capability={selected} />
               </div>
             </div>
           )}
