@@ -12,6 +12,8 @@ Design constraints that are not negotiable:
   resume the engine continues from there rather than replaying completed
   steps, because replaying an EXTERNAL_EFFECT step would perform it twice.
 """
+import json
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -54,12 +56,14 @@ class MissionEngine:
                     blocked_on=gap,
                 )
 
+            args = self._resolve_args(step.args, results)
+
             outcome = orchestrator.execute_tool(
                 workflow,
                 step.tool,
                 step.action,
                 RiskLevel(step.risk),
-                *step.args,
+                *args,
                 # The action label is short and often innocuous; the real
                 # intent usually lives in the description. Guardian must
                 # see both, or a prohibited request can hide behind a
@@ -83,6 +87,37 @@ class MissionEngine:
             }
 
             if status == "EXECUTED":
+                # EXECUTED means the GATE ran the tool, not that the tool
+                # succeeded. A capability that returns
+                # {"status": "ERROR", ...} ran perfectly well and failed at
+                # its job, and those are different facts.
+                #
+                # Found live 22 Aug in the first Phase 8 fire drill: the
+                # BigQuery step hit a byte cap and errored, the analysis
+                # step then errored on the empty input, and the mission
+                # still marched to COMPLETED and produced a confident
+                # Business Action Brief built from nothing. Every step was
+                # "EXECUTED"; nobody read what they returned.
+                #
+                # That is the exact failure this project exists to argue
+                # against — not a crash, but something that looks like
+                # success. A mission that cannot do the job must say so.
+                tool_error = self._tool_error(outcome.get("result"))
+
+                if tool_error is not None:
+                    results.append({**record, "status": "FAILED",
+                                    "reason": tool_error})
+
+                    workflow.update_status("FAILED")
+
+                    firestore_store.write_audit_event("STEP_FAILED", {
+                        "step": step.step,
+                        "tool": step.tool,
+                        "error": tool_error,
+                    })
+
+                    return self._summary("FAILED", results, index, plan)
+
                 # The orchestrator already verified and recorded the
                 # outcome. Read its verdict; never recompute it, or one
                 # action would move autonomy twice.
@@ -109,6 +144,81 @@ class MissionEngine:
         workflow.update_status("COMPLETED")
 
         return self._summary("COMPLETED", results, len(plan.steps), plan)
+
+    @staticmethod
+    def _resolve_args(
+        args: list[str], results: list[dict[str, Any]],
+    ) -> list[str]:
+        """Substitute `$STEP_n` with step n's actual output.
+
+        Without this, every step receives static strings the planner wrote
+        before any of them ran, so a three-step mission is really three
+        unrelated missions. Found live 22 Aug: the fire drill's brief was
+        built from the planner's own description of step 3 rather than
+        from the anomalies step 2 was supposed to find.
+
+        The reference is explicit rather than inferred. Silently feeding
+        each step the previous one's output would guess wrong the moment a
+        plan branches, and a wrong guess here is invisible — it produces a
+        plausible answer to the wrong question.
+
+        An unresolvable reference is left untouched rather than blanked,
+        so it surfaces as a visibly wrong argument instead of a quietly
+        empty one.
+        """
+        by_step = {r.get("step"): r for r in results}
+
+        def value_of(n: int) -> Optional[str]:
+            record = by_step.get(n)
+
+            if record is None:
+                return None
+
+            result = record.get("result")
+            inner = result.get("result") if isinstance(result, dict) else None
+            payload = inner if isinstance(inner, dict) else result
+
+            if payload is None:
+                return None
+
+            return (
+                payload if isinstance(payload, str)
+                else json.dumps(payload, default=str)
+            )
+
+        def substitute(arg: Any) -> Any:
+            if not isinstance(arg, str):
+                return arg
+
+            def repl(match: "re.Match[str]") -> str:
+                resolved = value_of(int(match.group(1)))
+                return match.group(0) if resolved is None else resolved
+
+            return re.sub(r"\$STEP_(\d+)", repl, arg)
+
+        return [substitute(a) for a in args]
+
+    @staticmethod
+    def _tool_error(result: Any) -> Optional[str]:
+        """Return the tool's own error message, or None if it succeeded.
+
+        Capabilities report failure in their return value rather than by
+        raising, because generated code runs in the sandbox and a raised
+        exception there is not an exception here. That convention is fine
+        — but it means a caller who only checks the gate's status learns
+        nothing about whether the work actually happened.
+        """
+        if not isinstance(result, dict):
+            return None
+
+        # Sandbox-proxied capabilities nest their payload one level down.
+        inner = result.get("result")
+        target = inner if isinstance(inner, dict) else result
+
+        if target.get("status") == "ERROR":
+            return str(target.get("error") or "Capability reported ERROR.")
+
+        return None
 
     def _gap_for(self, step: MissionStep) -> Optional[dict[str, Any]]:
         """Describe the capability gap at this step, if there is one."""

@@ -46,7 +46,25 @@ Rules you must follow:
 5. "args" are positional string arguments for the capability. For the
    calculator, pass a single arithmetic expression such as "1250 * 1.18".
    For web_research, pass a single search question.
-6. Keep steps minimal and concrete. Prefer fewer real steps to many
+6. CHAINING — to pass an earlier step's OUTPUT into a later step, write
+   "$STEP_1" (or $STEP_2, and so on) as that argument. It is replaced at
+   run time with what that step actually returned.
+   Use this whenever a step consumes a previous step's result. A step
+   that analyses data produced by step 1 takes args ["$STEP_1"], NOT a
+   sentence describing the data. A description is not data: passing one
+   produces a confident answer about nothing.
+
+7. BIGQUERY COST — read_dataset refuses any query that would scan more
+   than ~200 MB, and the query fails outright rather than running. Keep
+   it narrow:
+   - Select only the columns you need. Never SELECT *.
+   - Always filter with WHERE; aggregate with GROUP BY where you can.
+   - Known-good example, ~89 MB:
+     SELECT year, SUM(number) AS total
+     FROM `bigquery-public-data.usa_names.usa_1910_2013`
+     WHERE year >= 2005 GROUP BY year ORDER BY year
+
+8. Keep steps minimal and concrete. Prefer fewer real steps to many
    vague ones.
 
 Return ONLY the structured plan.
