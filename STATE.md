@@ -1,6 +1,6 @@
 # STATE — AION Axon (Session A)
 
-**Rewritten 22 Aug 2026 ~20:15 IST. Replace this file wholesale each session; never append.**
+**Rewritten 22 Aug 2026 ~21:40 IST. Replace this file wholesale each session; never append.**
 
 Session A owns the whole repo — Session B is dead by owner ruling (22 Aug),
 recorded in `CLAUDE.md`. `web/`, `README.md` and `docs/` are all in scope.
@@ -10,14 +10,14 @@ recorded in `CLAUDE.md`. `web/`, `README.md` and `docs/` are all in scope.
 | | |
 |---|---|
 | Branch | `feat/core-intelligence`, pushed, level with origin |
-| HEAD | `dba7f5e` |
-| aion-core | `aion-core-00023-bvv` · https://aion-core-638298765129.asia-south1.run.app |
+| HEAD | `1e5f5c3` |
+| aion-core | `aion-core-00026-5sf` · https://aion-core-638298765129.asia-south1.run.app |
 | Holo-Deck | **LIVE** · https://aion-axon-2026.web.app (noindex + robots.txt) |
 | Registry | **19 declared, 11 implemented** |
 | Telemetry | 26 model calls, 92,390 tokens, 48 gated runs |
 | Evolution events | 7 |
 | Approval queue | 0 |
-| Tests | **279 passing**, enforced by `.githooks/pre-push` |
+| Tests | **280 passing**, enforced by `.githooks/pre-push` |
 | current_amendment | 13 |
 
 ## 🔴 PHASE 8 FIRE DRILL — PASSED (22 Aug)
@@ -39,11 +39,35 @@ completed (mission `6337bd7c`), finding the **2006 / 2009 / 2010**
 anomalies — the post-2008 US birth decline, checkable against the outside
 world rather than against the system's own claims.
 
+## 🔴 CORS: unlocking the Holo-Deck took the whole surface down (FIXED 22 Aug)
+
+`1e5f5c3`, live on `aion-core-00026-5sf`. **This would have hit on camera** —
+the demo unlocks the Holo-Deck on screen.
+
+`allow_headers` listed only `Content-Type`. A browser preflights any request
+carrying a custom header, so the moment the owner token was pasted in, every
+request preflighted for `X-Axon-Token`, got **400**, and was cancelled before
+leaving the browser. Locked: perfect. Unlocked: every panel red with
+"aion-core unreachable", ring falling 92% → 17%.
+
+**Why it cost half an hour: the symptom pointed away from the cause.** `curl`
+answered 200 throughout (curl does not preflight), and it reproduced in two
+browsers on one machine — which reads as local antivirus or a proxy. Windows
+proxy settings and AV were both checked and cleared first. The tell was that
+a browser with **no token pasted in** rendered the page fine.
+
+**279 green tests said nothing about this**, because every existing CORS test
+sent a simple request and a simple request is never preflighted. The
+regression test now asks the question a browser asks. Proven by reverting the
+fix and watching it fail.
+
 ## Blockers
 
-**Gemini free-tier daily quota** — 20 requests/day. Roughly 15 spent on
-22 Aug across five drill runs. Resets ~12:30 IST. On 429: check once,
-record, stop. Unblocks permanently when the $150 credits land (~25 Aug).
+**Gemini free-tier daily quota — EXHAUSTED on 22 Aug.** Confirmed by a real
+429 at ~21:30 IST when the demo request was sent through the chat panel; the
+earlier "roughly 15 spent" estimate was low. Resets ~12:30 IST 23 Aug. On
+429: check once, record, stop. Unblocks permanently when the $150 credits
+land (~25 Aug).
 
 Nothing else is blocked.
 
@@ -72,6 +96,16 @@ Paste the owner token once, then type or speak a request. "Watch me talk
 to it" is a much stronger four minutes than "watch me type curl", and it
 targets the $5,000 Best Multimodal UX bonus. Not yet promoted to the main
 site — that is a deliberate owner call, not an oversight.
+
+**STILL UNANSWERED.** Attempted 22 Aug ~21:30 IST: unlock now holds green
+(the CORS fix above), the request was submitted, and it came back
+`AXON — FAILED` on a real 429 — quota was already gone. **The mic was
+never tested.** Two open questions carry to 23 Aug: does browser speech
+transcribe the request correctly, and does watching it beat watching curl?
+
+Worth recording from the attempt: the panel printed `AXON — FAILED` with
+the real error rather than dressing it as a chat reply. That is the
+honesty design holding under a live failure.
 
 **3. Phase 10 reliability: the full demo unattended, twice in a row.**
 `scripts/golden_path.py` is the rehearsal. Needs quota.
@@ -181,7 +215,20 @@ test was refused, and the green suite went through.
 
 **"Implemented and tested" is not "run once for real."** Every bug in the
 table above survived code review and a green suite. All six died the first
-time the thing actually ran.
+time the thing actually ran. The CORS bug is the seventh, and it survived
+**279** green tests plus a passing fire drill — because the drill drove the
+API with curl, and the one thing nobody had done was paste a token into a
+browser.
+
+**A test that does not do what the user does proves nothing about what the
+user does.** Five CORS tests existed. All five sent simple requests. A
+simple request is never preflighted, so none of them could ever have caught
+this — the suite was green and blind at the same time.
+
+**When a symptom points at the operator's machine, check what is different
+about the machine's SESSION first.** Half an hour went to antivirus and
+Windows proxy settings. The actual difference was one field on screen:
+`UNLOCKED` in the failing browser, locked in the working one.
 
 **Green CI is not a working repo.** The suite passed for maintainers and
 failed for anyone who cloned it, for many commits.
