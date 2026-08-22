@@ -271,3 +271,50 @@ def test_no_sample_when_nothing_has_run_yet():
     mission_service._persist_planned("m-empty", workflow, "r", plan, summary)
 
     assert mission_service.blocked_step_input("m-empty") is None
+
+
+# --- The planner must see each capability's real arguments ---------------
+
+def test_catalog_shows_parameter_names_so_the_planner_stops_guessing():
+    """Found live 22 Aug: the planner called write_brief(rows, cagr) and
+    the second positional parameter is `title`, so the mission's headline
+    finding was rendered as the document's title and the brief opened
+    with a raw JSON blob. Every step said EXECUTED; the artifact was
+    wrong. Positional arguments punish a wrong guess silently, so the
+    planner has to be told the parameter names.
+    """
+    from app.capabilities.declarations import capability_catalog
+
+    catalog = capability_catalog()
+
+    assert "write_brief(findings, title=<optional>," in catalog
+    assert "calculator(expression)" in catalog
+    assert "read_dataset(sql)" in catalog
+
+
+def test_unimplemented_capabilities_carry_no_signature():
+    """A declared capability has no function to introspect, and inventing
+    one would tell the planner something untrue about a gap.
+    """
+    from app.capabilities.declarations import capability_catalog
+
+    line = next(
+        l for l in capability_catalog().splitlines()
+        if l.startswith("- extract_entities")
+    )
+
+    assert line.startswith("- extract_entities (NOT IMPLEMENTED")
+
+
+def test_sandbox_proxies_are_left_bare_rather_than_shown_as_varargs():
+    """An acquired capability is a proxy with signature (*args). Printing
+    that would be a confident non-answer; silence is the honest form.
+    """
+    from app.capabilities.declarations import _signature_of
+
+    registry.register(
+        "emits_rows", "A proxy-shaped callable.", "LOW",
+        lambda *args: {"status": "SUCCESS"},
+    )
+
+    assert _signature_of("emits_rows") == ""
