@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Command from "./Command.jsx";
 import Topology, { computeStages } from "./Topology.jsx";
 import Inventory from "./Inventory.jsx";
 import { CompletionRing, Hero, Sidebar, TopStrip } from "./Shell.jsx";
@@ -148,6 +149,8 @@ export default function App() {
 
           {view === "command" && (
             <div className="space-y-4">
+              <Command onChanged={refresh} />
+
               <div className="grid gap-4 xl:grid-cols-[300px_1fr]">
                 <CompletionRing stageStates={stageStates} />
                 <Topology stages={stages} selected={node} onSelect={setNode} />

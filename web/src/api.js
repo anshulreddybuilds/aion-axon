@@ -16,13 +16,44 @@ export const CORE =
   import.meta.env.VITE_CORE_URL ||
   "https://aion-core-638298765129.asia-south1.run.app";
 
+/**
+ * The owner token lives in a module variable and NOWHERE ELSE.
+ *
+ * Not localStorage, not sessionStorage, not a cookie, not the URL. This
+ * token approves capability installs and trips the kill switch, so it
+ * should not survive a refresh, a closed tab, or a borrowed laptop. The
+ * cost is retyping it each session; the alternative is a credential
+ * sitting on disk in a browser profile, which is a strictly worse trade
+ * for the thing it protects.
+ *
+ * It is still a bearer token rather than real auth — that limitation is
+ * stated in the README and is not fixed by where it is kept.
+ */
+let ownerToken = "";
+
+export function setOwnerToken(value) {
+  ownerToken = (value || "").trim();
+}
+
+export function hasOwnerToken() {
+  return Boolean(ownerToken);
+}
+
 async function request(path, options = {}) {
-  const response = await fetch(`${CORE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  const headers = { "Content-Type": "application/json" };
+
+  if (ownerToken) headers["X-Axon-Token"] = ownerToken;
+
+  const response = await fetch(`${CORE}${path}`, { headers, ...options });
 
   if (!response.ok) {
+    // 401 has one cause and one fix; saying so beats a bare status code.
+    if (response.status === 401) {
+      throw new Error(
+        "401 — this action needs the owner token. Paste it above."
+      );
+    }
+
     throw new Error(`${options.method || "GET"} ${path} → ${response.status}`);
   }
 
@@ -45,6 +76,29 @@ export const api = {
     request(`/approvals/${id}/decide`, {
       method: "POST",
       body: JSON.stringify({ approved, decided_by: "anshul" }),
+    }),
+
+  // Plain English in, governed plan out. This endpoint already does the
+  // whole job -- plan, execute, block honestly on a gap -- it simply had
+  // no front door until now.
+  plannedMission: (text) =>
+    request("/missions/planned", {
+      method: "POST",
+      body: JSON.stringify({ request: text }),
+    }),
+
+  mission: (id) => request(`/missions/${id}`),
+
+  acquire: (missionId) =>
+    request(`/missions/${missionId}/acquire`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
+  install: (capability) =>
+    request(`/synapse/install/${capability}`, {
+      method: "POST",
+      body: JSON.stringify({}),
     }),
 
   // Cloud Run returns HTTP 411 on a POST with no body, so every POST
