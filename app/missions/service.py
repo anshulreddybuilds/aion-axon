@@ -107,6 +107,59 @@ class MissionService:
             **summary,
         }
 
+    def blocked_step_input(self, mission_id: str) -> Optional[str]:
+        """A sample of what the BLOCKED step will actually be handed.
+
+        SYNAPSE was being asked to build a capability from a sentence
+        describing the job and nothing else, so it had to guess the shape
+        of its own input. On 22 Aug it guessed `{date, value}` records for
+        a step that receives `{year, total}` rows straight out of
+        BigQuery. The candidate was safe, its own tests passed, and Gemma
+        scored it 100 — every check answered a question that was not
+        "will this fit the data?", and the capability was unusable.
+
+        Resolving the blocked step's own args against the steps that
+        already ran gives the real thing rather than a description of it.
+        Truncated, because the need travels into a prompt and a thousand
+        rows would crowd out the instruction.
+        """
+        mission = firestore_store.get_mission(mission_id)
+
+        if mission is None or not mission.get("plan_document"):
+            return None
+
+        try:
+            plan = MissionPlan.model_validate(mission["plan_document"])
+        except Exception:  # noqa: BLE001 - a malformed plan is not fatal here
+            return None
+
+        index = mission.get("next_step_index", 0)
+
+        if not (0 <= index < len(plan.steps)):
+            return None
+
+        completed = [
+            r for r in mission.get("step_results", [])
+            if r.get("status") == "EXECUTED"
+        ]
+
+        if not completed:
+            return None
+
+        resolved = mission_engine._resolve_args(plan.steps[index].args, completed)
+
+        # An arg that still carries its own placeholder resolved to
+        # nothing, and a sample of nothing would mislead the generator
+        # more than no sample at all.
+        usable = [a for a in resolved if isinstance(a, str) and "$STEP_" not in a]
+
+        if not usable:
+            return None
+
+        sample = max(usable, key=len)
+
+        return sample[:1200] + (" …(truncated)" if len(sample) > 1200 else "")
+
     def resume_blocked(
         self, mission_id: str, capability_name: Optional[str] = None,
     ) -> dict[str, Any]:

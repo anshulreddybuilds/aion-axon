@@ -209,3 +209,65 @@ def test_plain_args_are_untouched():
     mission_engine.run(WorkflowState(user_request="r"), plan)
 
     assert seen["arg"] == "1250 * 1.18"
+
+
+# --- SYNAPSE must be shown the real input shape ---------------------------
+
+def test_blocked_step_input_sample_is_the_real_data_not_a_description():
+    """The 22 Aug failure: SYNAPSE built calculate_cagr for {date, value}
+    records while the step actually receives {year, total} rows. Every
+    check passed — safety, sandbox, Gemma 100 — because none of them was
+    asking whether the candidate fits the data. Showing SYNAPSE the actual
+    input is what closes that.
+    """
+    from app.missions.service import mission_service
+    from app.memory.firestore_store import firestore_store
+
+    registry.register(
+        "emits_rows", "Returns BigQuery-shaped rows.", "LOW",
+        lambda *a: {
+            "status": "SUCCESS",
+            "row_count": 2,
+            "rows": [{"year": 2005, "total": 3304899},
+                     {"year": 2006, "total": 3387211}],
+        },
+    )
+
+    plan = MissionPlan(goal="g", steps=[
+        step(1, "emits_rows", []),
+        # The gap: no capability, but the args already say what it gets.
+        step(2, None, ["$STEP_1.rows"], desc="compute CAGR"),
+    ])
+
+    workflow = WorkflowState(user_request="r")
+    summary = mission_engine.run(workflow, plan)
+
+    assert summary["status"] == "BLOCKED"
+
+    mission_service._persist_planned("m-sample", workflow, "r", plan, summary)
+
+    sample = mission_service.blocked_step_input("m-sample")
+
+    assert sample is not None, "no sample was produced for the blocked step"
+    # The real field names must be visible to the generator.
+    assert "year" in sample and "total" in sample
+    assert "3304899" in sample
+    # And it must be the data, not the planner's sentence about it.
+    assert "compute CAGR" not in sample
+
+    firestore_store.missions.clear()
+
+
+def test_no_sample_when_nothing_has_run_yet():
+    """A mission blocked at step 1 has no upstream output. Inventing a
+    sample there would be worse than sending none.
+    """
+    from app.missions.service import mission_service
+
+    plan = MissionPlan(goal="g", steps=[step(1, None, [], desc="do a thing")])
+    workflow = WorkflowState(user_request="r")
+    summary = mission_engine.run(workflow, plan)
+
+    mission_service._persist_planned("m-empty", workflow, "r", plan, summary)
+
+    assert mission_service.blocked_step_input("m-empty") is None

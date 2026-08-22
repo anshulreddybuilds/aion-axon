@@ -177,6 +177,23 @@ def acquire_for_mission(mission_id: str) -> dict[str, Any]:
     if not need:
         return {"status": "FAILED", "error": "Mission records no gap."}
 
+    # Show SYNAPSE the ACTUAL input the new capability will receive, not
+    # just a description of the job. Without this it guesses the shape and
+    # has no way to know it guessed wrong: the safety screen, the sandbox
+    # and Gemma all pass a candidate that fits nothing, because each is
+    # answering a different question. Found live 22 Aug — `calculate_cagr`
+    # was built for {date, value} records and the step feeds it
+    # {year, total} rows.
+    sample = mission_service.blocked_step_input(mission_id)
+
+    if sample:
+        need = (
+            f"{need}\n\n"
+            "The capability will be called with exactly this input, as a "
+            f"single string argument:\n{sample}\n\n"
+            "Parse THIS shape. Do not invent different field names."
+        )
+
     return synapse.propose(need, mission_id).to_dict()
 
 
