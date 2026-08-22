@@ -14,11 +14,12 @@ Acquisition #1 rather than becoming a fifth act).
 | # | Step | Why |
 |---|---|---|
 | 1 | `gcloud run services update aion-core --region asia-south1 --min-instances=1` | Cold start is 3–8s and it reads as lag on camera. **Set back to 0 straight after recording.** |
-| 2 | `python -m scripts.clean_approvals --apply` | An approval queue full of stale test requests makes the card unreadable. |
-| 3 | `python -m scripts.golden_path` | If the rehearsal is not green, the take will not be either. |
-| 4 | Open the Holo-Deck, one browser tab, no bookmarks bar | |
-| 5 | Second tab: Cloud Run console, `aion-core` revisions page | This is the row-6 proof shot. |
-| 6 | Screen at 1920×1080, editor font ≥16pt | Judges watch small. |
+| 2 | **`export AXON_OWNER_TOKEN=$(gcloud secrets versions access latest --secret=axon-owner-token --project=aion-axon-2026)`** | **Every write below needs it.** Owner auth landed after this script was written; without it the very first shot returns a bare `401` on camera. |
+| 3 | `python -m scripts.clean_approvals --apply` | An approval queue full of stale test requests makes the card unreadable. |
+| 4 | `python -m scripts.golden_path` | If the rehearsal is not green, the take will not be either. |
+| 5 | Open the Holo-Deck at **https://aion-axon-2026.web.app**, one browser tab, no bookmarks bar | Now hosted — see constraint 4. |
+| 6 | Second tab: Cloud Run console, `aion-core` revisions page | This is the row-6 proof shot. |
+| 7 | Screen at 1920×1080, editor font ≥16pt | Judges watch small. |
 
 **Recording rule:** if a take needs a retry, restart the whole act. Splicing
 mid-act produces the state jumps that read as fakery.
@@ -43,10 +44,23 @@ mid-act produces the state jumps that read as fakery.
 
 ```bash
 curl -s -X POST $CORE/missions -H "Content-Type: application/json" \
-  -d '{"request":"brief","tool":"write_brief","action":"write it","risk":"LOW","args":[]}'
+  -H "X-Axon-Token: $AXON_OWNER_TOKEN" \
+  -d '{"request":"x","tool":"extract_entities","action":"extract","risk":"LOW","args":[]}'
 ```
 
-Land on `"status": "BLOCKED"`, `"missing_capability": "write_brief"`.
+Land on `"status": "BLOCKED"`, `"missing_capability": "extract_entities"`.
+
+> ⚠️ **Changed 22 Aug — this shot used to use `write_brief`, and would now
+> fail on camera.** `write_brief` was implemented (`7ac0125`), so it no
+> longer blocks: without the token it returns `401`, and with the token it
+> returns `FAILED — missing 1 required positional argument`. Neither is the
+> `BLOCKED` the narration promises. `extract_entities` is genuinely still
+> declared-and-unbuilt, and was re-run against the live service on 22 Aug to
+> confirm it returns exactly the output above.
+>
+> **Before recording, re-verify this shot.** Any capability named here can
+> be implemented between now and the take; `GET /capabilities` lists what is
+> still unbuilt.
 
 ---
 
@@ -140,10 +154,18 @@ These are places the locked script and the real system currently differ.
 **Do not narrate around them.** A judge who catches one overstatement
 re-examines everything else.
 
-### 1. The capability counter is 12 → 14, not 12 → 15
+### 1. The counter is now 18 declared / 10 implemented — say what you see
 
-Acquisition #3 was blocked by the Gemini daily quota cap. If you record
-before acquiring a third, **say "twelve to fourteen"**. Do not say fifteen.
+**Superseded 22 Aug.** This section used to say "12 → 14, not 12 → 15"
+because Acquisition #3 was quota-blocked. #3 (`analyze_yoy_alert`) landed on
+21 Aug, and three more followed: `summarize_performance_text`,
+`analyze_complaint_urgency`, `analyze_review_sentiment`, plus `write_brief`
+built by hand.
+
+**Read the live number off `GET /capabilities` on the day you record and say
+that.** Hard-coding a count into a script is exactly how this line went
+stale twice. The registry moves whenever an acquisition lands, including
+one you perform on camera.
 
 ### 2. Research currently has ZERO citations
 
@@ -177,11 +199,24 @@ disagreed", not "reality disagreed".
   to demo.
 - **(c)** Cut the demotion beat from the video and keep it for Q&A.
 
-### 4. The Holo-Deck is not hosted yet
+### 4. The Holo-Deck IS hosted now — record from the real URL
 
-Recording from `localhost` is fine — row 6 is satisfied by the Cloud Run
-console shot and the LIVE badge, not by the UI's URL. But a hosted UI is a
-stronger "hosted project URL" for row 11.
+**Superseded 22 Aug.** It is live at **https://aion-axon-2026.web.app**,
+which is a real hosted project URL for row 11. Record from it, not from
+`localhost`.
+
+Two things to know before it is on camera:
+
+- **Its Approve / Reject / kill-switch buttons return 401.** The browser
+  holds no owner token by design — the same property the sandbox has. If
+  the script calls for clicking Approve on screen, either drive that beat
+  from `scripts/approve.py` in the terminal instead, or resolve the open
+  write-access decision in `STATE.md` first. **Clicking a dead button on
+  camera is worse than never showing one.**
+- **The Synapse Theater is the hero panel** and it only animates on real
+  events. If nothing is happening, it is still — that is deliberate and
+  worth one narrated line, because a judge who sees a static hero may
+  otherwise read it as broken.
 
 ### 5. If a step 429s mid-take
 
