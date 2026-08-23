@@ -567,3 +567,72 @@ def set_kill_switch(body: KillSwitchRequest) -> dict[str, Any]:
 @app.get("/killswitch")
 def get_kill_switch() -> dict[str, Any]:
     return {"kill_switch_active": kill_switch.is_active()}
+
+
+# --- Beastmode: additive governance narration -----------------------------
+#
+# Everything below reads real signals from the pipeline above and returns
+# them; nothing here can execute, approve or block anything. See
+# app/beastmode/ and docs/AXON_BEASTMODE_AUDIT.md for what each module
+# does and does not do.
+
+@app.get("/beastmode/red-team")
+def beastmode_red_team() -> dict[str, Any]:
+    """Runs the REAL AST screen and Guardian against real attack payloads,
+    right now, on this request. Not a cached or canned result."""
+    from app.beastmode.red_team import _run
+
+    results, contained = _run()
+    genuine_misses = sum(
+        1 for r in results if not r["blocked"] and not r.get("expected_miss_here")
+    )
+    return {
+        "results": results,
+        "total": len(results),
+        "contained_at_layer_tested": contained,
+        "genuine_misses": genuine_misses,
+    }
+
+
+@app.get("/beastmode/ledger/verify")
+def beastmode_ledger_verify() -> dict[str, Any]:
+    """Re-hashes the REAL live evolution ledger and compares it to the
+    last seal on disk. See app/beastmode/ledger_chain.py for exactly what
+    this can and cannot prove."""
+    from app.beastmode.ledger_chain import verify
+
+    events = firestore_store.list_evolution_events()
+    return verify(events)
+
+
+@app.post("/beastmode/ledger/seal", dependencies=[Depends(require_owner)])
+def beastmode_ledger_seal() -> dict[str, Any]:
+    """Writes a new seal over the CURRENT real ledger state. Owner-gated:
+    unlike verify, this changes what future verifications compare against."""
+    from app.beastmode.ledger_chain import seal
+
+    events = firestore_store.list_evolution_events()
+    return seal(events)
+
+
+@app.get("/beastmode/contract/{capability}")
+def beastmode_contract(capability: str) -> dict[str, Any]:
+    """Assembles the declared contract for an ALREADY-ACQUIRED capability
+    from its real passport -- the AST findings and risk it was actually
+    screened and approved under, not a fresh re-screen."""
+    from app.beastmode.contracts import build_contract
+
+    passport_body = skill_passport(capability)  # reuses the existing endpoint's own logic
+    passport = (passport_body.get("passport") or {})
+
+    if not passport:
+        return {"status": "NOT_FOUND", "capability": capability}
+
+    contract = build_contract(
+        name=capability,
+        entrypoint=(passport.get("candidate") or {}).get("entrypoint", capability),
+        risk=(passport.get("candidate") or {}).get("risk", "LOW"),
+        ast_safe=(passport.get("safety") or {}).get("safe", False),
+        ast_findings=(passport.get("safety") or {}).get("findings", []),
+    )
+    return {"status": "OK", "contract": contract.to_dict()}
