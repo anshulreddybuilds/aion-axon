@@ -71,8 +71,11 @@ function highlight(line) {
 function CodeCard({ name, code, filename }) {
   const lines = (code || "").split("\n");
 
+  // Wrapped in the border beam so the active canvas frame carries the same
+  // traveling photon as the command capsule, per the owner's spec.
   return (
-    <div className="framer-canvas-frame">
+    <div className="framer-border-beam beam-frame">
+      <div className="framer-capsule-inner">
       <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-white/[0.07] bg-black/50">
         <Code2 size={13} className="text-[#0088ff]" />
         <span className="font-mono text-[11.5px] text-slate-300">{filename}</span>
@@ -99,6 +102,7 @@ function CodeCard({ name, code, filename }) {
           ))}
         </pre>
       </div>
+      </div>
     </div>
   );
 }
@@ -107,7 +111,8 @@ function RegistryTable({ autonomy, capabilities }) {
   const rows = (autonomy?.capabilities || []).slice(0, 8);
 
   return (
-    <div className="framer-canvas-frame">
+    <div className="framer-border-beam beam-frame">
+      <div className="framer-capsule-inner">
       <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-white/[0.07] bg-black/50">
         <span className="font-mono text-[11.5px] text-slate-300">
           capability_registry
@@ -163,6 +168,7 @@ function RegistryTable({ autonomy, capabilities }) {
           )}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -399,8 +405,9 @@ export default function AppV4() {
         <div className="min-h-[calc(100vh-80px)] grid place-items-center px-5">
           <motion.div
             layoutId="capsule"
-            className="framer-glow-box w-full max-w-[680px] p-4"
+            className="framer-border-beam w-full max-w-[680px]"
           >
+            <div className="framer-capsule-inner p-4">
             <input
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
@@ -430,6 +437,7 @@ export default function AppV4() {
                   <ArrowUp size={15} />
                 </button>
               </div>
+            </div>
             </div>
           </motion.div>
         </div>

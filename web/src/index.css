@@ -157,3 +157,77 @@ body {
     radial-gradient(ellipse 50% 40% at 50% 100%, rgba(0, 240, 255, 0.05) 0%, transparent 60%),
     #000000;
 }
+
+/* ── Framer border beam ──────────────────────────────────────────────
+   A rotating conic gradient masked to the border, giving a photon that
+   travels the perimeter: white-hot lead, electric cyan core, cobalt trail.
+
+   Uses @property so the angle is an animatable custom property. Without
+   registering it, --beam-angle is just a string and CSS interpolates
+   nothing — the beam would sit still. Chromium and Safari 16.4+ support
+   this; the fallback below keeps a static cobalt edge everywhere else,
+   which is the pre-existing look rather than a broken one. */
+@property --beam-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes spinBeam {
+  to {
+    --beam-angle: 360deg;
+  }
+}
+
+.framer-border-beam {
+  position: relative;
+  border-radius: 20px;
+  padding: 1.5px;
+  overflow: hidden;
+  display: flex;
+  box-shadow: 0 0 35px rgba(0, 102, 255, 0.25);
+  /* Fallback for engines without @property: a plain lit edge. */
+  background: rgba(0, 102, 255, 0.45);
+}
+
+.framer-border-beam::before {
+  content: '';
+  position: absolute;
+  inset: -100%;
+  background: conic-gradient(
+    from var(--beam-angle),
+    transparent 0deg,
+    transparent 270deg,
+    rgba(0, 102, 255, 0.4) 300deg,
+    #0066ff 330deg,
+    #00f0ff 350deg,
+    #ffffff 358deg,
+    #00f0ff 360deg
+  );
+  animation: spinBeam 3.5s linear infinite;
+}
+
+.framer-capsule-inner {
+  position: relative;
+  width: 100%;
+  background: rgba(10, 14, 26, 0.92);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border-radius: 18.5px;
+  z-index: 1;
+}
+
+/* Tighter radius for the canvas frame, which is a panel rather than a pill. */
+.framer-border-beam.beam-frame { border-radius: 14px; }
+.framer-border-beam.beam-frame .framer-capsule-inner {
+  border-radius: 12.5px;
+  background: #090a0f;
+  overflow: hidden;
+}
+
+/* The beam is ambient chrome on an input, not a claim that work is
+   happening — but it is still continuous motion, so it stops for anyone
+   who has asked the OS for less of it. */
+@media (prefers-reduced-motion: reduce) {
+  .framer-border-beam::before { animation: none; }
+}
