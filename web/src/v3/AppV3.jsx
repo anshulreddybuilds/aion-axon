@@ -3,6 +3,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ArrowUp, CheckCircle2, Mic, ShieldAlert, Square, X } from "lucide-react";
 import Hologram from "./Hologram.jsx";
 import { buildBeats, buildDecision, humanMs, loadReplay } from "./replay.js";
+import { runLiveMission } from "./live.js";
+import { hasOwnerToken, setOwnerToken } from "../api.js";
 
 /**
  * v3 — the owner's hologram prototype, driven by real data.
@@ -69,6 +71,17 @@ export default function AppV3() {
   const [command, setCommand] = useState("");
   const timer = useRef(null);
 
+  // REPLAY walks a recorded run on a fixed 1500ms beat. LIVE runs a real
+  // mission and lets the pipeline's own pace drive the nodes — research
+  // ~20s, generate ~27s, evaluate ~34s, so a real acquisition is roughly
+  // 90 seconds rather than 18.
+  const [mode, setMode] = useState("replay");
+  const [unlocked, setUnlocked] = useState(hasOwnerToken());
+  const [tokenInput, setTokenInput] = useState("");
+  const [liveNodes, setLiveNodes] = useState({});
+  const [liveResult, setLiveResult] = useState(null);
+  const cancelLive = useRef(null);
+
   // Pull the real mission + telemetry once, up front.
   useEffect(() => {
     loadReplay()
@@ -118,7 +131,7 @@ export default function AppV3() {
     [beats, pushLog]
   );
 
-  const start = () => {
+  const startReplay = () => {
     if (!beats.length) return;
     clearTimer();
     setLogs([]);
@@ -127,6 +140,34 @@ export default function AppV3() {
     setRunning(true);
     timer.current = setTimeout(() => advance(1), 500);
   };
+
+  const startLive = () => {
+    const request = command.trim();
+    if (!request) return;
+
+    clearTimer();
+    setLogs([]);
+    setShowDecision(false);
+    setLiveNodes({});
+    setLiveResult(null);
+    setDocked(true);
+    setRunning(true);
+    pushLog("OK", "live mission dispatched — nodes will light as stages really complete");
+
+    cancelLive.current = runLiveMission(request, {
+      onNode: (id, note) =>
+        setLiveNodes((n) => ({ ...n, [id]: { at: Date.now(), note } })),
+      onLog: (tag, text) => pushLog(tag, text),
+      onDone: (result) => {
+        setRunning(false);
+        setLiveResult(result);
+        setShowDecision(true);
+      },
+      onError: () => setRunning(false),
+    });
+  };
+
+  const start = () => (mode === "live" ? startLive() : startReplay());
 
   const jumpTo = (target) => {
     if (!beats.length) return;
@@ -146,17 +187,30 @@ export default function AppV3() {
 
   const reset = () => {
     clearTimer();
+    cancelLive.current?.();
+    cancelLive.current = null;
     setStep(0);
     setRunning(false);
     setDocked(false);
     setLogs([]);
     setShowDecision(false);
+    setLiveNodes({});
+    setLiveResult(null);
   };
 
-  useEffect(() => clearTimer, []);
+  useEffect(
+    () => () => {
+      clearTimer();
+      cancelLive.current?.();
+    },
+    []
+  );
 
+  const isLive = mode === "live";
   const active = beats[step - 1] || null;
-  const verified = Math.max(0, Math.min(step - 1, beats.length));
+  const verified = isLive
+    ? Object.keys(liveNodes).length
+    : Math.max(0, Math.min(step - 1, beats.length));
 
   return (
     <div
@@ -196,8 +250,38 @@ export default function AppV3() {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="font-mono text-[11px] font-semibold px-2.5 py-1 rounded-full bg-amber-400/10 border border-amber-400/30 text-amber-300">
-              REPLAY — NOT LIVE
+            <div className="flex items-center gap-1 p-1 rounded-full bg-black/40 border border-white/[0.06]">
+              {[
+                ["replay", "REPLAY"],
+                ["live", "LIVE"],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  onClick={() => {
+                    reset();
+                    setMode(id);
+                  }}
+                  className={`font-mono text-[10px] font-bold px-2.5 py-1 rounded-full transition-colors ${
+                    mode === id
+                      ? id === "live"
+                        ? "bg-emerald-400/20 text-emerald-300"
+                        : "bg-amber-400/20 text-amber-300"
+                      : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <span
+              className={`font-mono text-[11px] font-semibold px-2.5 py-1 rounded-full border hidden sm:inline ${
+                isLive
+                  ? "bg-emerald-400/10 border-emerald-400/30 text-emerald-300"
+                  : "bg-amber-400/10 border-amber-400/30 text-amber-300"
+              }`}
+            >
+              {isLive ? "LIVE — REAL MISSION" : "REPLAY — RECORDED RUN"}
             </span>
           </div>
         </header>
@@ -256,6 +340,31 @@ export default function AppV3() {
             className="w-full bg-transparent border-none outline-none text-[15px] font-medium tracking-tight placeholder:text-slate-600"
           />
 
+          {isLive && !unlocked && (
+            <div className="flex gap-2 mt-2.5">
+              <input
+                type="password"
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+                placeholder="owner token — live missions change state"
+                autoComplete="off"
+                className="flex-1 bg-black/40 border border-white/[0.08] rounded-lg px-3 py-2 text-[11px] outline-none focus:border-cyan-400/50"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (!tokenInput.trim()) return;
+                  setOwnerToken(tokenInput);
+                  setTokenInput("");
+                  setUnlocked(true);
+                }}
+                className="px-4 rounded-lg border border-cyan-400/40 text-cyan-300 font-mono text-[10px] font-bold uppercase tracking-wider hover:bg-cyan-400/10"
+              >
+                Unlock
+              </button>
+            </div>
+          )}
+
           <div className="flex items-center justify-between pt-2.5 mt-2 border-t border-white/[0.06]">
             <span className="font-mono text-[11px] font-semibold text-slate-400 bg-black/30 border border-white/[0.08] px-2.5 py-1 rounded-md">
               gemini-3.6-flash
@@ -275,7 +384,13 @@ export default function AppV3() {
               <button
                 type="button"
                 onClick={running ? reset : start}
-                disabled={!beats.length}
+                disabled={
+                  running
+                    ? false
+                    : isLive
+                    ? !unlocked || !command.trim()
+                    : !beats.length
+                }
                 className="h-9 w-9 grid place-items-center rounded-full text-white disabled:opacity-30"
                 style={{
                   background: "linear-gradient(135deg, #0066ff, #00f0ff)",
@@ -316,8 +431,14 @@ export default function AppV3() {
 
                 <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2.5">
                   {beats.map((beat) => {
-                    const isDone = step > beat.id;
-                    const isRunning = step === beat.id;
+                    // In LIVE mode a node is lit only if its own real
+                    // counter moved; there is no "current step" walking
+                    // forward on a schedule.
+                    const live = liveNodes[beat.id];
+                    const isDone = isLive ? !!live : step > beat.id;
+                    const isRunning = isLive
+                      ? !!live && Date.now() - live.at < 2000
+                      : step === beat.id;
                     const tone = isDone || isRunning ? beat.tone : "idle";
 
                     return (
@@ -497,18 +618,91 @@ export default function AppV3() {
         </div>
 
         <p className="text-[9px] text-slate-600 leading-relaxed">
-          This sequence replays mission{" "}
-          <span className="font-mono">{decision?.missionId || "—"}</span>, a real
-          run recorded on 22 Aug 2026. Every figure is fetched from the live
-          aion-core API at replay time — none is hardcoded, and nothing on this
-          screen is a placeholder. Research shows 0 citations because Search
-          grounding is genuinely tier-blocked.
+          {isLive ? (
+            <>
+              LIVE mode runs a real mission and spends real Gemini quota. Nodes
+              light only when their own telemetry counter actually increments
+              server-side — there is no timer, so the pacing you see is the
+              pipeline's true pace (research ~20s, generate ~27s, evaluate
+              ~34s). A stage with nothing observable stays dark rather than
+              advancing to keep the animation moving.
+            </>
+          ) : (
+            <>
+              This sequence replays mission{" "}
+              <span className="font-mono">{decision?.missionId || "—"}</span>, a
+              real run recorded on 22 Aug 2026, at a fixed 1.5s beat. Every
+              figure is fetched from the live aion-core API at replay time —
+              none is hardcoded. Research shows 0 citations because Search
+              grounding is genuinely tier-blocked.
+            </>
+          )}
         </p>
       </div>
 
       {/* Decision card */}
       <AnimatePresence>
-        {showDecision && decision && (
+        {showDecision && isLive && liveResult && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 grid place-items-center p-6"
+            style={{ background: "rgba(0,0,0,0.8)", backdropFilter: "blur(16px)" }}
+          >
+            <motion.div
+              initial={{ scale: 0.9 }}
+              animate={{ scale: 1 }}
+              className="w-full max-w-[640px] rounded-2xl p-6"
+              style={{
+                background: "rgba(15,18,30,0.95)",
+                border: "1px solid #00f0ff",
+                boxShadow: "0 0 50px rgba(0,136,255,0.4)",
+              }}
+            >
+              <div className="flex items-center gap-2.5 mb-4">
+                <CheckCircle2 size={22} className="text-cyan-400" />
+                <h3 className="text-[18px] font-extrabold tracking-tight">
+                  Live mission · {liveResult.status || "COMPLETE"}
+                </h3>
+              </div>
+
+              <div className="rounded-xl p-4 bg-black/40 border border-white/[0.08] font-mono text-[11.5px] text-slate-300 space-y-1.5">
+                <p className="text-slate-500 break-all">
+                  mission · {liveResult.mission_id}
+                </p>
+                {liveResult.blocked_on && (
+                  <p className="text-amber-300">
+                    blocked · {liveResult.blocked_on.capability_description ||
+                      liveResult.blocked_on.description}
+                  </p>
+                )}
+                {(liveResult.step_results || []).map((s, i) => (
+                  <p key={i}>
+                    <span className="text-slate-500">step {i + 1}</span> ·{" "}
+                    {s.tool} → {s.status}
+                  </p>
+                ))}
+              </div>
+
+              <p className="text-[9.5px] text-slate-500 mt-3 leading-relaxed">
+                This is the mission's own response, shown exactly as returned.
+                A BLOCKED mission is reported as blocked.
+              </p>
+
+              <button
+                onClick={reset}
+                className="mt-4 ml-auto flex items-center gap-2 text-white font-bold px-5 py-2.5 rounded-lg"
+                style={{ background: "linear-gradient(135deg, #0066ff, #00f0ff)" }}
+              >
+                <X size={14} />
+                Close & reset
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {showDecision && !isLive && decision && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
