@@ -397,6 +397,14 @@ class AcquisitionRequest(BaseModel):
         None,
         description="Mission this acquisition should unblock, if any.",
     )
+    allow_retry: bool = Field(
+        False,
+        description=(
+            "Permit ONE additional generate+sandbox attempt if the first "
+            "candidate fails its own test, fed the real stderr. Defaults "
+            "to False, matching behavior before this field existed."
+        ),
+    )
 
 
 @app.post("/synapse/propose", dependencies=[Depends(require_owner)])
@@ -406,7 +414,9 @@ def synapse_propose(body: AcquisitionRequest) -> dict[str, Any]:
     This route can never install anything. It ends at AWAITING_APPROVAL
     at best; installation requires a separate call after a real decision.
     """
-    return synapse.propose(body.need, body.mission_id).to_dict()
+    return synapse.propose(
+        body.need, body.mission_id, allow_retry=body.allow_retry,
+    ).to_dict()
 
 
 @app.post("/synapse/install/{capability}", dependencies=[Depends(require_owner)])

@@ -99,12 +99,27 @@ async def _generate(prompt: str) -> str:
 def generate_candidate(
     need: str,
     research: Optional[str] = None,
+    prior_failure: Optional[str] = None,
 ) -> tuple[Optional[Candidate], Optional[str]]:
-    """Return (candidate, error). Never raises."""
+    """Return (candidate, error). Never raises.
+
+    `prior_failure` is optional and additive: passing None (every existing
+    call site) produces the exact same prompt as before this parameter
+    existed. When set, it carries the previous candidate's real sandbox
+    stderr/reason into the prompt so a bounded retry can address the
+    ACTUAL failure rather than generate blind a second time.
+    """
     prompt = f"CAPABILITY NEEDED:\n{need}\n"
 
     if research:
         prompt += f"\nRESEARCH NOTES:\n{research}\n"
+
+    if prior_failure:
+        prompt += (
+            f"\nA PREVIOUS ATTEMPT FAILED ITS OWN SANDBOX TEST:\n"
+            f"{prior_failure[:1500]}\n"
+            f"Write a corrected candidate that avoids this specific failure.\n"
+        )
 
     try:
         raw = asyncio.run(_generate(prompt))
