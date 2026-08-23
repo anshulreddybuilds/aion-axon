@@ -36,11 +36,38 @@ function StatusLine({ result }) {
         </p>
       )}
 
+      {/* WHY it failed, not just that it did.
+          This previously rendered "Axon · FAILED" and nothing else whenever
+          a mission came back FAILED with no steps and no gap -- which is
+          exactly what a quota refusal looks like. A failure with no reason
+          is the same defect as a silent mic error: the reader is told
+          something went wrong and given nothing to act on. */}
+      {result?.reason && (
+        <p className="text-[11px] text-red-300 mt-1.5 leading-relaxed break-all">
+          {result.reason}
+        </p>
+      )}
+
       {(result?.step_results || []).map((step, i) => (
         <p key={i} className="text-[10.5px] text-zinc-400 mt-1 tabular-nums">
           step {i + 1} · {step.status || "?"} {step.tool ? `· ${step.tool}` : ""}
         </p>
       ))}
+
+      {/* Last resort: a FAILED result that carried no reason, no gap and no
+          steps would otherwise render as a bare status word. Say so, rather
+          than leave a blank line that looks like the UI broke. */}
+      {status !== "COMPLETED" &&
+        !result?.reason &&
+        !result?.blocked_on &&
+        !(result?.step_results || []).length && (
+          <p className="text-[10.5px] text-zinc-500 mt-1.5 leading-relaxed">
+            The server returned {status} without a reason. Raw response:{" "}
+            <span className="font-mono break-all">
+              {JSON.stringify(result).slice(0, 240)}
+            </span>
+          </p>
+        )}
     </div>
   );
 }

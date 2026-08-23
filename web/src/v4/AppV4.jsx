@@ -242,13 +242,19 @@ export default function AppV4() {
     setSendOutcome(null);
     try {
       const result = await api.plannedMission(request);
+      // A 200 response can still describe a failure. Report the reason the
+      // server gave, not just the status word -- a bare "FAILED" is the
+      // same defect as a silent error.
+      const failed = result?.status && result.status !== "COMPLETED";
       setSendOutcome({
-        kind: result?.blocked_on ? "blocked" : "ok",
+        kind: result?.blocked_on ? "blocked" : failed ? "error" : "ok",
         text: result?.blocked_on
           ? `BLOCKED — gap: ${
               result.blocked_on.capability_description ||
               result.blocked_on.description
             }`
+          : result?.reason
+          ? `${result.status} — ${result.reason}`
           : `${result?.status || "COMPLETED"} · ${
               (result?.step_results || []).length
             } steps`,

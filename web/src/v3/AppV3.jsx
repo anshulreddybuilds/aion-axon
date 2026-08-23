@@ -677,6 +677,16 @@ export default function AppV3() {
                       liveResult.blocked_on.description}
                   </p>
                 )}
+
+                {/* WHY, not just that. A mission that comes back FAILED
+                    with no steps and no gap -- the shape of a quota
+                    refusal -- would otherwise show a status word and
+                    nothing else. */}
+                {liveResult.reason && (
+                  <p className="text-red-300 break-all">
+                    reason · {liveResult.reason}
+                  </p>
+                )}
                 {(liveResult.step_results || []).map((s, i) => (
                   <p key={i}>
                     <span className="text-slate-500">step {i + 1}</span> ·{" "}
