@@ -126,3 +126,56 @@ export function humanMs(ms) {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
 }
+
+/**
+ * The ANSWER a mission produced — the thing that was actually asked for.
+ *
+ * v4 could show the whole apparatus (code, tests, evidence, timings) and
+ * never show the result. For a product whose closing claim is "it finishes
+ * the job by itself", the finished job was the one thing missing from the
+ * screen. The owner asked "where is the final result?" and the honest
+ * answer was: nowhere.
+ *
+ * Reads the last EXECUTED step's payload. Returns null rather than
+ * inventing a shape when a mission has not produced one.
+ */
+export function extractAnswer(mission) {
+  if (!mission) return null;
+
+  const steps = (mission.step_results || []).filter(
+    (s) => s.status === "EXECUTED"
+  );
+  if (!steps.length) return null;
+
+  const last = steps[steps.length - 1];
+
+  // Results arrive either bare or wrapped in a {status, result} envelope.
+  const raw = last.result || {};
+  const payload = raw.result && typeof raw.result === "object" ? raw.result : raw;
+
+  // Show the substantive fields, not the bookkeeping ones.
+  const SKIP = new Set(["status", "rows", "truncated", "cache_hit"]);
+  const fields = Object.entries(payload).filter(
+    ([k, v]) =>
+      !SKIP.has(k) && (typeof v === "number" || typeof v === "string")
+  );
+
+  if (!fields.length) return null;
+
+  return {
+    tool: last.tool,
+    missionStatus: mission.status,
+    missionId: mission.mission_id,
+    request: mission.request,
+    fields,
+  };
+}
+
+/** Numbers readable at a glance; long strings left alone. */
+export function prettyValue(v) {
+  if (typeof v === "number") {
+    if (Number.isInteger(v)) return v.toLocaleString();
+    return Number(v.toFixed(4)).toLocaleString();
+  }
+  return String(v);
+}

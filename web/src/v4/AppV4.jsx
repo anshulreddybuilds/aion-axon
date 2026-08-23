@@ -12,7 +12,7 @@ import {
   Zap,
 } from "lucide-react";
 import { api, hasOwnerToken, setOwnerToken } from "../api.js";
-import { humanMs, loadArtifact, VIEWS } from "./artifact.js";
+import { extractAnswer, humanMs, loadArtifact, prettyValue, VIEWS } from "./artifact.js";
 
 /**
  * v4 — the Framer Agents design language, on AION Axon's real objects.
@@ -217,6 +217,10 @@ export default function AppV4() {
   // the kind of quiet dishonesty this project exists to avoid.
   const [review, setReview] = useState(null);
 
+  // The answer the mission produced. See extractAnswer() for why this
+  // exists: the surface showed the whole apparatus and never the result.
+  const [answer, setAnswer] = useState(null);
+
   useEffect(() => {
     api
       .autonomy()
@@ -286,6 +290,23 @@ export default function AppV4() {
       // bug was only that no caller ever took the second step.
       if (approved && capability) {
         const installed = await api.install(capability);
+
+        // The blocked mission resumes on install. Fetching it is how the
+        // closing beat becomes visible: the job that was stuck now has a
+        // result, and that result is the point of the whole exercise.
+        const resumedId =
+          installed?.mission_resumed?.mission_id ||
+          (typeof installed?.mission_resumed === "string"
+            ? installed.mission_resumed
+            : null);
+        if (resumedId) {
+          try {
+            setAnswer(extractAnswer(await api.mission(resumedId)));
+          } catch {
+            /* the install still succeeded; the answer is just unavailable */
+          }
+        }
+
         setSendOutcome({
           kind: installed?.status === "INSTALLED" ? "ok" : "error",
           text:
@@ -342,6 +363,7 @@ export default function AppV4() {
     setExpanded(false);
     setRevealed(0);
     setSendOutcome(null);
+    setAnswer(null);
   };
 
   const sendFollowUp = async () => {
@@ -355,6 +377,9 @@ export default function AppV4() {
       // A 200 response can still describe a failure. Report the reason the
       // server gave, not just the status word -- a bare "FAILED" is the
       // same defect as a silent error.
+      // Capture the answer, if the mission produced one.
+      setAnswer(extractAnswer(result));
+
       const failed = result?.status && result.status !== "COMPLETED";
       setSendOutcome({
         kind: result?.blocked_on ? "blocked" : failed ? "error" : "ok",
@@ -586,6 +611,40 @@ export default function AppV4() {
               Acquire missing capability
             </div>
 
+            {/* THE ANSWER.
+                Sits above everything because it is what was asked for.
+                Everything else on this surface explains how it was
+                obtained; this is the obtaining. */}
+            {answer && (
+              <div
+                className="rounded-xl p-3"
+                style={{
+                  background: "rgba(16,185,129,0.08)",
+                  border: "1px solid rgba(16,185,129,0.45)",
+                }}
+              >
+                <p className="text-[10px] uppercase tracking-wider font-bold text-emerald-300 mb-1.5">
+                  ✓ Result · mission {answer.missionStatus}
+                </p>
+                <div className="space-y-1">
+                  {answer.fields.map(([k, v]) => (
+                    <div key={k} className="flex items-baseline gap-2">
+                      <span className="font-mono text-[10px] text-slate-500 min-w-[92px]">
+                        {k}
+                      </span>
+                      <span className="font-mono text-[13px] text-emerald-200 font-semibold tabular-nums break-all">
+                        {prettyValue(v)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[9px] text-slate-500 mt-2 leading-relaxed">
+                  Produced by {answer.tool} · mission {answer.missionId?.slice(0, 8)}.
+                  These are the mission's own recorded values, not a summary.
+                </p>
+              </div>
+            )}
+
             {/* HUMAN APPROVAL — the moment the whole product exists for.
                 Rendered above everything else when the queue is non-empty,
                 because a request the owner does not notice is the same as
@@ -780,7 +839,8 @@ export default function AppV4() {
             </div>
 
             {/* follow-up capsule — dispatches a REAL mission */}
-            <div className="framer-glow-box p-2.5">
+            <div className="framer-border-beam">
+              <div className="framer-capsule-inner p-2.5">
               {!unlocked ? (
                 <div className="flex gap-2">
                   <input
@@ -855,6 +915,7 @@ export default function AppV4() {
                   {sendOutcome.text}
                 </p>
               )}
+              </div>
             </div>
 
             <p className="text-[8.5px] text-slate-600 leading-relaxed">
