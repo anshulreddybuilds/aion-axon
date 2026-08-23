@@ -3,13 +3,32 @@
 Paste-ready. Category: **Taskmaster**.
 Every number here is verifiable in the repo or against the live URL.
 
+**Verified 23 Aug 2026** against the deployed services and a full test run.
+Numbers checked this pass: 280 tests (19 adversarial), 11 of 19 capabilities
+implemented, 7 evolution events, `aion-core-00027-jwn` live.
+
 ---
 
-## Elevator pitch (200 chars)
+## Submission checklist — fill these in on the form
 
-A governed agent that acquires the capabilities it lacks — researching,
-generating and sandbox-testing new tools, then earning human permission to
-install them, and losing autonomy when it gets things wrong.
+| Field | Value |
+|---|---|
+| Category | **Taskmaster** |
+| Live API | https://aion-core-638298765129.asia-south1.run.app |
+| Holo-Deck | https://aion-axon-2026.web.app |
+| Repo | (private — add judges before submitting) |
+| Video | **NOT YET FILMED** — required, public YouTube, ≤4:00 |
+
+---
+
+## Elevator pitch (200 char limit)
+
+> A governed agent that builds the capabilities it lacks — it researches,
+> generates and sandbox-tests new tools, earns human permission to install
+> them, and loses autonomy when it gets things wrong.
+
+**196 characters, counted.** The original draft ran 205 and would have been
+truncated mid-sentence on the form.
 
 ---
 
@@ -116,21 +135,33 @@ core *can* reach it and the internet *cannot*.
 
 Verified against the deployed services, not locally:
 
-- **Two capabilities acquired end to end** — `convert_currency_amount` and
-  `detect_yoy_anomalies` — each researched, generated, screened,
-  sandbox-tested, evaluated, human-approved, installed, and recorded as an
-  Evolution Event with full chain of custody.
-- **A real finding in real data.** BigQuery pulled 9 years of US birth
-  records (88.8 MB scanned); the capability acquired minutes earlier flagged
-  2006, 2009 and 2010 as anomalies. The 2009–2010 drops match the documented
-  post-2008 decline in US births — a result checkable against the outside
-  world rather than taken on trust.
+- **The whole loop closed itself, unbroken, on one mission.** Mission
+  `19bf2bf0-bef3-4208-a1f3-20013852c244`: BigQuery returned 9 years of US
+  birth totals → the mission hit a gap (no CAGR capability existed) and
+  **BLOCKED mid-flight** → SYNAPSE researched, generated
+  `calculate_birth_cagr`, passed the AST screen, ran it in the zero-credential
+  sandbox, and scored **100/PASS** from Gemma → **stopped for approval** →
+  after one human yes, the originally blocked mission **resumed and finished
+  itself**: CAGR **−0.9987%/yr across 2005–2013**. Nobody re-ran anything.
+- **Seven capabilities acquired end to end**, 11 of 19 implemented, each with
+  a full chain of custody — the need, the generated source, the AST findings,
+  the sandbox exit code, the evaluator's verdict and reasoning, and the named
+  human who approved it. All readable at
+  `GET /capabilities/{name}/passport`.
+- **A real finding in real data.** A capability acquired minutes earlier
+  flagged 2006, 2009 and 2010 as anomalies in the birth series. The 2009–2010
+  drops match the documented post-2008 decline in US births — checkable
+  against the outside world rather than against the system's own claims.
 - **The trust boundary holds from both sides.** Core reads
   `ZERO_CREDENTIALS`; the public internet gets `HTTP 403` on the same URL.
 - **Acquired capabilities survive cold starts.** Cloud Run scales to zero;
   the registry rehydrates from Firestore before serving traffic.
-- **205 tests**, including 19 adversarial ones that try to break the
-  governance rather than confirm it.
+- **280 tests**, including 19 adversarial ones that try to break the
+  governance rather than confirm it. A pre-push hook runs the full suite and
+  refuses a red push.
+- **The end-to-end rehearsal passes live**: `scripts/golden_path.py` reports
+  13 PASS / 0 FAIL against the deployed stack, with the one Gemini-dependent
+  step reported as BLOCKED when quota is spent rather than skipped or faked.
 
 ---
 
@@ -145,9 +176,19 @@ core's service account.
 capability as READY while the runtime registry — process memory on a
 scale-to-zero service — had lost it. Every unit test passed throughout.
 
-**Free-tier quota is the real constraint.** Search grounding and generation
-share a daily cap. We chose to report `DEGRADED` and `BLOCKED` honestly rather
-than fabricate a citation or a score to make a demo run green.
+**Free-tier quota is the real constraint**, and we mis-diagnosed it for days.
+We recorded Search grounding as "daily quota-blocked" and assumed a fresh
+allowance would clear it. Testing that assumption against a brand-new API key
+disproved it: plain generation succeeded on that key while grounding returned
+**429 on its very first call**, on two models, with two more 404ing. The
+grounding refusal carries no `quotaId`, no `quotaValue` and no retry delay —
+unlike the generation limit, which names all four. That is the signature of a
+**tier limitation, not a spent allowance**. No number of new keys fixes it;
+only a billed tier does.
+
+We corrected the record rather than leaving a comfortable assumption in place,
+and we still report `DEGRADED` with **zero citations** rather than fabricate a
+source to make a demo run green.
 
 ---
 
@@ -156,10 +197,26 @@ than fabricate a citation or a score to make a demo run green.
 These are the findings we'd actually pass to someone building the same thing.
 
 **1. Every serious defect was found by running it, not by testing it.**
-Capabilities vanishing on restart, the publicly executable sandbox, a missing
-CORS layer, two separate governance checks wired into only one of two
-execution paths — all found live. The 205 tests are real and they hold, but
-not one of them caught the thing that would have broken the demo.
+Capabilities vanishing on restart, the publicly executable sandbox, two
+governance checks wired into only one of two execution paths — all found live.
+The 280 tests are real and they hold, but not one of them caught the thing
+that would have broken the demo.
+
+The sharpest example: the dashboard worked perfectly until an owner token was
+pasted in, then every panel went dark. The CORS allow-list named only
+`Content-Type`, so the browser's preflight refused the custom auth header and
+cancelled every request before it was sent. **Five CORS tests existed and all
+five passed** — because each sent a simple request, and a simple request is
+never preflighted. The suite was green and blind at the same time. The demo
+unlocks that dashboard on camera.
+
+**1b. A check that depends on ambient environment is not a check.** Our test
+suite spent live model quota and its result depended on which terminal ran it:
+no key exported meant 280 passed in 4.5s with zero network; a key exported
+meant four minutes of real billed calls and non-deterministic results — one
+run red, the next green, from an identical commit. Firestore had been fenced
+off from tests long ago; the model API had not. Green stopped meaning anything
+because it turned on the shell rather than on the code.
 
 **2. "Two paths, one check" bit us twice.** Verification was wired into the
 planned-mission path but not the direct one; later, autonomy supervision had
@@ -186,6 +243,8 @@ put in this submission.
 
 ## What's next
 
+- **A billed Gemini tier**, to close the one stage that has never run clean
+  and take the spine from 92% to a 100% we could actually defend.
 - Semantic policy matching (today it is lexical, so novel phrasing can miss).
 - Retry-with-feedback when a candidate fails its own tests.
 - Firestore → BigQuery export for self-improvement analytics.
@@ -201,27 +260,39 @@ should hold itself to the standard it applies to its own agent.
 **Implemented and live:** governed execution, capability gap detection,
 acquisition loop, AST screening, sandbox execution, Gemma evaluation, policy
 catalog, human approval with code review, install and rollback, evolution
-events, autonomy ledger, mission auto-resume, background monitors, telemetry.
+events, autonomy ledger, mission auto-resume, background monitors, telemetry,
+and a hosted Holo-Deck showing all of it from the live API.
+
+**Nothing on the Holo-Deck is mocked or simulated.** A stage lights only when
+its own counter actually moves; an empty panel means the system genuinely has
+nothing to show; the code shown in the capability inspector is the real
+generated source. We built a sequenced pipeline animation and then rebuilt it
+to replay a *real recorded mission* fetched live, because an animation on a
+timer would have been decoration presented as evidence — in a project whose
+entire claim is that it does not do that.
 
 **Partial or blocked:**
 
-- **Search grounding is free-tier quota-blocked.** Acquisition research
-  currently returns `DEGRADED` with **zero citations**, and the Skill Passport
-  shows "ungrounded" rather than a fabricated source.
+- **Search grounding needs a billed tier, not more free quota.** Acquisition
+  research returns `DEGRADED` with **zero citations**, and the Skill Passport
+  says "ungrounded" rather than showing a fabricated source. This is a tier
+  limitation, proven by test (see Challenges) — it is the one stage of twelve
+  that has never run clean, which is why the spine reports **92%, not 100%**.
+  A system reporting 100% here would be lying about itself.
 - **Autonomy promotion is currently driven by human verification**, not by
   grounded research evidence. Both directions of the arc are demonstrable
-  live; automated promotion from citations is untested for the same quota
-  reason.
-- **A third planned acquisition (a background-monitor skill) was not
-  acquired.** The monitor infrastructure is built, tested and running on a
-  schedule; the acquisition itself hit the daily quota cap.
+  live; automated promotion from citations is untested for the same reason.
 - **Policy matching is lexical, not semantic**, and **the AST screen can be
   evaded** by sufficiently indirect code. Neither layer is trusted alone —
   that is why the sandbox holds nothing worth stealing.
-- **The Holo-Deck UI is built but not yet hosted.** All state is available
-  over the API.
+- **Voice input is implemented but unproven on our hardware.** The browser
+  reports a healthy microphone and grants permission, then alternates
+  `audio-capture` and `no-speech`. The button is rendered **disabled with the
+  reason shown**, rather than simulated. A control that pretends to listen is
+  worse than one that admits it cannot.
 - **ADK planner token usage is not captured**, because the planner runs
-  through ADK rather than a direct GenAI call.
+  through ADK rather than a direct GenAI call. Those calls are reported as
+  UNMEASURED rather than estimated.
 
 ---
 
