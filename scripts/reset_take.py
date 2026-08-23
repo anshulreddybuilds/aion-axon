@@ -46,6 +46,25 @@ def main() -> int:
     before = requests.get(f"{CORE}/capabilities", timeout=TIMEOUT).json()
     print(f"before : {before.get('implemented')} of {before.get('total')} implemented")
 
+    # Don't roll back something that is not installed.
+    #
+    # The endpoint happily accepts a no-op and writes an evolution event
+    # for it anyway. Run between every take, that inflates the ledger count
+    # with entries recording nothing -- and that count is on screen during
+    # the demo, under stage 12. Checking first keeps the ledger a record of
+    # things that actually happened.
+    passport = requests.get(
+        f"{CORE}/capabilities/{capability}/passport", timeout=TIMEOUT
+    ).json()
+
+    if not passport.get("implemented"):
+        pending = requests.get(f"{CORE}/approvals/pending", timeout=TIMEOUT).json()
+        print(f"approval queue: {pending.get('count')} pending")
+        print()
+        print(f"NO CHANGE: {capability} is not installed — nothing to roll back.")
+        print("The gap is already open. Safe to run the take.")
+        return 0
+
     response = requests.post(
         f"{CORE}/synapse/rollback/{capability}",
         json={"reason": "Reset between camera takes — restoring the gap."},
