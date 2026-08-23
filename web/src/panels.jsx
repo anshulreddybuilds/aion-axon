@@ -152,14 +152,14 @@ export function ApprovalCard({ pending, onDecide, busy }) {
               <div className="flex gap-2 mt-3">
                 <button
                   disabled={busy}
-                  onClick={() => onDecide(request.request_id, true)}
+                  onClick={() => onDecide(request.request_id, true, request.capability)}
                   className="px-3 py-1 text-xs rounded bg-ok/15 text-ok border border-ok/40 hover:bg-ok/25 disabled:opacity-40"
                 >
                   Approve
                 </button>
                 <button
                   disabled={busy}
-                  onClick={() => onDecide(request.request_id, false)}
+                  onClick={() => onDecide(request.request_id, false, request.capability)}
                   className="px-3 py-1 text-xs rounded bg-danger/15 text-danger border border-danger/40 hover:bg-danger/25 disabled:opacity-40"
                 >
                   Reject

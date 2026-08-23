@@ -261,14 +261,44 @@ export default function AppV4() {
     };
   }, [pending, review?.request_id]);
 
-  const decide = async (id, approved) => {
+  const decide = async (id, approved, capability) => {
     setDeciding(id);
     try {
       await api.decide(id, approved);
-      setReview(null); // the artifact is no longer under review
+
+      // Approval alone installs NOTHING.
+      //
+      // POST /approvals/{id}/decide only records the decision; the install
+      // is a separate call that re-reads that decision from Firestore.
+      // Every UI shipped without making it, so clicking Approve cleared
+      // the queue and then silently did nothing -- the registry never
+      // moved and the blocked mission never resumed. On camera that is the
+      // closing beat of the demo quietly failing to happen.
+      //
+      // The two-step design on the server is correct and deliberate: the
+      // install re-reads the decision rather than trusting the caller. The
+      // bug was only that no caller ever took the second step.
+      if (approved && capability) {
+        const installed = await api.install(capability);
+        setSendOutcome({
+          kind: installed?.status === "INSTALLED" ? "ok" : "error",
+          text:
+            installed?.status === "INSTALLED"
+              ? `INSTALLED ${capability} · registry now ${installed.implemented_count}` +
+                (installed.mission_resumed
+                  ? " · blocked mission resumed"
+                  : "")
+              : `Install did not complete: ${
+                  installed?.reason || installed?.status || "unknown"
+                }`,
+        });
+      } else if (!approved) {
+        setSendOutcome({ kind: "blocked", text: `REJECTED ${capability || id}` });
+      }
+
+      setReview(null);
       const p = await api.pending();
       setPending(p?.pending || []);
-      // The registry changes on approval, so re-read the artifact too.
       loadArtifact(selected).then(setData).catch(() => {});
     } catch (err) {
       setSendOutcome({ kind: "error", text: String(err.message || err) });
@@ -580,14 +610,14 @@ export default function AppV4() {
                       )}
                       <div className="flex gap-2 mt-2">
                         <button
-                          onClick={() => decide(id, true)}
+                          onClick={() => decide(id, true, p.capability)}
                           disabled={busy}
                           className="px-3 py-1.5 rounded-lg border border-emerald-400/50 text-emerald-300 text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-400/10 disabled:opacity-40"
                         >
                           {busy ? "…" : "Approve"}
                         </button>
                         <button
-                          onClick={() => decide(id, false)}
+                          onClick={() => decide(id, false, p.capability)}
                           disabled={busy}
                           className="px-3 py-1.5 rounded-lg border border-red-400/50 text-red-300 text-[10px] font-bold uppercase tracking-wider hover:bg-red-400/10 disabled:opacity-40"
                         >

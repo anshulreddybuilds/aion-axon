@@ -123,10 +123,32 @@ export default function App() {
     [stages]
   );
 
-  const decide = async (id, approved) => {
+  const decide = async (id, approved, capability) => {
     setBusy(true);
     try {
       await api.decide(id, approved);
+
+      // Approving does not install. POST /approvals/{id}/decide records
+      // the decision only; the install is a separate call that re-reads
+      // that decision from Firestore. This UI never made it, so clicking
+      // Approve cleared the queue and then silently did nothing -- the
+      // registry never moved and a mission blocked on the capability never
+      // resumed. Found live: an approval recorded APPROVED while the
+      // registry stayed at 11 and the mission stayed BLOCKED.
+      //
+      // The server's two-step design is deliberate and correct. The defect
+      // was that no caller ever took the second step.
+      if (approved && capability) {
+        const installed = await api.install(capability);
+        if (installed?.status !== "INSTALLED") {
+          setError(
+            `Approved, but install did not complete: ${
+              installed?.reason || installed?.status || "unknown"
+            }`
+          );
+        }
+      }
+
       await refresh();
     } catch (err) {
       setError(err.message);

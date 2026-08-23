@@ -123,10 +123,26 @@ export default function AppV2() {
     }
   };
 
-  const decide = async (id, approved) => {
+  const decide = async (id, approved, capability) => {
     setBusy(true);
     try {
       await api.decide(id, approved);
+
+      // Approving records the decision; it does not install. The install
+      // is a separate call that re-reads that decision from Firestore, and
+      // no UI ever made it -- so Approve cleared the queue and silently
+      // changed nothing. See the same fix in App.jsx and v4/AppV4.jsx.
+      if (approved && capability) {
+        const installed = await api.install(capability);
+        if (installed?.status !== "INSTALLED") {
+          setError(
+            `Approved, but install did not complete: ${
+              installed?.reason || installed?.status || "unknown"
+            }`
+          );
+        }
+      }
+
       await refresh();
     } catch (err) {
       setError(err.message);
@@ -226,14 +242,14 @@ export default function AppV2() {
                       </p>
                       <div className="flex gap-2 mt-2.5">
                         <button
-                          onClick={() => decide(p.request_id || p.id, true)}
+                          onClick={() => decide(p.request_id || p.id, true, p.capability)}
                           disabled={busy}
                           className="px-3 py-1.5 rounded-lg border border-emerald-400/40 text-emerald-300 text-[10px] tracking-wider uppercase font-semibold hover:bg-emerald-400/10 disabled:opacity-40 transition-colors"
                         >
                           Approve
                         </button>
                         <button
-                          onClick={() => decide(p.request_id || p.id, false)}
+                          onClick={() => decide(p.request_id || p.id, false, p.capability)}
                           disabled={busy}
                           className="px-3 py-1.5 rounded-lg border border-red-400/40 text-red-300 text-[10px] tracking-wider uppercase font-semibold hover:bg-red-400/10 disabled:opacity-40 transition-colors"
                         >
