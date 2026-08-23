@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 import AppV2 from "./v2/AppV2.jsx";
 import AppV3 from "./v3/AppV3.jsx";
+import AppV4 from "./v4/AppV4.jsx";
 import "./index.css";
 
 /**
@@ -22,6 +23,7 @@ import "./index.css";
 const path = window.location.pathname.replace(/\/+$/, "");
 
 function Surface() {
+  if (path.endsWith("/v4")) return <AppV4 />;
   if (path.endsWith("/v3")) return <AppV3 />;
   if (path.endsWith("/v2")) return <AppV2 />;
   return <App />;
