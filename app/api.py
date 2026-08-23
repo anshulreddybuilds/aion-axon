@@ -636,3 +636,56 @@ def beastmode_contract(capability: str) -> dict[str, Any]:
         ast_findings=(passport.get("safety") or {}).get("findings", []),
     )
     return {"status": "OK", "contract": contract.to_dict()}
+
+
+@app.get("/beastmode/approval/{request_id}/explain")
+def beastmode_explain_approval(request_id: str) -> dict[str, Any]:
+    """WHY does this need a human? Assembled from the same real signals
+    the review endpoint already exposes -- a risk score and a contract
+    layered on top, not a second source of truth. Read-only: this cannot
+    approve, reject or install anything, unlike /approvals/{id}/decide."""
+    from app.beastmode.contracts import build_contract
+    from app.beastmode.risk_score import compute_risk_score
+
+    review = review_approval(request_id)
+    if review.get("status") == "NOT_FOUND":
+        return review
+
+    safety = review.get("safety") or {}
+    tests = review.get("tests") or {}
+    evaluation = review.get("evaluation") or {}
+
+    risk = compute_risk_score(
+        ast_finding_count=len(safety.get("findings") or []),
+        sandbox_passed=bool(tests.get("passed")),
+        evaluator_score=evaluation.get("score"),
+    )
+
+    contract = build_contract(
+        name=review.get("capability", ""),
+        entrypoint=review.get("entrypoint", ""),
+        risk=review.get("risk", "LOW"),
+        ast_safe=safety.get("safe", False),
+        ast_findings=safety.get("findings", []),
+    )
+
+    return {
+        "status": "OK",
+        "request_id": request_id,
+        "capability": review.get("capability"),
+        "why_human": {
+            "risk_score": risk.to_dict(),
+            "declared_contract": contract.to_dict(),
+            "sandbox_result": {
+                "passed": tests.get("passed"),
+                "exit_code": tests.get("exit_code"),
+            },
+            "evaluator_result": {
+                "status": evaluation.get("status"),
+                "score": evaluation.get("score"),
+                "verdict": evaluation.get("verdict"),
+                "reason": evaluation.get("reason"),
+            },
+            "policy_id": review.get("policy_id"),
+        },
+    }
