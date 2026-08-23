@@ -19,7 +19,7 @@ turn out to already exist under different names.
 | "Trust Kernel" / immutable governance core | `ExecutionGate` is the only path to tool execution — verified this session by tracing every caller; exactly one file (`app/workflows/orchestrator.py`) calls it | `app/governance/execution_gate.py` |
 | Adversarial red-team suite | **10 real adversarial tests**, not simulated: exfiltration payloads, persuasion phrasings, kill-switch coverage across every path, a planted secret in the sandbox scan | `tests/test_adversarial.py` |
 | "Why was this blocked?" explainability | Every Guardian decision already carries `policy_id`, `policy_title`, `reason` — returned by the live API today | `app/governance/guardian.py`, `app/governance/approval.py` |
-| AST firewall | 17 forbidden imports, 13 forbidden builtins, already enforced pre-sandbox | `app/synapse/safety_screen.py` |
+| AST firewall | 15 forbidden imports, 13 forbidden builtins, already enforced pre-sandbox | `app/synapse/safety_screen.py` |
 | Zero-credential sandbox | Separate Cloud Run service, 0 credentials, 0 IAM roles, verified live: `403` from the public internet | `app/synapse/sandbox_client.py` |
 | Independent evaluation | Gemma (`gemma-4-26b-a4b-it`) scores every candidate; policy can override a 100/100 score (verified live: candidates have been auto-rejected despite passing sandbox) | `app/synapse/evaluator.py` |
 | Human approval, not a formality | `install()` **re-reads** the approval from Firestore rather than trusting the proposal | `app/synapse/engine.py` |
