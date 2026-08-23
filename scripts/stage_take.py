@@ -111,22 +111,37 @@ def main() -> int:
 
         evaluation = record.get("evaluation") or {}
         score = evaluation.get("score")
-        print(f"      {record.get('status')} — evaluator score {score}")
 
-        # A real low score is a legitimate refusal and should NOT be retried
-        # away; only a missing score is the transient worth another attempt.
-        if score is not None:
+        # CORRECTED, after testing this directly against the engine: an
+        # evaluation that genuinely comes back UNSCORED does NOT reject --
+        # app/synapse/engine.py lets it through to AWAITING_APPROVAL,
+        # clearly marked, exactly like the "READY FOR THE TAKE" branch
+        # above. So if we are in THIS branch with an empty `evaluation`
+        # dict, evaluation never ran at all -- something upstream
+        # (research or generation) failed first, which prints identically
+        # (score=None) but is a different fact. The earlier version of
+        # this script blamed "the evaluator" for exactly this case, which
+        # was wrong; see tests/test_evaluator_unscored_escalates.py.
+        if evaluation:
+            # Evaluation DID run and produced a real, scored verdict below
+            # the floor. That is governance working correctly, not a
+            # transient, and must not be retried away.
+            print(f"      REJECTED — evaluator genuinely scored this "
+                  f"{score}, below the floor")
             print()
-            print("  The evaluator genuinely scored this candidate below the")
-            print("  floor. That is the governance working, not a failure.")
+            print("  The evaluator scored this candidate and it failed on")
+            print("  the merits. That is the governance working, not a bug.")
             print(f"  reason: {(evaluation.get('reason') or '')[:160]}")
             return 1
+
+        print(f"      {record.get('status')} — evaluation never ran: "
+              f"{str(record.get('reason') or record.get('error') or '')[:160]}")
 
         if attempt == 1:
             time.sleep(2)
 
     print()
-    print("  Evaluator returned no score twice. Not retrying further —")
+    print("  Failed twice before evaluation ever ran. Not retrying further —")
     print("  a third attempt would spend quota on the same transient.")
     return 1
 
