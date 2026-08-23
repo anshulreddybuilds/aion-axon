@@ -190,6 +190,17 @@ export default function AppV4() {
   const [unlocked, setUnlocked] = useState(hasOwnerToken());
   const [tokenInput, setTokenInput] = useState("");
 
+  // The approval queue, polled live.
+  //
+  // v4 shipped without this and it was the most important omission on the
+  // surface: every row of the registry reads "approved by anshul", which is
+  // a record of decisions already made. A viewer could see the paperwork and
+  // never see the machine stop and ask -- and stopping to ask IS the
+  // product. A governance surface that can only show past approvals is a
+  // receipt printer.
+  const [pending, setPending] = useState([]);
+  const [deciding, setDeciding] = useState(null);
+
   useEffect(() => {
     api
       .autonomy()
@@ -202,6 +213,38 @@ export default function AppV4() {
   useEffect(() => {
     loadArtifact(selected).then(setData).catch(() => {});
   }, [selected]);
+
+  // Poll the real queue. A pending request must appear here within seconds
+  // of SYNAPSE stopping, or the owner has no way to know he is being asked.
+  useEffect(() => {
+    let alive = true;
+    const read = () =>
+      api
+        .pending()
+        .then((p) => alive && setPending(p?.pending || []))
+        .catch(() => {});
+    read();
+    const id = setInterval(read, 3000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const decide = async (id, approved) => {
+    setDeciding(id);
+    try {
+      await api.decide(id, approved);
+      const p = await api.pending();
+      setPending(p?.pending || []);
+      // The registry changes on approval, so re-read the artifact too.
+      loadArtifact(selected).then(setData).catch(() => {});
+    } catch (err) {
+      setSendOutcome({ kind: "error", text: String(err.message || err) });
+    } finally {
+      setDeciding(null);
+    }
+  };
 
   const actions = data?.actions || [];
 
@@ -441,6 +484,74 @@ export default function AppV4() {
             <div className="text-[12px] font-medium tracking-tight">
               Acquire missing capability
             </div>
+
+            {/* HUMAN APPROVAL — the moment the whole product exists for.
+                Rendered above everything else when the queue is non-empty,
+                because a request the owner does not notice is the same as
+                no gate at all. */}
+            {pending.length > 0 ? (
+              <div
+                className="rounded-xl p-3"
+                style={{
+                  background: "rgba(0,102,255,0.10)",
+                  border: "1.5px solid rgba(0,136,255,0.8)",
+                  boxShadow: "0 0 24px rgba(0,102,255,0.35)",
+                }}
+              >
+                <p className="text-[10px] uppercase tracking-wider font-bold text-[#00f0ff] mb-2">
+                  ⏸ Stopped — {pending.length} waiting on you
+                </p>
+
+                {pending.map((p) => {
+                  const id = p.request_id || p.id;
+                  const busy = deciding === id;
+                  return (
+                    <div key={id} className="mb-2 last:mb-0">
+                      <p className="text-[12px] font-medium tracking-tight break-all">
+                        {p.capability || p.action || id}
+                      </p>
+                      {p.description && (
+                        <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
+                          {p.description}
+                        </p>
+                      )}
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          onClick={() => decide(id, true)}
+                          disabled={busy}
+                          className="px-3 py-1.5 rounded-lg border border-emerald-400/50 text-emerald-300 text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-400/10 disabled:opacity-40"
+                        >
+                          {busy ? "…" : "Approve"}
+                        </button>
+                        <button
+                          onClick={() => decide(id, false)}
+                          disabled={busy}
+                          className="px-3 py-1.5 rounded-lg border border-red-400/50 text-red-300 text-[10px] font-bold uppercase tracking-wider hover:bg-red-400/10 disabled:opacity-40"
+                        >
+                          {busy ? "…" : "Reject"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <p className="text-[9px] text-slate-500 mt-2 leading-relaxed">
+                  Nothing installs until you decide. install() re-reads this
+                  decision from the database rather than trusting the proposal.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-xl px-3 py-2.5 border border-white/[0.07]">
+                <p className="text-[10px] uppercase tracking-wider font-semibold text-slate-500">
+                  Human approval · queue clear
+                </p>
+                <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                  Nothing is waiting on you. The capabilities below were each
+                  approved by a named human — an empty queue means no decision
+                  is pending, not that the gate was skipped.
+                </p>
+              </div>
+            )}
 
             {/* user prompt bubble */}
             <div className="framer-pill px-3 py-2.5 flex items-start gap-2.5 !rounded-2xl">
