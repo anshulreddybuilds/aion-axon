@@ -638,6 +638,25 @@ def beastmode_contract(capability: str) -> dict[str, Any]:
     return {"status": "OK", "contract": contract.to_dict()}
 
 
+@app.get("/beastmode/lineage/{capability}")
+def beastmode_lineage(capability: str) -> dict[str, Any]:
+    """A real version history, reconstructed from the real evolution
+    ledger. No new write path -- every acquisition and rollback was
+    already recorded by app/synapse/engine.py; this only groups, sorts
+    and numbers them per capability."""
+    from app.beastmode.lineage import build_lineage, current_version, to_dict
+
+    events = firestore_store.list_evolution_events()
+    steps = build_lineage(capability, events)
+
+    return {
+        "capability": capability,
+        "current_version": current_version(capability, events),
+        "currently_installed": current_version(capability, events) > 0,
+        "history": [to_dict(s) for s in steps],
+    }
+
+
 @app.get("/beastmode/approval/{request_id}/explain")
 def beastmode_explain_approval(request_id: str) -> dict[str, Any]:
     """WHY does this need a human? Assembled from the same real signals
