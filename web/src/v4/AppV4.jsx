@@ -11,7 +11,7 @@ import {
   Search,
   Zap,
 } from "lucide-react";
-import { api } from "../api.js";
+import { api, hasOwnerToken, setOwnerToken } from "../api.js";
 import { humanMs, loadArtifact, VIEWS } from "./artifact.js";
 
 /**
@@ -180,6 +180,16 @@ export default function AppV4() {
   const [revealed, setRevealed] = useState(0);
   const revealTimer = useRef(null);
 
+  // Follow-up dispatches a REAL mission. An earlier pass shipped this as a
+  // glowing send button with no handler at all, which is the exact thing
+  // docs/upgrade-plan.md warns about: "judges clicking a dead Approve
+  // button is worse than no button."
+  const [followUp, setFollowUp] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendOutcome, setSendOutcome] = useState(null);
+  const [unlocked, setUnlocked] = useState(hasOwnerToken());
+  const [tokenInput, setTokenInput] = useState("");
+
   useEffect(() => {
     api
       .autonomy()
@@ -221,6 +231,36 @@ export default function AppV4() {
   const reset = () => {
     setExpanded(false);
     setRevealed(0);
+    setSendOutcome(null);
+  };
+
+  const sendFollowUp = async () => {
+    const request = followUp.trim();
+    if (!request || sending) return;
+
+    setSending(true);
+    setSendOutcome(null);
+    try {
+      const result = await api.plannedMission(request);
+      setSendOutcome({
+        kind: result?.blocked_on ? "blocked" : "ok",
+        text: result?.blocked_on
+          ? `BLOCKED — gap: ${
+              result.blocked_on.capability_description ||
+              result.blocked_on.description
+            }`
+          : `${result?.status || "COMPLETED"} · ${
+              (result?.step_results || []).length
+            } steps`,
+      });
+      setFollowUp("");
+    } catch (err) {
+      // Reported verbatim. A 429 says 429; this surface exists to show
+      // what the server actually said.
+      setSendOutcome({ kind: "error", text: String(err.message || err) });
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -228,12 +268,15 @@ export default function AppV4() {
       {/* Top pill nav */}
       <div className="flex justify-center pt-5 px-5">
         <div className="framer-pill flex items-center gap-1.5 px-2 py-1.5">
-          <button className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] text-slate-300 hover:bg-white/[0.05] transition-colors">
+          <button
+            onClick={reset}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] text-slate-300 hover:bg-white/[0.05] transition-colors"
+          >
             New mission
-            <ChevronDown size={12} className="text-slate-500" />
           </button>
           <button
             onClick={reset}
+            title="Start over"
             className="h-6 w-6 grid place-items-center rounded-full text-slate-400 hover:bg-white/[0.05] transition-colors"
           >
             <Plus size={13} />
@@ -257,20 +300,15 @@ export default function AppV4() {
             />
 
             <div className="flex items-center justify-between mt-3">
-              <button className="framer-pill flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[11px] text-slate-300">
+              {/* A label, not a button. It reports which engine runs this
+                  pipeline; there is no second engine to switch to, and a
+                  dropdown that opens onto one option is a dead control
+                  wearing a chevron. */}
+              <span className="framer-pill flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[11px] text-slate-400">
                 gemini-3.6-flash
-                <ChevronDown size={11} className="text-slate-500" />
-              </button>
+              </span>
 
               <div className="flex items-center gap-1.5">
-                {[Play, Plus].map((Icon, i) => (
-                  <button
-                    key={i}
-                    className="h-8 w-8 grid place-items-center rounded-full text-slate-400 hover:text-[#00f0ff] hover:bg-white/[0.05] transition-colors"
-                  >
-                    <Icon size={14} />
-                  </button>
-                ))}
                 <button
                   onClick={send}
                   className="h-8 w-8 grid place-items-center rounded-full text-white"
@@ -381,27 +419,21 @@ export default function AppV4() {
 
           {/* Agent sidebar */}
           <div className="framer-panel p-4 flex flex-col gap-3 min-h-0">
-            <div className="flex items-center gap-1.5">
-              {["Agent", "Style"].map((t, i) => (
-                <button
-                  key={t}
-                  className={`px-3 py-1.5 rounded-full text-[11px] font-medium ${
-                    i === 0
-                      ? "bg-white/[0.08] text-white"
-                      : "text-slate-500 hover:text-slate-300"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-              <button className="ml-auto h-7 w-7 grid place-items-center rounded-full text-slate-400 hover:bg-white/[0.05]">
-                <Plus size={13} />
-              </button>
+            {/* Framer has Agent / Style because it styles web pages. There
+                is no style axis here, so a "Style" tab would be a dead
+                control. One honest label instead of two tabs, one of which
+                does nothing. */}
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1.5 rounded-full text-[11px] font-medium bg-white/[0.08] text-white">
+                Agent
+              </span>
+              <span className="text-[10px] text-slate-600">
+                acquisition trace
+              </span>
             </div>
 
-            <div className="flex items-center gap-1.5 text-[12px] font-medium tracking-tight">
+            <div className="text-[12px] font-medium tracking-tight">
               Acquire missing capability
-              <ChevronDown size={12} className="text-slate-500" />
             </div>
 
             {/* user prompt bubble */}
@@ -527,35 +559,82 @@ export default function AppV4() {
               )}
             </div>
 
-            {/* follow-up capsule */}
+            {/* follow-up capsule — dispatches a REAL mission */}
             <div className="framer-glow-box p-2.5">
-              <input
-                placeholder="Add follow-up…"
-                className="w-full bg-transparent border-none outline-none text-[12px] placeholder:text-slate-600 px-1 py-1"
-              />
-              <div className="flex items-center justify-between mt-1.5">
-                <span className="framer-pill px-2 py-1 font-mono text-[10px] text-slate-400">
-                  gemini-3.6-flash
-                </span>
-                <div className="flex items-center gap-1.5">
+              {!unlocked ? (
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={tokenInput}
+                    onChange={(e) => setTokenInput(e.target.value)}
+                    placeholder="owner token — needed to run a mission"
+                    autoComplete="off"
+                    className="flex-1 bg-transparent border-none outline-none text-[12px] placeholder:text-slate-600 px-1 py-1"
+                  />
                   <button
-                    disabled
-                    title="Voice is unproven on this machine — disabled rather than faked"
-                    className="h-7 w-7 grid place-items-center rounded-full text-slate-700 cursor-not-allowed"
-                  >
-                    <Mic size={12} />
-                  </button>
-                  <button
-                    className="h-7 w-7 grid place-items-center rounded-full text-white"
-                    style={{
-                      background: "linear-gradient(135deg,#0066ff,#00f0ff)",
-                      boxShadow: "0 0 14px rgba(0,102,255,0.6)",
+                    onClick={() => {
+                      if (!tokenInput.trim()) return;
+                      setOwnerToken(tokenInput);
+                      setTokenInput("");
+                      setUnlocked(true);
                     }}
+                    className="px-3 rounded-lg border border-cyan-400/40 text-cyan-300 font-mono text-[10px] font-bold uppercase"
                   >
-                    <ArrowUp size={13} />
+                    Unlock
                   </button>
                 </div>
-              </div>
+              ) : (
+                <>
+                  <input
+                    value={followUp}
+                    onChange={(e) => setFollowUp(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && sendFollowUp()}
+                    disabled={sending}
+                    placeholder="Add follow-up…"
+                    className="w-full bg-transparent border-none outline-none text-[12px] placeholder:text-slate-600 px-1 py-1 disabled:opacity-50"
+                  />
+                  <div className="flex items-center justify-between mt-1.5">
+                    <span className="framer-pill px-2 py-1 font-mono text-[10px] text-slate-400">
+                      {sending ? "running…" : "gemini-3.6-flash"}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        disabled
+                        title="Voice is unproven on this machine — disabled rather than faked"
+                        className="h-7 w-7 grid place-items-center rounded-full text-slate-700 cursor-not-allowed"
+                      >
+                        <Mic size={12} />
+                      </button>
+                      <button
+                        onClick={sendFollowUp}
+                        disabled={sending || !followUp.trim()}
+                        title="Run this as a real governed mission"
+                        className="h-7 w-7 grid place-items-center rounded-full text-white disabled:opacity-30"
+                        style={{
+                          background: "linear-gradient(135deg,#0066ff,#00f0ff)",
+                          boxShadow: "0 0 14px rgba(0,102,255,0.6)",
+                        }}
+                      >
+                        <ArrowUp size={13} />
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {sendOutcome && (
+                <p
+                  className={`text-[10px] mt-2 leading-relaxed break-all ${
+                    sendOutcome.kind === "error"
+                      ? "text-red-300"
+                      : sendOutcome.kind === "blocked"
+                      ? "text-amber-300"
+                      : "text-emerald-300"
+                  }`}
+                >
+                  {sendOutcome.text}
+                </p>
+              )}
             </div>
 
             <p className="text-[8.5px] text-slate-600 leading-relaxed">
