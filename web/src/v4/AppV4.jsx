@@ -201,6 +201,16 @@ export default function AppV4() {
   const [pending, setPending] = useState([]);
   const [deciding, setDeciding] = useState(null);
 
+  // The code actually under review.
+  //
+  // Without this the canvas showed whatever capability the dropdown
+  // happened to be on -- an ALREADY INSTALLED one -- while the panel asked
+  // for approval of a different, brand-new capability. On camera that
+  // reads as "here is the code, now I approve it", and the two are not the
+  // same artifact. Showing code A while asking consent for B is exactly
+  // the kind of quiet dishonesty this project exists to avoid.
+  const [review, setReview] = useState(null);
+
   useEffect(() => {
     api
       .autonomy()
@@ -231,10 +241,31 @@ export default function AppV4() {
     };
   }, []);
 
+  // Pull the review package for whatever is pending, so the canvas can show
+  // the artifact being decided on rather than an unrelated installed one.
+  useEffect(() => {
+    const first = pending[0];
+    const id = first?.request_id || first?.id;
+    if (!id) {
+      setReview(null);
+      return;
+    }
+    if (review?.request_id === id) return; // already loaded
+    let alive = true;
+    api
+      .review(id)
+      .then((r) => alive && setReview(r))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [pending, review?.request_id]);
+
   const decide = async (id, approved) => {
     setDeciding(id);
     try {
       await api.decide(id, approved);
+      setReview(null); // the artifact is no longer under review
       const p = await api.pending();
       setPending(p?.pending || []);
       // The registry changes on approval, so re-read the artifact too.
@@ -424,12 +455,42 @@ export default function AppV4() {
               </div>
             </div>
 
+            {/* When something is awaiting approval, the canvas shows THAT
+                artifact and says so. Otherwise a viewer would watch code
+                for an installed capability and then see it approved -- two
+                different things presented as one. */}
+            {review && (
+              <div
+                className="rounded-xl px-3.5 py-2.5 flex items-center gap-2.5"
+                style={{
+                  background: "rgba(0,102,255,0.10)",
+                  border: "1px solid rgba(0,136,255,0.6)",
+                }}
+              >
+                <span className="text-[10px] uppercase tracking-wider font-bold text-[#00f0ff]">
+                  ⏸ Under review
+                </span>
+                <span className="font-mono text-[11px] text-slate-300">
+                  {review.capability}
+                </span>
+                <span className="text-[10px] text-slate-500">
+                  {review.is_first_version ? "new capability" : `v${review.current_version} → next`}
+                  {" · "}risk {review.risk}
+                </span>
+                <span className="ml-auto text-[9.5px] text-slate-500">
+                  this is the code you are approving
+                </span>
+              </div>
+            )}
+
             <div className="flex-1 min-h-0">
               {view === "source" &&
-                (candidate?.code ? (
+                ((review?.code || candidate?.code) ? (
                   <CodeCard
-                    filename={`${candidate.name || selected}.py`}
-                    code={candidate.code}
+                    filename={`${
+                      review?.capability || candidate?.name || selected
+                    }.py`}
+                    code={review?.code || candidate.code}
                   />
                 ) : (
                   <div className="framer-canvas-frame p-6 text-[11px] text-slate-500 italic">
@@ -438,10 +499,12 @@ export default function AppV4() {
                 ))}
 
               {view === "test" &&
-                (candidate?.test ? (
+                ((review?.test_code || candidate?.test) ? (
                   <CodeCard
-                    filename={`test_${candidate.name || selected}.py`}
-                    code={candidate.test}
+                    filename={`test_${
+                      review?.capability || candidate?.name || selected
+                    }.py`}
+                    code={review?.test_code || candidate.test}
                   />
                 ) : (
                   <div className="framer-canvas-frame p-6 text-[11px] text-slate-500 italic">
