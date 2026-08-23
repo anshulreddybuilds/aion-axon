@@ -648,6 +648,17 @@ def beastmode_contract(capability: str) -> dict[str, Any]:
     return {"status": "OK", "contract": contract.to_dict()}
 
 
+@app.get("/beastmode/quarantine")
+def beastmode_quarantine() -> dict[str, Any]:
+    """Which capabilities are quarantined right now, derived from the real
+    audit trail -- not a new write path. See app/beastmode/quarantine.py."""
+    from app.beastmode.quarantine import compute_quarantine, to_dict
+
+    events = firestore_store.list_audit_events(limit=1000)
+    entries = compute_quarantine(events)
+    return {"count": len(entries), "quarantined": [to_dict(e) for e in entries]}
+
+
 @app.get("/beastmode/lineage/{capability}")
 def beastmode_lineage(capability: str) -> dict[str, Any]:
     """A real version history, reconstructed from the real evolution
