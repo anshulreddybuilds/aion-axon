@@ -1,15 +1,5 @@
 import { motion } from "framer-motion";
-import {
-  Activity,
-  ChevronDown,
-  Gauge,
-  Lock,
-  Maximize2,
-  Plus,
-  ScrollText,
-  Settings,
-  Unlock,
-} from "lucide-react";
+import { Activity, Gauge, Lock, Maximize2, Unlock } from "lucide-react";
 
 /**
  * v2 chrome: the floating navigation island and the shared small parts.
@@ -131,40 +121,44 @@ export function NavIsland({ online, killed, verifiedPct, unlocked, quotaNote }) 
             </Pill>
           )}
 
-          <div className="flex items-center gap-1">
-            {[Settings, ScrollText, Maximize2].map((Icon, i) => (
-              <button
-                key={i}
-                type="button"
-                className="h-7 w-7 grid place-items-center rounded-lg border border-white/[0.08] text-zinc-500 hover:text-electric hover:border-cobalt/40 transition-colors"
-              >
-                <Icon size={13} />
-              </button>
-            ))}
-          </div>
+          {/* One icon, not three.
+              Settings and Logs had nothing behind them -- there is no
+              settings surface and no log viewer to open, so both could
+              only ever ignore a click. Fullscreen is kept because it does
+              something real, and is genuinely useful when recording. */}
+          <button
+            type="button"
+            onClick={() => {
+              const el = document.documentElement;
+              if (document.fullscreenElement) document.exitFullscreen?.();
+              else el.requestFullscreen?.();
+            }}
+            title="Toggle fullscreen"
+            className="h-7 w-7 grid place-items-center rounded-lg border border-white/[0.08] text-zinc-500 hover:text-electric hover:border-cobalt/40 transition-colors"
+          >
+            <Maximize2 size={13} />
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-/** Session pill row above the command capsule. */
+/** Session label above the command capsule.
+ *
+ * Labels, not buttons. The Framer design this borrows from has a session
+ * switcher and a "new session" plus because it has multiple sessions to
+ * switch between; this surface has one. Both controls were rendered as
+ * buttons that ignored every click -- the same defect the follow-up send
+ * button had, and the one docs/upgrade-plan.md warns about directly:
+ * "judges clicking a dead Approve button is worse than no button."
+ */
 export function SessionBar({ sessionLabel }) {
   return (
     <div className="flex items-center gap-2 mb-2.5">
-      <button
-        type="button"
-        className="glass rounded-full px-3 py-1.5 flex items-center gap-1.5 text-[10px] tracking-wider uppercase font-semibold text-zinc-300 hover:border-cobalt/40 transition-colors"
-      >
+      <span className="glass rounded-full px-3 py-1.5 inline-flex items-center text-[10px] tracking-wider uppercase font-semibold text-zinc-400">
         {sessionLabel}
-        <ChevronDown size={11} className="text-zinc-500" />
-      </button>
-      <button
-        type="button"
-        className="glass h-7 w-7 rounded-full grid place-items-center text-zinc-400 hover:text-electric hover:border-cobalt/40 transition-colors"
-      >
-        <Plus size={13} />
-      </button>
+      </span>
     </div>
   );
 }

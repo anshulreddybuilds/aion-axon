@@ -71,14 +71,20 @@ function TraceStep({ step, index, open, onToggle }) {
         )}
       </button>
 
+      {/* Opacity only, no height animation.
+          `animate={{ height: "auto" }}` mounted the panel with a resolved
+          height of 0 — the element was added to the DOM (child count went
+          1 -> 2) and stayed invisible, so the accordion looked completely
+          dead while actually working. Animating a property that can fail
+          to resolve is not worth it for a drawer; the panel now simply
+          renders when open. */}
       <AnimatePresence initial={false}>
         {open && (
           <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
           >
             <div className="px-3 pb-3 pl-[52px]">
               <p className="text-[10.5px] text-zinc-400 leading-relaxed">

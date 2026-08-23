@@ -482,14 +482,16 @@ export default function AppV4() {
                 </motion.span>
               </button>
 
+              {/* Opacity only — see the same fix in v2/TelemetryPane.jsx.
+                  Animating height to "auto" resolved to 0, mounting the
+                  panel invisibly and making the drawer look dead. */}
               <AnimatePresence initial={false}>
                 {thoughtOpen && (
                   <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.22 }}
-                    className="overflow-hidden"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15 }}
                   >
                     <div className="px-3 pb-3 space-y-2">
                       {thought.need ? (
