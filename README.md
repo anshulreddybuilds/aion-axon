@@ -1,374 +1,216 @@
-# AION Axon
+# AION AXON
 
-**A governed agent that acquires the capabilities it lacks — and has to earn permission to use them.**
+**Autonomous Governed Capability Spine for Enterprise AI Agents**
+
+[![Tests](https://img.shields.io/badge/tests-280%20passing-brightgreen)](#verify-it-yourself--no-api-key-needed)
+[![Assertions](https://img.shields.io/badge/assertions-522-blue)](#verify-it-yourself--no-api-key-needed)
+[![Deployment](https://img.shields.io/badge/deployment-Google%20Cloud%20Run-4285F4)](https://aion-core-638298765129.asia-south1.run.app)
+[![Sandbox](https://img.shields.io/badge/sandbox-zero%20credentials-critical)](#threat-model)
+[![License](https://img.shields.io/badge/license-Apache%202.0-lightgrey)](LICENSE)
 
 Google "All Things Agentic" Hackathon · Category: **Taskmaster**
 
-| | |
-|---|---|
-| Live API | https://aion-core-638298765129.asia-south1.run.app |
-| Holo-Deck | https://aion-axon-2026.web.app (read-only — see [Limitations](#limitations)) |
-| Sandbox | `https://aion-sandbox-638298765129.asia-south1.run.app` (authenticated only — see [Security](#security)) |
-| Stack | Gemini 3.6 Flash · Google ADK 2.7 · Cloud Run ×2 · Firestore · Secret Manager · BigQuery · Gemma 4 |
+---
+
+## What this is
+
+Most agents can execute tools. The interesting failure is what happens when
+the tool they need **doesn't exist** — they either stop and wait for a human
+to write it, or they improvise and hallucinate a result they cannot actually
+produce. The second is worse, because it looks exactly like success.
+
+**AION AXON builds the missing capability, then has to ask permission to keep
+it.** A generated capability reaches production only after passing static AST
+screening, execution in a zero-credential sandbox, scoring by an independent
+model, a deny-by-default policy screen, and an explicit human approval that
+`install()` re-reads from the database rather than trusting the proposal that
+asked for it.
+
+The thesis: **it does not assume autonomy — it earns autonomy from evidence,
+and loses it when reality disagrees.**
 
 ---
 
-## The problem
+## The 12-stage spine
 
-Most agents can execute tools. The problem is what happens when the tool
-they need **doesn't exist**.
+```mermaid
+flowchart LR
+    S01["01 · Owner<br/><i>approves, denies, halts</i>"]
+    S02["02 · Orchestrator<br/><i>plans and delegates</i>"]
+    S03["03 · Gap Detect<br/><i>notices what it cannot do</i>"]
+    S04["04 · Research<br/><i>looks for an approach</i>"]
+    S05["05 · Generate<br/><i>writes the candidate</i>"]
+    S06["06 · AST Screen<br/><i>static safety check</i>"]
+    S07["07 · Sandbox<br/><i>zero credentials</i>"]
+    S08["08 · Evaluator<br/><i>independent second opinion</i>"]
+    S09["09 · Guardian<br/><i>deny by default</i>"]
+    S10["10 · Approval<br/><i>a human decides</i>"]
+    S11["11 · Install<br/><i>capability registered</i>"]
+    S12["12 · Ledger<br/><i>chain of custody</i>"]
 
-The usual answers are both bad. Either the agent stops and a human writes
-the missing code, or the agent improvises — hallucinating a result it
-cannot actually produce. The second failure is worse, because it looks
-like success.
+    S01 --> S02 --> S03 --> S04 --> S05 --> S06 --> S07 --> S08 --> S09 --> S10 --> S11 --> S12
+    S12 -.->|"blocked mission resumes<br/>and finishes itself"| S02
+    S10 -.->|"rejected — nothing installs"| S01
 
-AION Axon takes a third path. When a mission hits a capability it does not
-have, it **researches, generates, sandbox-tests, and installs that
-capability — but only with explicit human approval**, and it records the
-full chain of custody for how the skill came to exist.
+    classDef gate fill:#0b1220,stroke:#0066ff,stroke-width:2px,color:#e6edf5
+    classDef prove fill:#0b1220,stroke:#f59e0b,stroke-width:1px,color:#e6edf5
+    classDef rec fill:#0b1220,stroke:#10b981,stroke-width:1px,color:#e6edf5
+    class S01,S10 gate
+    class S06,S07,S08,S09 prove
+    class S11,S12 rec
+```
 
-The capabilities are the means. **The finished work is the product.**
+**Every route to tool execution passes through `ExecutionGate`.** There is no
+second path — verified by tracing every caller in `app/workflows/`.
 
 ---
 
-## 90-second happy path
+## Threat model
 
-**Reads are public; writes need the owner token.** Every state-changing call
-below sends `X-Axon-Token`, because an agent whose kill switch any passerby
-can flip is not under its owner's control. If you are the owner:
+| Threat | Defence | Where |
+|---|---|---|
+| **Credential access attempt** | Refused at the doorway under policy **G-04**, before a token is spent. Prohibited policies cannot be satisfied by approval — if approval could unlock it, it would be a permission, not a prohibition. | `app/governance/` |
+| **Policy override / jailbreak** | Refused under **G-06**, where the override attempt is itself the refusal, because a guardrail you can talk out of is a suggestion. Covered by parametrised persuasion tests. | `tests/test_adversarial.py` |
+| **Arbitrary code execution** | Two independent layers. A static AST walk rejects **17 imports** (`os`, `sys`, `subprocess`, `socket`, `shutil`, `pathlib`, `ctypes`, `importlib`, `pickle`, `marshal`, `multiprocessing`, `threading`, `google`, `firebase_admin`, …) and **13 builtins** (`eval`, `exec`, `compile`, `__import__`, `open`, `getattr`, `setattr`, …). Whatever survives runs in a separate Cloud Run service holding **zero credentials and zero IAM roles**, which answers **HTTP 403** to the public internet. | `app/synapse/safety_screen.py` |
+| **Unauthorised capability persistence** | `install()` re-reads the approval from Firestore and refuses if it is absent or not `APPROVED`. It trusts the record of the decision, never the proposal that requested it. | `app/synapse/engine.py` |
+| **Generated code reaching secrets** | An installed capability is a **proxy that calls the sandbox** — before *and* after approval. Approval means the owner accepted the capability, not that the code earned a seat beside the credentials. | `app/synapse/engine.py` |
+| **Runaway execution** | A kill switch halts every path at the gate, asserted across *all* execution routes rather than one. | `tests/test_adversarial.py` |
 
-```bash
-export AXON_OWNER_TOKEN=$(gcloud secrets versions access latest \
-  --secret=axon-owner-token --project=aion-axon-2026)
-```
-
-```bash
-CORE=https://aion-core-638298765129.asia-south1.run.app
-
-# 1. The agent is live on Google Cloud — no token needed, this is a read
-curl -s $CORE/
-
-# 2. It CAN write the business brief — the mission's product.
-#    Deterministic and model-free, so it cannot invent a figure and cannot
-#    be rate-limited. Every number here came from the findings passed in.
-curl -s -X POST $CORE/missions -H "Content-Type: application/json" \
-  -H "X-Axon-Token: $AXON_OWNER_TOKEN" \
-  -d '{"request":"brief","tool":"write_brief","action":"write it","risk":"LOW",
-       "args":["[{\"metric\":\"churn\",\"value\":\"4.1%\"}]"]}'
-# -> "status": "SUCCESS", with a rendered Business Action Brief
-
-# 2b. Ask for something it genuinely cannot do yet — an honest capability
-#     gap, not a crash and not an improvised answer.
-curl -s -X POST $CORE/missions -H "Content-Type: application/json" \
-  -H "X-Axon-Token: $AXON_OWNER_TOKEN" \
-  -d '{"request":"x","tool":"extract_entities","action":"extract","risk":"LOW","args":[]}'
-# -> {"status": "BLOCKED", "missing_capability": "extract_entities"}
-
-# 3. Ask SYNAPSE to acquire a capability. It stops at approval.
-curl -s -X POST $CORE/synapse/propose -H "Content-Type: application/json" \
-  -H "X-Axon-Token: $AXON_OWNER_TOKEN" \
-  -d '{"need":"Given a JSON list of numbers, return their mean and median."}'
-# -> "status": "AWAITING_APPROVAL"
-
-# 4. Nothing installs without a human. Approval and install are separate
-#    calls, and install re-reads the approval from Firestore rather than
-#    trusting the proposal record.
-python scripts/approve.py <approval_request_id>
-curl -s -X POST $CORE/synapse/install/<capability> \
-  -H "Content-Type: application/json" -H "X-Axon-Token: $AXON_OWNER_TOKEN" -d '{}'
-
-# 5. Ask for something forbidden. It refuses, citing policy.
-curl -s -X POST $CORE/missions -H "Content-Type: application/json" \
-  -H "X-Axon-Token: $AXON_OWNER_TOKEN" \
-  -d '{"request":"t","tool":"calculator","action":"read credentials from the runtime","risk":"MEDIUM","args":["1+1"]}'
-# -> "policy_id": "G-04"
-```
-
-Step 3 is the only step that spends Gemini quota. On the free tier that is
-**20 requests per day**; past it, SYNAPSE records `FAILED` with the real
-`RESOURCE_EXHAUSTED` reason rather than inventing a capability. Steps 1, 2
-and 5 keep working — and step 2 in particular is deliberately model-free, so
-**the brief is still produced when the model layer is entirely unavailable.**
-
-Or run all four demo moments at once:
-
-```bash
-python -m scripts.golden_path
-```
+Two limitations stated plainly, because a threat model that lists only wins
+is marketing: **policy matching is lexical, not semantic**, so novel phrasing
+can miss, and **the AST screen can be evaded** by sufficiently indirect code.
+Neither layer is trusted alone — which is why the sandbox holds nothing worth
+stealing.
 
 ---
 
-## Architecture
+## Verify it yourself — no API key needed
 
-![AION Axon architecture](docs/architecture.svg)
-
-```
-OWNER
-  │ approve / reject / kill switch
-  ▼
-┌──────────────── CLOUD RUN: aion-core ─────────────────┐
-│  ADK 2.7 planner (Gemini 3.6 Flash)                    │
-│  Mission Engine    → plan → step → gate                │
-│  Capability Registry (Gemini function declarations)    │
-│  SYNAPSE           → research → generate → screen      │
-│                      → sandbox → evaluate → approve    │
-│  GUARDIAN          → deny-by-default policy catalog    │
-│  Evidence Engine   → checks claims against ground truth│
-│  Autonomy Ledger   → trust that rises AND falls        │
-│  Secrets: Secret Manager                               │
-└───────────────┬────────────────────────────────────────┘
-                │ HTTPS + OIDC identity token
-                │ ═══════ TRUST BOUNDARY ═══════
-┌───────────────▼──── CLOUD RUN: aion-sandbox ──────────┐
-│  Runs generated code. ZERO credentials, ZERO IAM roles │
-│  Non-root · stripped env · CPU/memory/fork caps        │
-└────────────────────────────────────────────────────────┘
-
-Firestore: capabilities · evolution_events · audit_events ·
-           missions · approval_requests · monitors
-BigQuery:  public datasets (read-only, allowlisted, byte-capped)
-```
-
-**Every execution path goes through the Unified Execution Gate.** There is
-no route, scheduled job, or acquired capability that reaches a tool
-function another way.
-
----
-
-## How acquisition works
-
-```
-capability gap
-   → GUARDIAN pre-screen   refuse forbidden needs before spending tokens
-   → RESEARCH              Google Search grounding, citations stored
-   → GENERATE              Gemini writes the candidate
-   → SAFETY SCREEN         AST check: no os/subprocess/eval/dunder
-   → SANDBOX TEST          runs in aion-sandbox, zero credentials
-   → EVALUATE              Gemma scores it (or reports UNSCORED)
-   → GUARDIAN SCREEN       policy check on the built capability
-   → HUMAN APPROVAL        ← the pipeline STOPS here, always
-   → INSTALL               registry + Firestore, version 1
-   → EVOLUTION EVENT       BEFORE → CHANGE → REASON → AFTER
-   → ROLLBACK              available, and emits its own event
-```
-
-Two properties are enforced by tests, not by intention:
-
-1. **Nothing installs without an explicit human yes.** `install()` re-reads
-   the approval from Firestore rather than trusting the proposal record —
-   the passport says what was *proposed*, not what the owner *decided*.
-
-2. **Generated code never runs inside `aion-core`.** Not during testing,
-   and not after installation. An installed capability is a proxy that
-   calls the sandbox. Approval means the owner accepted the capability, not
-   that the code earned a seat beside the credentials.
-
-**Skill Passport** — every acquired capability keeps its chain of custody
-at `GET /capabilities/{name}/passport`: the need, the research and its
-citations, the candidate, the safety screen, the sandbox results, the
-evaluation, and who approved it when.
-
----
-
-## Governance
-
-Guardian is **deny-by-default**, and every refusal cites a policy ID so it
-can be audited and appealed rather than merely obeyed.
-
-| Policy | Rule |
-|---|---|
-| **G-01** | destructive operations prohibited |
-| **G-02** | financial transactions require approval |
-| **G-03** | external communication requires approval |
-| **G-04** | **credential access prohibited** |
-| **G-05** | security-control modification prohibited |
-| **G-06** | **Guardian override prohibited** |
-| **G-07** | autonomy below supervision threshold → human verification |
-
-`PROHIBITED` policies **cannot be satisfied by approval**. If approval
-could unlock it, it would be a permission, not a prohibition. G-06 makes
-the override attempt itself a refusal — a guardrail you can talk out of is
-a suggestion.
-
-**Autonomy that can go down.** The Evidence Engine checks a capability's
-claims against independent ground truth and renders a checklist:
-`exists → readable → expected content → timestamp → hash → CONFIDENCE: XX.X%`.
-Verified success promotes (+15); a contradiction demotes (−18). Demotion is
-larger than promotion on purpose — trust should be slower to earn than to
-lose. Below 40% the Guardian demands human verification for work the
-capability was trusted with yesterday. Autonomy caps at 95%: a capability
-needing no oversight ever is a claim no evidence supports.
-
-**Kill switch** halts everything, including scheduled background work.
-
----
-
-## Security
-
-- **The sandbox holds zero credentials and zero IAM roles.** It proves this
-  itself by scanning its own environment; the result is served through core
-  at `GET /sandbox/proof`. That single response shows core *can* reach the
-  sandbox and the internet *cannot* — unauthenticated callers get HTTP 403.
-- **Identity, not shared secrets.** Core authenticates to the sandbox with
-  an OIDC token from the Cloud Run metadata server, so no credential is
-  stored in the sandbox to keep it reachable.
-- Generated code is AST-screened before execution, then run non-root in a
-  stripped environment with CPU, memory, file-size and fork limits.
-- API keys live in Secret Manager. No secret is committed to this repo.
-- **Reads are public; writes require an owner token.** Every mutating
-  route (`/killswitch`, `/approvals/*/decide`, `/synapse/*`, `/missions`,
-  `/ground-truth`, `/monitors`) requires an `X-Axon-Token` header. Reads
-  stay open so judges and the Holo-Deck can inspect every decision — the
-  transparency is the point; only the ability to CHANGE things is gated.
-  It fails **closed**: with no token configured, writes are refused.
-- BigQuery access is read-only, `SELECT`-only, restricted to an allowlist
-  of public datasets, and byte-capped so a careless query fails rather than
-  burning the free tier.
-
----
-
-## Reproduce
+The suite is hermetic. `conftest.py` fences off both production Firestore
+**and** the model API, so a fresh clone runs green with no credentials and
+spends no quota.
 
 ```bash
 git clone https://github.com/anshulreddybuilds/aion-axon.git
 cd aion-axon
 python -m venv .venv
-.venv\Scripts\activate          # Linux/macOS: source .venv/bin/activate
+
+# macOS / Linux
+source .venv/bin/activate
+# Windows PowerShell:  .venv\Scripts\Activate.ps1
+
 pip install -r requirements.txt
-
-# Full test suite, offline — no credentials, no network:
-AXON_FIRESTORE_MODE=memory python -m pytest -q tests
-# -> 250 passed
+pytest -q
 ```
 
-`AXON_FIRESTORE_MODE=memory` selects in-memory Firestore and kill switch so
-the suite is deterministic and needs no cloud access. **Without it, local
-runs write to real Firestore.**
+**Expected: `280 passed`, in roughly 4–9 seconds, with zero network calls.**
 
-To run the API locally:
+That hermeticity was itself a bug once: the suite used to make real billed
+model calls whenever an API key happened to be exported, turning a green run
+into an accident of which terminal you used. Fixed, and opt-in behind
+`AXON_LIVE_MODEL_TESTS=1`.
 
-```bash
-export GOOGLE_API_KEY=...        # from https://aistudio.google.com/apikey
-export AXON_FIRESTORE_MODE=memory
-PYTHONPATH=. uvicorn app.api:app --port 8080
-```
+**19 of the 280 are adversarial** — they attack the governance rather than
+confirm it: exfiltration payloads, persuasion phrasings, a planted secret in
+the sandbox scan, and kill-switch coverage on every path.
 
 ---
 
-## Deploy
+## Live
 
-Replace `PROJECT` with your GCP project id.
-
-```bash
-# Sandbox — no credentials, and NOT publicly invokable
-gcloud iam service-accounts create aion-sandbox-sa
-gcloud run deploy aion-sandbox --source sandbox --region asia-south1 \
-  --no-allow-unauthenticated \
-  --service-account aion-sandbox-sa@PROJECT.iam.gserviceaccount.com
-
-# Core — may invoke the sandbox; reads its key from Secret Manager
-gcloud iam service-accounts create aion-core-sa
-for ROLE in roles/datastore.user roles/secretmanager.secretAccessor roles/bigquery.jobUser; do
-  gcloud projects add-iam-policy-binding PROJECT \
-    --member="serviceAccount:aion-core-sa@PROJECT.iam.gserviceaccount.com" \
-    --role="$ROLE"
-done
-
-gcloud run services add-iam-policy-binding aion-sandbox --region asia-south1 \
-  --member="serviceAccount:aion-core-sa@PROJECT.iam.gserviceaccount.com" \
-  --role="roles/run.invoker"
-
-gcloud run deploy aion-core --source . --region asia-south1 \
-  --allow-unauthenticated \
-  --service-account aion-core-sa@PROJECT.iam.gserviceaccount.com \
-  --set-secrets=GOOGLE_API_KEY=gemini-api-key:latest \
-  --set-env-vars=GOOGLE_CLOUD_PROJECT=PROJECT
-
-# Background monitors (optional)
-gcloud scheduler jobs create http aion-monitor-tick --location=asia-south1 \
-  --schedule="*/15 * * * *" --http-method=POST --message-body="{}" \
-  --uri="https://YOUR-CORE-URL/monitors/run-due"
-```
-
----
-
-## Evidence
-
-Everything below was verified against the **deployed** services, not
-locally. Full records in `docs/` and `PROGRESS.md`.
-
-| Claim | Evidence |
+| | |
 |---|---|
-| Governed execution | Approval → resume → `1250 × 1.18 = 1475.0`; resuming *before* approval refuses |
-| Refusal with citation | "read credentials from the runtime" → REFUSED **G-04**; override → REFUSED **G-06** |
-| Trust boundary | core → sandbox `ZERO_CREDENTIALS`; internet → sandbox **HTTP 403** |
-| Acquisition #1 | `convert_currency_amount`, approved 09:26Z, event `xTT0XMI9RxawQdcHrnyU` |
-| Acquisition #2 | `detect_yoy_anomalies`, Gemma **100/PASS**, event `HCjIUO3FfUwo1pdgtyEn` |
-| Massive dataset | BigQuery 88.8 MB scanned → acquired skill flagged 2006, 2009, 2010 |
-| Survives restarts | `restored: [convert_currency_amount, detect_yoy_anomalies]` |
-| Background work | Cloud Scheduler tick → monitor ran through the gate |
-| Kill switch | Halts interactive *and* scheduled work |
-| Autonomy arc | 32% → 47% live on human verification; demotion −18 on contradiction |
-| Loop closes | install() resumes the blocked mission from its blocked step |
-| Tests | **250 passing**, including 19 adversarial |
+| **API** (Cloud Run) | https://aion-core-638298765129.asia-south1.run.app |
+| **Dashboard** | https://aion-axon-2026.web.app/v4 |
+| Sandbox (must refuse you) | `aion-sandbox-638298765129.asia-south1.run.app` → **HTTP 403** |
 
-The 2009–2010 anomalies match the documented post-2008 decline in US
-births — a result checkable against the outside world rather than taken on
-trust.
+Read-only endpoints, no auth required:
+
+```bash
+curl https://aion-core-638298765129.asia-south1.run.app/capabilities
+curl https://aion-core-638298765129.asia-south1.run.app/sandbox/proof
+curl https://aion-core-638298765129.asia-south1.run.app/evolution
+curl https://aion-core-638298765129.asia-south1.run.app/capabilities/calculate_birth_cagr/passport
+```
+
+That last one returns a full **chain of custody**: the recorded need, the
+source the model actually wrote, the AST findings, the sandbox exit code, the
+evaluator's verdict *and its reasoning*, and the named human who approved it.
 
 ---
 
-## Limitations
+## Proof it closes the loop
 
-Stated plainly, because documentation honesty is judged and because a
-system built around evidence should hold itself to the same standard.
+A real recorded mission, reproducible from the API:
 
-- **Search grounding is quota-blocked on the free tier.** Acquisition
-  research currently returns `DEGRADED` with **zero citations**, and the
-  Skill Passport shows "ungrounded" rather than a fabricated source.
-- **The autonomy arc is demonstrated live in both directions**, but
-  promotion currently comes from HUMAN verification (approving a G-07
-  hold, or approving an install after reading the Skill Passport) rather
-  than from a grounded `VERIFIED` research verdict. Automated promotion
-  from grounded evidence still needs the citations above.
-- **Acquisition #3 (a background-monitor skill) was not acquired.** The
-  monitor *infrastructure* is built, tested and running on a schedule; the
-  acquisition itself hit the Gemini daily quota cap.
-- **Policy matching is lexical, not semantic.** Novel phrasing of a
-  prohibited request can miss. The catalog sits *on top of* the gate rather
-  than replacing it, so a missed match degrades to "a human is asked",
-  never to "anything runs".
-- **The AST safety screen can be evaded** by sufficiently indirect code.
-  That is why the sandbox holds nothing worth stealing — neither layer is
-  trusted alone.
-- **The Holo-Deck is live at https://aion-axon-2026.web.app but is
-  read-only.** It reads the governed API rather than Firestore directly, so
-  the browser holds no credentials — the same property the sandbox has, for
-  the same reason. The consequence is that its Approve / Reject / kill-switch
-  controls **return 401**: those are writes, and writes require the owner
-  token the browser deliberately does not carry. Approvals are driven from
-  `scripts/approve.py` instead. Giving the UI real write access needs a token
-  entry field or proper auth, and is listed as a limitation rather than
-  presented as working.
-- Live Gemini calls and real-Firestore writes are **manual probes**, not
-  CI. CI deliberately runs the offline path only.
-- **Owner auth is a bearer token, not real authentication.** The honest
-  answer is Firebase Auth or IAP; that was a bigger change than the days
-  remaining allowed, and shipping the small correct thing beat shipping
-  the ambitious unfinished one.
+```
+mission 19bf2bf0-bef3-4208-a1f3-20013852c244
+
+  step 1  read_dataset            9 rows from BigQuery public data
+  ── GAP ──                       no CAGR capability existed; mission BLOCKED
+  SYNAPSE                         wrote calculate_birth_cagr
+                                  AST screen  PASS
+                                  sandbox     PASS · exit 0
+                                  evaluator   gemma-4-26b-a4b-it · PASS 100
+  ── STOPPED ──                   awaiting human approval
+  approved by anshul              registry 10 → 11
+  step 2  calculate_birth_cagr    mission RESUMED AND FINISHED ITSELF
+
+  result: CAGR −0.9987 %/yr across 2005–2013
+          3,304,899 births → 3,049,905
+```
+
+Nobody re-ran anything. The blocked mission resumed on install.
+
+---
+
+## Built with
+
+**Gemini 3.6 Flash** (planning, generation, research) · **Gemma 4**
+(`gemma-4-26b-a4b-it`, independent evaluator) · **Google ADK** ·
+**Cloud Run ×2** (credentialed core + zero-credential sandbox) ·
+**Firestore** · **Secret Manager** · **BigQuery** (public datasets,
+read-only, byte-capped) · **Cloud Scheduler** · **Cloud Build** ·
+**React / Vite / Tailwind / Framer Motion** on Firebase Hosting.
+
+---
+
+## Honest status
+
+A system built around evidence should hold itself to the standard it applies
+to its own agent.
+
+**The spine reports 92%, not 100%, and that is the correct number.** Eleven of
+twelve stages have done real work and can prove it. Stage 4 (Research) runs
+`DEGRADED` with **zero citations**, because Google Search grounding requires a
+billed API tier — demonstrated by test rather than assumed: a fresh key
+generated fine while grounding returned 429 on its first call, carrying no
+`quotaId`, no `quotaValue` and no retry delay, which is the signature of a
+tier limit rather than a spent allowance.
+
+The Skill Passport therefore reads *ungrounded* instead of showing a
+fabricated source. **A system reporting 100% here would be lying about
+itself.**
+
+Also open, stated rather than hidden: voice input is implemented but unproven
+on the author's hardware and is rendered **disabled with the reason shown**
+rather than simulated; ADK planner token usage is reported `UNMEASURED`
+rather than estimated; and the evaluator occasionally returns no score at
+all, in which case SYNAPSE refuses rather than guessing.
 
 ---
 
 ## AI assistant disclosure
 
-This project was built during the hackathon submission period (first commit
-19 Aug 2026) with substantial use of **Claude Code** as an AI coding
-assistant, which the official rules expressly permit. No pre-existing code
-was incorporated into this repository. Architectural and governance
-concepts — deny-by-default approval gating, evidence-gated autonomy — draw
-on the author's earlier private work; **no code from it was copied here.**
+Built during the submission period (first commit 19 Aug 2026) with
+substantial use of **Claude Code**, which the official rules expressly
+permit. No pre-existing code was incorporated. All design decisions,
+approvals and deployments were made by the author, and every capability
+installed by SYNAPSE required an explicit human approval — including during
+the demo.
 
-All design decisions, approvals and deployments were made by the author.
-Every capability installed by SYNAPSE required an explicit human approval,
-including during the demo.
+---
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).
