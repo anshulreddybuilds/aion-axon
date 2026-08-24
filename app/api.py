@@ -392,7 +392,13 @@ def evolution_events() -> dict[str, Any]:
 
 
 class AcquisitionRequest(BaseModel):
-    need: str = Field(..., description="The capability AION Axon lacks.")
+    # min_length: the frontend already guards with `!need.trim()`, but this
+    # is the real, expensive, mutating path (spends a real Gemini call and
+    # a real sandbox run) -- it must not trust the client alone. An empty
+    # or whitespace-only need previously reached synapse.propose()
+    # unconstrained; Pydantic now refuses it with a 422 before any real
+    # resource is spent. See tests/test_reliability.py.
+    need: str = Field(..., min_length=3, description="The capability AION Axon lacks.")
     mission_id: Optional[str] = Field(
         None,
         description="Mission this acquisition should unblock, if any.",

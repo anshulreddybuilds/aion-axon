@@ -292,19 +292,21 @@ export default function MissionTheater() {
       <div className="flex gap-2">
         <button
           onClick={() => setMode("live")}
-          className={`text-[10px] tracking-[0.12em] px-3 py-1.5 rounded border ${
-            mode === "live" ? "border-cyan/50 text-cyan bg-cyan/10" : "border-edge text-muted hover:text-white"
+          className={`text-left text-[10px] tracking-[0.1em] px-3 py-2 rounded border ${
+            mode === "live" ? "border-cyan/60 text-cyan bg-cyan/10" : "border-edge text-muted hover:text-white"
           }`}
         >
-          ● LIVE MISSION — real backend, real approval
+          <div>● LIVE MISSION</div>
+          <div className="text-[8px] opacity-80 mt-0.5">REAL PRODUCTION · HUMAN AUTHORIZATION REQUIRED</div>
         </button>
         <button
           onClick={() => setMode("demo")}
-          className={`text-[10px] tracking-[0.12em] px-3 py-1.5 rounded border ${
-            mode === "demo" ? "border-warn/50 text-warn bg-warn/10" : "border-edge text-muted hover:text-white"
+          className={`text-left text-[10px] tracking-[0.1em] px-3 py-2 rounded border ${
+            mode === "demo" ? "border-warn/60 text-warn bg-warn/10" : "border-edge text-muted hover:text-white"
           }`}
         >
-          ▶ DEMO RECOVERY — deterministic fixture
+          <div>▶ DEMO RECOVERY</div>
+          <div className="text-[8px] opacity-80 mt-0.5">DEMO FIXTURE · NO PRODUCTION MUTATION</div>
         </button>
       </div>
 

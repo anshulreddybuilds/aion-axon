@@ -146,6 +146,65 @@ def test_installing_the_same_capability_twice_is_safe():
     registry.unregister("twice_skill")
 
 
+def test_approving_one_capability_cannot_install_a_different_one():
+    """Phase 28C forensics: PROPOSAL != APPROVAL != INSTALL, and an old or
+    unrelated approval can never authorize a DIFFERENT capability.
+
+    Sets up two real, independently-proposed capabilities (A and B), each
+    with its own real approval_request_id -- exactly how synapse.propose()
+    actually produces them, never reusing an ID across proposals. Approves
+    ONLY A's request. install(B) must find B's OWN passport's OWN
+    approval_request_id (still pending) and refuse -- there is no code
+    path by which A's APPROVED status could leak into B's install check,
+    but this proves it structurally rather than by reading the source."""
+    firestore_store.save_capability("capability_a", {
+        "name": "capability_a", "description": "does a", "risk": "LOW",
+        "state": "VALIDATING", "implemented": False, "version": 0,
+        "passport": {
+            "need": "do a", "approval_request_id": "approval-for-a",
+            "candidate": {
+                "name": "capability_a", "description": "does a", "risk": "LOW",
+                "code": "def capability_a(): return 'a'\n", "entrypoint": "capability_a",
+            },
+        },
+    })
+    firestore_store.save_capability("capability_b", {
+        "name": "capability_b", "description": "does b", "risk": "LOW",
+        "state": "VALIDATING", "implemented": False, "version": 0,
+        "passport": {
+            "need": "do b", "approval_request_id": "approval-for-b",
+            "candidate": {
+                "name": "capability_b", "description": "does b", "risk": "LOW",
+                "code": "def capability_b(): return 'b'\n", "entrypoint": "capability_b",
+            },
+        },
+    })
+    # Only A's request is approved. B's stays PENDING (the Firestore
+    # default -- get_approval() on an unset id returns None, matching
+    # what a real never-decided request looks like).
+    firestore_store.approvals["approval-for-a"] = {
+        "status": "APPROVED", "decided_by": "anshul",
+        "action": "install", "risk": "LOW", "reason": "ok",
+    }
+
+    from app.synapse.engine import synapse
+
+    result_a = synapse.install("capability_a")
+    result_b = synapse.install("capability_b")
+
+    assert result_a["status"] == "INSTALLED"
+    assert result_b["status"] == "APPROVAL_REQUIRED", (
+        "capability_b was installed using capability_a's approval -- "
+        "a real cross-capability authorization bypass"
+    )
+
+    names = [t["name"] for t in registry.list_tools()]
+    assert "capability_a" in names
+    assert "capability_b" not in names
+
+    registry.unregister("capability_a")
+
+
 # --- Approval recovery ----------------------------------------------------
 
 def test_approval_survives_a_process_restart():
@@ -259,3 +318,15 @@ def test_declared_but_unbuilt_capability_is_also_a_gap():
 
     assert result["status"] == "BLOCKED"
     assert result["missing_capability"] == "write_brief"
+
+
+# --- Phase 28I: the real mission path must not trust an empty need --------
+
+def test_empty_need_is_refused_before_spending_a_real_gemini_or_sandbox_call():
+    response = client.post("/synapse/propose", json={"need": ""})
+    assert response.status_code == 422
+
+
+def test_too_short_a_need_is_refused_the_same_way():
+    response = client.post("/synapse/propose", json={"need": "ab"})
+    assert response.status_code == 422
