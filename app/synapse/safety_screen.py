@@ -115,6 +115,17 @@ def screen(code: str) -> ScreenResult:
             # access -- this was the only layer that could have caught it.
             if node.id in FORBIDDEN_CALLS:
                 findings.append(f"Reference to forbidden builtin: {node.id}")
+            # `__builtins__` is dunder-SHAPED but is a NAME, not an
+            # Attribute -- the check above only ever inspects
+            # ast.Attribute.attr, so `b = __builtins__` was invisible to
+            # it. Captured this way, __builtins__ is a live module/dict
+            # exposing eval/exec/__import__ under their ORDINARY
+            # (non-dunder) attribute or key names -- `b.eval` or
+            # `b['eval']` -- reaching real execution via zero tokens any
+            # other check flags. Found live 24 Aug immediately after the
+            # aliasing fix above, in the same review.
+            elif node.id.startswith("__") and node.id.endswith("__"):
+                findings.append(f"Dunder attribute access: {node.id}")
 
     return ScreenResult(safe=not findings, findings=sorted(set(findings)))
 

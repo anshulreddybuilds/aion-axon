@@ -168,6 +168,26 @@ def test_aliasing_a_forbidden_builtin_before_calling_it_is_still_rejected(payloa
     assert any("forbidden builtin" in f.lower() for f in result.findings)
 
 
+@pytest.mark.parametrize("payload", [
+    # `__builtins__` is a dunder-SHAPED NAME, not a dunder ATTRIBUTE
+    # (that check only inspects ast.Attribute.attr) and not in
+    # FORBIDDEN_CALLS (the Name check added for the aliasing fix above
+    # only flags names already in that specific set). Captured as a bare
+    # reference, `__builtins__` is a live module/dict holding `eval`,
+    # `exec`, `__import__` etc. under ordinary (non-dunder) attribute/key
+    # names -- `b.eval` or `b['eval']` -- so this reaches real code
+    # execution with ZERO tokens any prior check would have flagged.
+    # Found live during the same red-team review, immediately after
+    # fixing the aliasing bypass above.
+    "def f():\n    b = __builtins__\n    return b\n",
+    "def f():\n    b = __builtins__\n    e = b.eval\n    return e('1+1')\n",
+])
+def test_capturing_dunder_builtins_by_bare_name_is_rejected(payload):
+    result = screen(payload)
+    assert result.safe is False
+    assert any("dunder" in f.lower() for f in result.findings)
+
+
 def test_sandbox_env_scan_detects_a_planted_secret():
     """The proof must be falsifiable, or it proves nothing."""
     import importlib

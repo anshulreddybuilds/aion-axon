@@ -74,6 +74,21 @@ _ALIASING_PAYLOADS = [
     ),
 ]
 
+# __builtins__ capture: found live immediately after the aliasing fix
+# above, in the same review. `__builtins__` is dunder-SHAPED but is a
+# NAME, not an Attribute, so it was invisible to the dunder-attribute
+# check; captured this way it exposes eval/exec/__import__ under their
+# ORDINARY (non-dunder) attribute/key names, reaching real execution
+# with zero tokens any OTHER check flags. Fixed by extending the dunder
+# check to bare Name nodes, not only ast.Attribute.attr.
+_BUILTINS_CAPTURE_PAYLOADS = [
+    ("captured __builtins__ by bare name", "def f():\n    b = __builtins__\n    return b\n"),
+    (
+        "captured __builtins__ -> .eval (bypasses the eval/exec name check entirely)",
+        "def f():\n    b = __builtins__\n    e = b.eval\n    return e('1+1')\n",
+    ),
+]
+
 
 def _run() -> tuple[list[dict], int]:
     results = []
@@ -143,6 +158,20 @@ def _run() -> tuple[list[dict], int]:
         })
 
     for label, payload in _ALIASING_PAYLOADS:
+        t0 = time.monotonic()
+        report = screen(payload)
+        ms = (time.monotonic() - t0) * 1000
+        blocked = report.safe is False
+
+        results.append({
+            "vector": label,
+            "layer": "AST static screen",
+            "blocked": blocked,
+            "detail": "; ".join(report.findings) or "(no finding — SAFE, real gap if this attack should block)",
+            "ms": round(ms, 2),
+        })
+
+    for label, payload in _BUILTINS_CAPTURE_PAYLOADS:
         t0 = time.monotonic()
         report = screen(payload)
         ms = (time.monotonic() - t0) * 1000
