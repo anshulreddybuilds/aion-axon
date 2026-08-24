@@ -1,0 +1,80 @@
+{
+  "repo": "anshulreddybuilds/aion-axon",
+  "branch": "feat/beastmode-core",
+  "head": "9af5bf1",
+  "origin_head": "9af5bf1",
+  "clean": true,
+  "production_backend": {
+    "service": "aion-core",
+    "region": "asia-south1",
+    "url": "https://aion-core-638298765129.asia-south1.run.app",
+    "revision": "aion-core-rel-9af5bf17d1",
+    "traffic_percent": 100,
+    "rollback_revisions": [
+      "aion-core-rel-9f1cfcd684",
+      "aion-core-rel-10037a2a58",
+      "aion-core-00034-6c4"
+    ]
+  },
+  "production_frontend": {
+    "project": "aion-axon-2026",
+    "url": "https://aion-axon-2026.web.app",
+    "assets": {
+      "js": "index-C4FMqUBT.js",
+      "css": "index-zx6vXsgM.css"
+    }
+  },
+  "tests": {
+    "backend_passed": 454,
+    "backend_failed": 0,
+    "known_flaky": [
+      "tests/test_reliability.py::test_declared_but_unbuilt_capability_is_also_a_gap (order-dependent, pre-existing, fails in isolation only, passes in full suite)"
+    ]
+  },
+  "fixture_tests": {
+    "passed": 11,
+    "command": "node web/src/demoRecoveryFixture.test.mjs"
+  },
+  "build": "clean",
+  "mission_readiness": {
+    "overall": "READY",
+    "checked_live_in_production": true,
+    "checks_total": 12,
+    "checks_ready": 12
+  },
+  "real_mission_execution": "NOT_RUN",
+  "security": {
+    "red_team_contained": 22,
+    "red_team_total": 23,
+    "bypasses_fixed": 5,
+    "bypasses": [
+      {"name": "Forbidden builtin aliasing", "commit": "930aeda"},
+      {"name": "__builtins__ capture", "commit": "8a15a12"},
+      {"name": "Network-capable stdlib beyond socket", "commit": "1d45c2d"},
+      {"name": "Format-string dunder traversal", "commit": "15cc7c7"},
+      {"name": "Frame/object-graph reflection", "commit": "626bb0a"}
+    ]
+  },
+  "known_limitations": [
+    "Sandbox process does not independently block network egress (AST is the only control)",
+    "Cloud Run has no VPC-based egress isolation (confirmed absent, not fixed -- separate authorization required)",
+    "YAML containment relies on dependency absence, not a deliberate AST rule",
+    "Format-string protection covers literal strings only; dynamically-constructed strings remain a residual gap",
+    "Ledger seal is a local file (tamper-evident, not tamper-proof)",
+    "security_report.py's static regression_tests count (439, as_of 10037a2) is stale relative to actual 454"
+  ],
+  "completed_phases": [
+    "19-21: AST/security bypass discovery and fixes (aliasing, __builtins__, network stdlib, format-string, reflection)",
+    "22: Security Coverage Report + Judge Mode card",
+    "23: Deterministic Demo Recovery Mode (frontend-only fixture)",
+    "24: Deployment readiness forensics",
+    "25: First production push+deploy",
+    "26: Mission Readiness endpoint + Judge Mode narrative + version-skew crash fix",
+    "27: Full deploy+verify cycle, all smoke tests passed",
+    "28: Cross-capability approval-binding test, min_length input validation, explicit LIVE/DEMO wording",
+    "29: Pushed+deployed Phase 28 work, re-verified in production including a second Demo Recovery run"
+  ],
+  "current_phase": "29 (complete)",
+  "next_recommended_phase": "Owner executes the first real production mission (see AION_AXON_HANDOFF.md section P). If not ready for that: resync security_report.py's static test count (low priority, ~5 min).",
+  "human_action_required": "Owner must personally open https://aion-axon-2026.web.app, go to Mission Theater, select LIVE MISSION, enter the real owner token, type a real need, click RUN MISSION, and personally decide any resulting approval. Claude Code must never perform this action."
+}
