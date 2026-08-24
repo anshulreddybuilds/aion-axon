@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, hasOwnerToken } from "./api.js";
 import { Panel, Empty } from "./panels.jsx";
+import { checkSelfAuthorizationShortcuts, formatPath } from "./stateMachineProof.js";
 
 /**
  * Judge Mode — a Proof Center over the real /beastmode/* API.
@@ -300,6 +301,47 @@ function ContractCard({ capability }) {
           </div>
         )
       }
+    />
+  );
+}
+
+/** The formal transition table itself, and proof that the shortcuts a
+ * self-authorizing agent would need are structurally absent from it --
+ * not asserted, checked live against the real endpoint's own data. */
+function StateMachineCard() {
+  return (
+    <ProofCard
+      title="State Machine — AI cannot promote itself"
+      fetcher={api.stateMachine}
+      render={(d) => {
+        const shortcuts = checkSelfAuthorizationShortcuts(d.transitions);
+        return (
+          <div className="text-[10px] space-y-3">
+            <div>
+              <p className="text-white/70 mb-1">the real success path</p>
+              <p className="text-cyan leading-relaxed">{formatPath(d.success_path)}</p>
+            </div>
+
+            <div className="pt-2 border-t border-edge">
+              <p className="text-white/70 mb-1.5">shortcuts a self-authorizing agent would need</p>
+              <div className="space-y-1">
+                {shortcuts.map((s) => (
+                  <div key={`${s.from}-${s.to}`} className="flex items-center justify-between">
+                    <span className="text-muted">
+                      {s.from} → {s.to} <span className="text-muted/60">({s.label})</span>
+                    </span>
+                    <span className={s.blocked ? "text-ok" : "text-danger"}>
+                      {s.blocked ? "✓ BLOCKED" : "✗ ALLOWED"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <p className="text-muted pt-2 border-t border-edge">{d.invariant}</p>
+          </div>
+        );
+      }}
     />
   );
 }
@@ -668,6 +710,7 @@ export default function JudgeMode({ pending, acquiredNames }) {
 
       <MissionReadinessCard />
       <SecurityCoverageCard />
+      <StateMachineCard />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <RedTeamCard />

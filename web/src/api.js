@@ -160,6 +160,10 @@ export const api = {
   securityReport: () => request("/beastmode/security/report"),
 
   missionReadiness: () => request("/beastmode/mission/readiness"),
+
+  // The formal capability-lifecycle transition table -- public, pure
+  // constants, no secrets. See app/beastmode/state_machine.py.
+  stateMachine: () => request("/beastmode/state-machine"),
 };
 
 /** Fetch everything the dashboard shows, tolerating partial failure.
