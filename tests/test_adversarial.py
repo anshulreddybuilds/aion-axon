@@ -374,6 +374,54 @@ def test_kill_switch_blocks_every_execution_path():
     assert ran == []
 
 
+# --- SEC-03 (Phase 40): shelve/requests/httpx/aiohttp + dir() ------------
+# Everything else the Phase 40 remediation prompt asked for under "harden
+# the AST firewall against reflection" (getattr/setattr/globals/locals/
+# __builtins__/subclass-traversal/aliasing/concatenated-string tricks) was
+# ALREADY covered above by the existing aliasing, dunder-capture, and
+# forbidden-call-name checks -- getattr/setattr/delattr/globals/locals/vars
+# are already in FORBIDDEN_CALLS and fire on the call name itself,
+# independent of what arguments (concatenated strings, computed names,
+# etc.) are passed. Re-testing that ground would duplicate coverage that
+# already exists; only the genuinely new additions are tested here.
+
+@pytest.mark.parametrize("module", ["shelve", "requests", "httpx", "aiohttp"])
+def test_newly_forbidden_modules_are_rejected(module):
+    """`shelve` is a real gap: it's pickle-backed and reaches the same
+    arbitrary-code-execution-via-crafted-data primitive `pickle` (already
+    forbidden) does. `requests`/`httpx`/`aiohttp` are defense-in-depth --
+    not stdlib, may not even be installed in the sandbox, but a
+    data-transformation capability has no legitimate need for a
+    third-party HTTP client any more than it needs `socket`."""
+    result = screen(f"import {module}\ndef f():\n    return {module}\n")
+    assert result.safe is False
+    assert any(module in finding for finding in result.findings)
+
+
+def test_dir_is_forbidden():
+    """`dir()` can't execute anything by itself, but it's the
+    reconnaissance half of a getattr-based reflection chain -- same
+    rationale already applied to globals()/locals()/vars()."""
+    result = screen("def f(x):\n    return dir(x)\n")
+    assert result.safe is False
+    assert any("dir" in finding.lower() for finding in result.findings)
+
+
+def test_legitimate_deterministic_capability_is_unaffected_by_sec03_additions():
+    """Negative control: the SEC-03 additions must not false-positive on
+    real, already-installed capability shapes. This is the actual
+    detect_expense_anomalies candidate installed in Mission #1."""
+    payload = (
+        "import json\n"
+        "import statistics\n"
+        "def detect_expense_anomalies(data_json):\n"
+        "    parsed = json.loads(data_json)\n"
+        "    q1, _, q3 = statistics.quantiles(parsed, n=4)\n"
+        "    return {'q1': q1, 'q3': q3}\n"
+    )
+    assert screen(payload).safe is True
+
+
 # --- Guardian cannot be argued with ---------------------------------------
 
 @pytest.mark.parametrize("phrasing", [
