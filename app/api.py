@@ -805,3 +805,13 @@ def beastmode_security_report() -> dict[str, Any]:
     from app.beastmode.security_report import build_report
 
     return build_report()
+
+
+@app.get("/beastmode/mission/readiness")
+def beastmode_mission_readiness() -> dict[str, Any]:
+    """Is AION Axon ready for one real owner-authorized mission? Never
+    itself creates a capability, approval, ledger event, or evolution
+    event -- see app/beastmode/mission_readiness.py's module docstring."""
+    from app.beastmode.mission_readiness import build_readiness
+
+    return build_readiness()
