@@ -75,13 +75,66 @@ def test_run_executes_and_reschedules():
 
 
 def test_kill_switch_halts_scheduled_work():
-    """A monitor must not be a scheduled way around the Guardian."""
+    """A monitor must not be a scheduled way around the Guardian.
+
+    Batch 2.5 monitor governance audit: status changed from the raw
+    execution_gate "BLOCKED" to the monitor-specific
+    "SKIPPED_KILL_SWITCH_ACTIVE" -- see
+    test_killswitch_blocked_runs_never_count_toward_consecutive_failures
+    for why this distinction exists and matters. The underlying property
+    this test protects -- the capability never actually runs while
+    halted -- is unchanged; only the status label is more precise now.
+    """
     make()
     kill_switch.activate("stop everything")
 
     outcome = monitor_service.run_due()
 
-    assert outcome["results"][0]["status"] == "BLOCKED"
+    assert outcome["results"][0]["status"] == "SKIPPED_KILL_SWITCH_ACTIVE"
+    assert outcome["results"][0]["result"] is None
+
+
+def test_killswitch_blocked_runs_never_count_toward_consecutive_failures():
+    """Batch 2.5 monitor governance audit: reproduced live before this
+    fix -- 3 real consecutive due-ticks while the kill switch stayed
+    active auto-DISABLED a perfectly healthy monitor, purely because the
+    owner had their own emergency stop engaged. The capability was never
+    actually attempted (execution_gate blocked it before the tool ran),
+    so there was nothing that failed -- counting it as a failure
+    punished the owner's own halt. A kill-switch-blocked run must leave
+    the monitor's failure count and ACTIVE state untouched, and must not
+    advance next_run_at (so it's re-checked on the very next tick once
+    the switch is off, not stuck waiting out a full interval it never
+    got to use)."""
+    make(interval=1)
+    monitor_id = monitor_service.list_all()[0]["monitor_id"]
+
+    kill_switch.activate("extended halt")
+
+    for _ in range(MAX_CONSECUTIVE_FAILURES + 2):
+        firestore_store.save_monitor(monitor_id, {
+            "next_run_at": datetime.now(timezone.utc).isoformat(),
+        })
+        monitor_service.run_due()
+
+    monitor = monitor_service.get(monitor_id)
+
+    assert monitor["state"] == "ACTIVE"
+    assert monitor["consecutive_failures"] == 0
+    assert monitor["last_status"] == "SKIPPED_KILL_SWITCH_ACTIVE"
+    assert monitor["run_count"] == 0
+
+    # And it resumes normally once the switch is off, on the very next
+    # tick -- not delayed by a full interval it never actually used.
+    kill_switch.deactivate()
+    firestore_store.save_monitor(monitor_id, {
+        "next_run_at": datetime.now(timezone.utc).isoformat(),
+    })
+    monitor_service.run_due()
+
+    monitor = monitor_service.get(monitor_id)
+    assert monitor["last_status"] == "EXECUTED"
+    assert monitor["run_count"] == 1
 
 
 def test_repeated_failures_disable_rather_than_retry_forever():

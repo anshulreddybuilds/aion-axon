@@ -111,12 +111,49 @@ def test_replace_an_event_with_an_old_valid_event_is_detected(tmp_path, monkeypa
 
 
 # --- reorder --------------------------------------------------------------
+#
+# Batch 2 / SEC-05: build_chain() now imposes its own canonical
+# (timestamp, event_id) order on whatever list it receives, rather than
+# trusting caller-supplied list order -- see ledger_chain.py's module
+# docstring. This is deliberate: firestore_store.list_evolution_events()
+# never guaranteed any particular order in the first place (a plain
+# .stream() with no .order_by()), so "list position" was never a
+# meaningful signal in production; only real field content is. One
+# consequence: swapping two events' LIST POSITIONS with their field
+# values unchanged is no longer detectable, because it's no longer a
+# real difference -- canonical ordering restores the same chain either
+# way. That is the fix working as intended, not a regression: it removes
+# a false-positive surface (Firestore returning events in a different
+# but equally valid stream order between two verify() calls would
+# previously have looked identical to an actual reorder attack).
+#
+# A REAL reorder attempt -- one that actually changes which event the
+# system believes happened when -- means changing the timestamp field
+# itself, and that must still be detected, because it changes both the
+# tampered event's own hash AND (potentially) its position in canonical
+# order.
 
-def test_reorder_two_events_is_detected(tmp_path, monkeypatch):
+def test_swapping_list_position_alone_is_no_longer_a_detectable_difference(tmp_path, monkeypatch):
+    """Negative control proving the new behavior is intentional: two
+    events already in canonical order, handed to verify() in swapped
+    LIST position but with identical field content, must still verify --
+    list order was never authoritative."""
     events = _sealed(tmp_path, monkeypatch, _events(4))
     reordered = list(events)
     reordered[1], reordered[2] = reordered[2], reordered[1]
-    assert lc.verify(reordered)["status"] == "MISMATCH"
+    assert lc.verify(reordered)["status"] == "VERIFIED"
+
+
+def test_changing_an_events_timestamp_to_actually_reorder_it_is_detected(tmp_path, monkeypatch):
+    """The real reorder attack: making an event LOOK like it happened at
+    a different point in the sequence by rewriting its timestamp. This
+    changes real data, not just list position, and must still be caught."""
+    events = _sealed(tmp_path, monkeypatch, _events(4))
+    tampered = [dict(e) for e in events]
+    # Rewrite event 3's timestamp to sort before event 0 -- an attempt to
+    # make a later real event appear to have happened first.
+    tampered[3]["timestamp"] = "2020-01-01T00:00:00Z"
+    assert lc.verify(tampered)["status"] == "MISMATCH"
 
 
 # --- replay ---------------------------------------------------------------
@@ -197,3 +234,109 @@ def test_verify_after_rollback_event_appended_is_mismatch_until_resealed(tmp_pat
     # Re-sealing over the honest new state must restore VERIFIED.
     lc.seal(with_rollback)
     assert lc.verify(with_rollback)["status"] == "VERIFIED"
+
+
+# --- Batch 2 / SEC-05: ordering determinism -------------------------------
+# The required property list from the remediation directive, adapted to
+# what this schema actually has. `artifact_hash` does not exist anywhere
+# in this codebase (checked: no field, no concept, in events, passports,
+# or approvals) -- the closest real analog to "the artifact's identity"
+# stored in an event is `test_results` (the real sandbox execution record
+# the code actually produced) and `evaluation` (the score/verdict it
+# received), both tested explicitly below rather than a fabricated field.
+
+def _events_with_event_id(n: int, **overrides) -> list[dict]:
+    """Same shape write_evolution_event() actually produces: event_id
+    present as a real field, not just an incidental list position."""
+    base = _events(n, **overrides)
+    for i, e in enumerate(base):
+        e["event_id"] = f"evt-{i}"
+    return base
+
+
+def test_same_events_produce_the_same_chain_regardless_of_call():
+    events = _events_with_event_id(5)
+    chain1 = lc.build_chain(events)
+    chain2 = lc.build_chain(events)
+    assert chain1[-1].chain_hash == chain2[-1].chain_hash
+
+
+def test_same_events_in_a_different_input_list_order_produce_the_same_chain():
+    """The actual fix under test: firestore_store.list_evolution_events()
+    never guaranteed a particular return order. Two reads that return the
+    same events in different LIST order must still produce the same
+    chain -- this is the property that was broken before this batch."""
+    events = _events_with_event_id(6)
+    shuffled = [events[3], events[0], events[5], events[1], events[4], events[2]]
+
+    chain_original = lc.build_chain(events)
+    chain_shuffled = lc.build_chain(shuffled)
+
+    assert chain_original[-1].chain_hash == chain_shuffled[-1].chain_hash
+
+
+def test_events_with_genuinely_different_timestamps_produce_a_different_chain():
+    events_a = _events_with_event_id(4)
+    events_b = [dict(e) for e in events_a]
+    events_b[2]["timestamp"] = "2099-01-01T00:00:00Z"
+
+    chain_a = lc.build_chain(events_a)
+    chain_b = lc.build_chain(events_b)
+
+    assert chain_a[-1].chain_hash != chain_b[-1].chain_hash
+
+
+def test_timestamp_collision_is_broken_deterministically_by_event_id():
+    """Two events with an IDENTICAL timestamp (a real possibility -- see
+    the module docstring) must still sort the same way every time, via
+    the event_id tiebreak, regardless of input list order."""
+    colliding = [
+        {"change": "e0", "capability": "cap_0", "approver": "a",
+         "timestamp": "2026-08-24T10:00:00.000000+00:00", "event_id": "evt-a"},
+        {"change": "e1", "capability": "cap_1", "approver": "a",
+         "timestamp": "2026-08-24T10:00:00.000000+00:00", "event_id": "evt-b"},
+    ]
+    reversed_input = list(reversed(colliding))
+
+    chain1 = lc.build_chain(colliding)
+    chain2 = lc.build_chain(reversed_input)
+
+    assert chain1[-1].chain_hash == chain2[-1].chain_hash
+    # And the order actually used is the deterministic (timestamp, event_id)
+    # order, not whichever input order happened to be passed -- both chains'
+    # first link must be event_id "evt-a" (sorts first lexicographically).
+    assert chain1[0].event_hash == chain2[0].event_hash
+
+
+def test_repeated_reads_in_different_orders_all_verify_against_one_seal(tmp_path, monkeypatch):
+    """Simulates what an unordered Firestore .stream() actually does:
+    the same underlying events, returned in a different order on a
+    second read. Both reads must verify cleanly against the same seal."""
+    monkeypatch.setattr(lc, "SEAL_PATH", tmp_path / "seal.json")
+    events = _events_with_event_id(5)
+    lc.seal(events)
+
+    read_order_1 = list(events)
+    read_order_2 = [events[4], events[1], events[3], events[0], events[2]]
+
+    assert lc.verify(read_order_1)["status"] == "VERIFIED"
+    assert lc.verify(read_order_2)["status"] == "VERIFIED"
+
+
+def test_modifying_the_sandbox_test_results_in_an_event_is_detected(tmp_path, monkeypatch):
+    """The closest real analog to "artifact identity" this schema has:
+    the real sandbox execution record the installed code actually
+    produced. Forging it after the fact must be caught."""
+    events = _events_with_event_id(3, test_results={"passed": True, "stdout": "OK", "exit_code": 0})
+    sealed = _sealed(tmp_path, monkeypatch, events)
+    tampered = [dict(e) for e in sealed]
+    tampered[1]["test_results"] = {"passed": True, "stdout": "FORGED", "exit_code": 0}
+    assert lc.verify(tampered)["status"] == "MISMATCH"
+
+
+def test_modifying_the_evaluator_score_in_an_event_is_detected(tmp_path, monkeypatch):
+    events = _events_with_event_id(3, evaluation={"status": "SCORED", "score": 40, "verdict": "FAIL"})
+    sealed = _sealed(tmp_path, monkeypatch, events)
+    tampered = [dict(e) for e in sealed]
+    tampered[0]["evaluation"] = {"status": "SCORED", "score": 95, "verdict": "PASS"}
+    assert lc.verify(tampered)["status"] == "MISMATCH"

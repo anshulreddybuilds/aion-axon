@@ -19,6 +19,34 @@ prove:
     re-sealing over the edit. Detecting that would need the seal to live
     somewhere the same actor cannot write to (out of scope for this pass,
     and stated here rather than implied away).
+
+Batch 2 / SEC-05 (ordering determinism): `firestore_store.list_evolution_events()`
+reads via a plain Firestore `.stream()` with no `.order_by()` clause --
+Firestore does not guarantee stream order without one, and adding a
+multi-field `.order_by()` to the live query risks requiring a composite
+index that may not exist in production (a real deployment risk, not
+something to introduce blindly from this environment). Since the hash
+chain is order-dependent by construction, an order-agnostic caller feeding
+it meant `final_hash` was not reliably reproducible across separate reads
+independent of any tampering -- found live 24 Aug when a real ledger
+re-verification did not reproduce the production seal's hash even though
+the only real change was one legitimate new event.
+
+The fix lives HERE rather than in the Firestore query: `build_chain()` now
+imposes its own canonical order on whatever list it's given, rather than
+trusting caller-supplied order (the opposite of this module's previous
+design). Ordering key is `(timestamp, event_id)`: `timestamp` is the real
+chronological signal, `event_id` is a guaranteed-unique field written into
+every event by BOTH firestore_store backends (not just the Firestore
+document ID -- see write_evolution_event()) and breaks a timestamp
+collision deterministically. It does not need to preserve "true" order
+under a collision, only PRODUCE THE SAME order every time given the same
+events -- which is the actual property tamper-evidence depends on.
+
+This changes nothing about existing events, does not reorder or rewrite
+any historical record, and does not touch the existing seal file. It only
+changes how `build_chain()`/`seal()`/`verify()` compute a hash from
+whatever event list they're handed.
 """
 from __future__ import annotations
 
@@ -50,11 +78,31 @@ class ChainLink:
     change: str
 
 
-def build_chain(events: list[dict[str, Any]]) -> list[ChainLink]:
-    """Chain events in the order given. Caller supplies real event order —
-    this module does not fetch or sort, so it can be tested with fixtures
-    without needing Firestore.
+def _canonical_order(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deterministic, reproducible order: (timestamp, event_id).
+
+    Both fields are always present -- written by every code path that
+    creates an evolution event, in both the memory and real Firestore
+    backends (see firestore_store.write_evolution_event()). Sorting here,
+    rather than trusting whatever order the caller's query happened to
+    return, is what makes seal()/verify() reproducible across separate
+    reads regardless of Firestore's own unordered `.stream()`.
     """
+    return sorted(
+        events,
+        key=lambda e: (str(e.get("timestamp") or ""), str(e.get("event_id") or "")),
+    )
+
+
+def build_chain(events: list[dict[str, Any]]) -> list[ChainLink]:
+    """Chain events in canonical (timestamp, event_id) order, regardless
+    of the order the caller passed them in -- see _canonical_order().
+    Still testable with plain fixtures; it just no longer trusts the
+    fixture's own list order either, which is deliberate: a test that
+    only passes because its fixture happened to already be sorted would
+    hide exactly the bug this fixes.
+    """
+    events = _canonical_order(events)
     chain: list[ChainLink] = []
     previous = GENESIS
 

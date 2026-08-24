@@ -26,6 +26,7 @@ from app.capabilities.registry import registry
 from app.governance.approval import approval_manager
 from app.governance.autonomy_ledger import autonomy_ledger
 from app.governance.guardian import Decision, RiskLevel, guardian
+from app.governance.kill_switch import kill_switch
 from app.memory.firestore_store import firestore_store
 from app.synapse.evaluator import evaluate
 from app.synapse.generator import Candidate, generate_candidate
@@ -111,6 +112,19 @@ class SynapseEngine:
         rejected" into "the system tried until it got lucky".
         """
         record = AcquisitionRecord(need=need, mission_id=mission_id)
+
+        # --- KILL SWITCH -------------------------------------------------
+        # Batch 2 / REL-01: found live that propose()/install() never
+        # checked this at all -- only execution_gate did, so the switch
+        # stopped USING an already-installed capability but not STARTING
+        # or FINISHING a new acquisition. "New synthesis must stop" means
+        # here too, not just at the tool-call boundary.
+        if kill_switch.is_active():
+            record.stage = "KILL_SWITCH"
+            record.status = "BLOCKED"
+            record.reason = "Kill switch is active."
+            self._audit(record, "SYNAPSE_BLOCKED")
+            return record
 
         # --- GUARDIAN PRE-SCREEN --------------------------------------
         # Screen the NEED before spending a single token on it. A request
@@ -347,6 +361,16 @@ class SynapseEngine:
 
     def install(self, capability_name: str) -> dict[str, Any]:
         """Install an APPROVED capability. Refuses without a real approval."""
+        # Batch 2 / REL-01: same gap as propose() above -- confirmed live
+        # that a capability could reach state=READY while the kill switch
+        # was active, because nothing here ever checked it.
+        if kill_switch.is_active():
+            firestore_store.write_audit_event("INSTALL_BLOCKED", {
+                "capability": capability_name,
+                "reason": "Kill switch is active.",
+            })
+            return {"status": "BLOCKED", "reason": "Kill switch is active."}
+
         stored = firestore_store.get_capability(capability_name)
 
         if stored is None:
@@ -368,6 +392,29 @@ class SynapseEngine:
                 "status": "APPROVAL_REQUIRED",
                 "request_id": request_id,
                 "reason": "Human approval has not been granted.",
+            }
+
+        # Idempotency guard (Batch 2 / state integrity): an approval stays
+        # APPROVED forever once decided -- it is never consumed -- so
+        # nothing above stops this SAME request_id from reaching install()
+        # a second time (a retried client call, two racing requests, a
+        # replayed request). Without this check each call unconditionally
+        # re-registers the capability, bumps `version` again, and writes
+        # ANOTHER evolution event for the exact same real-world action --
+        # confirmed live: two calls in a row moved version 1->2 and
+        # evolution events 1->2 with zero new approval in between. This
+        # only short-circuits a replay of the SAME already-installed
+        # passport; a genuinely NEW propose() cycle for this capability
+        # name gets its own request_id and is not affected.
+        if (
+            stored.get("state") == "READY"
+            and passport.get("approval_request_id") == request_id
+        ):
+            return {
+                "status": "ALREADY_INSTALLED",
+                "capability": capability_name,
+                "version": stored.get("version"),
+                "request_id": request_id,
             }
 
         candidate = passport.get("candidate") or {}

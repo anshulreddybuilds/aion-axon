@@ -356,6 +356,75 @@ def test_kill_switch_stops_an_acquisition_before_it_installs(monkeypatch):
         assert result["status"] == "BLOCKED"
 
 
+def test_kill_switch_blocks_propose(monkeypatch):
+    """Batch 2 / REL-01: found live that propose() never checked the kill
+    switch at all -- only execution_gate did, so the switch stopped
+    USING an already-installed capability but not STARTING a new
+    acquisition. A real Gemini/sandbox call must never even be attempted
+    while halted -- proven here by monkeypatching search_web to explode
+    if it's ever reached."""
+    def must_not_be_called(*a, **k):
+        raise AssertionError("propose() reached research while kill switch was active")
+
+    monkeypatch.setattr(engine_module, "search_web", must_not_be_called)
+
+    kill_switch.activate("halt before synthesis")
+    record = synapse.propose("anything at all")
+
+    assert record.status == "BLOCKED"
+
+
+def test_kill_switch_blocks_install():
+    """Same gap, the install() side: confirmed live that a capability
+    could reach state=READY with a real evolution event while the kill
+    switch was active, because install() never checked it either."""
+    firestore_store.save_capability("ks_test", {
+        "name": "ks_test", "description": "x", "risk": "LOW",
+        "state": "VALIDATING", "implemented": False, "version": 0,
+        "passport": {
+            "need": "x", "approval_request_id": "ks-approval",
+            "candidate": {
+                "name": "ks_test", "description": "x", "risk": "LOW",
+                "code": "def f(x):\n    return x\n", "entrypoint": "f",
+            },
+        },
+    })
+    firestore_store.approvals["ks-approval"] = {
+        "status": "APPROVED", "decided_by": "anshul",
+        "action": "install", "risk": "LOW", "reason": "ok",
+    }
+
+    kill_switch.activate("halt before install")
+    result = synapse.install("ks_test")
+
+    assert result["status"] == "BLOCKED"
+    assert firestore_store.get_capability("ks_test")["state"] == "VALIDATING"
+    registry.unregister("ks_test")
+
+
+def test_kill_switch_blocks_decide():
+    """Same gap, the decide() side: an owner-authenticated approval
+    decision must not silently record while the switch is active --
+    blocks both APPROVE and REJECT, since the kill switch means "stop
+    all mutation," not "stop everything except this one path.\""""
+    from app.governance.approval import KillSwitchActive, approval_manager
+
+    request = approval_manager.create(
+        action="install capability: ks_test2", risk=RiskLevel.MEDIUM,
+        reason="x",
+    )
+
+    kill_switch.activate("halt before decision")
+
+    with pytest.raises(KillSwitchActive):
+        approval_manager.decide(request.request_id, True, "anshul")
+
+    # The request must still be genuinely undecided -- not silently
+    # approved, not silently rejected.
+    reloaded = approval_manager.get(request.request_id)
+    assert reloaded.pending is True
+
+
 def test_kill_switch_blocks_every_execution_path():
     """One missed path is a way around the switch."""
     kill_switch.activate("stop")

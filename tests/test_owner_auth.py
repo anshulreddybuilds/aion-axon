@@ -123,3 +123,36 @@ def test_the_token_is_compared_in_constant_time():
     source = inspect.getsource(owner_auth.require_owner)
 
     assert "compare_digest" in source
+
+
+# --- Batch 2 / SEC-06: edge cases not yet covered above --------------------
+
+def test_whitespace_only_token_is_refused():
+    """A header present but empty-after-strip must not slip past the
+    `if not expected` / `if not x_axon_token` truthiness checks by being
+    merely non-empty as a raw string."""
+    response = anonymous.post(
+        "/killswitch", json={"active": False},
+        headers={"X-Axon-Token": "   "},
+    )
+    assert response.status_code == 401
+
+
+def test_an_extremely_long_token_is_refused_without_error():
+    """A token far longer than any real one must fail the comparison
+    cleanly -- not crash, hang, or somehow short-circuit true."""
+    response = anonymous.post(
+        "/killswitch", json={"active": False},
+        headers={"X-Axon-Token": "x" * 100_000},
+    )
+    assert response.status_code == 401
+
+
+def test_a_near_miss_token_is_refused():
+    """One character off must still fail -- guards against an accidental
+    prefix-match or truncating comparison bug."""
+    response = anonymous.post(
+        "/killswitch", json={"active": False},
+        headers={"X-Axon-Token": "test-owner-tokeN"},
+    )
+    assert response.status_code == 401

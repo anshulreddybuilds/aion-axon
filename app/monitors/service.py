@@ -204,6 +204,40 @@ class MonitorService:
         if tool_errored:
             status = "TOOL_ERROR"
 
+        # Batch 2.5 / monitor governance audit: a kill-switch BLOCKED run
+        # is the owner's own deliberate halt, not the capability being
+        # broken. Reproduced live: 3 real consecutive due-ticks while the
+        # switch stayed active auto-DISABLED a perfectly healthy monitor,
+        # purely because the owner had the emergency stop engaged --
+        # punishing compliance with their own halt. Counting it toward
+        # consecutive_failures (or writing it as a failure at all) was
+        # never correct; the underlying capability was never actually
+        # attempted, so there is nothing to report failing.
+        killswitch_blocked = status == "BLOCKED" and outcome.get("reason") == (
+            "Kill switch is active."
+        )
+
+        if killswitch_blocked:
+            firestore_store.save_monitor(monitor_id, {
+                "last_run_at": _now().isoformat(),
+                "last_status": "SKIPPED_KILL_SWITCH_ACTIVE",
+                "last_reason": outcome.get("reason"),
+                # Deliberately NOT advancing next_run_at or run_count/
+                # consecutive_failures: this attempt didn't really happen,
+                # so the monitor becomes due again on the very next tick
+                # once the switch is off, rather than waiting out a full
+                # interval it never got to use.
+            })
+
+            return {
+                "monitor_id": monitor_id,
+                "name": monitor.get("name"),
+                "status": "SKIPPED_KILL_SWITCH_ACTIVE",
+                "result": None,
+                "reason": outcome.get("reason"),
+                "disabled": False,
+            }
+
         failures = (
             0 if succeeded
             else int(monitor.get("consecutive_failures", 0)) + 1

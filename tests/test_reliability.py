@@ -107,7 +107,24 @@ def test_resuming_a_completed_mission_does_not_run_it_again():
 
 
 def test_installing_the_same_capability_twice_is_safe():
-    """A retried install must not corrupt the registry or double-count."""
+    """A retried/replayed install must not corrupt the registry, double-
+    count the version, or duplicate the ledger event.
+
+    Batch 2 (state integrity): this test originally only checked that the
+    registry didn't grow a duplicate entry, which registry.register()
+    already made trivially true (it overwrites, not appends) even before
+    a real bug was found and fixed here -- registry non-duplication was
+    never actually the broken invariant. The real bug, confirmed live: a
+    second install() call on an already-installed capability with the
+    same still-APPROVED approval silently re-ran the entire install path,
+    bumping `version` 1->2 and writing a SECOND evolution event for the
+    same real-world action. install() now recognises a replay of the
+    SAME approval_request_id against an already-READY capability and
+    returns ALREADY_INSTALLED without touching the registry, version, or
+    ledger again -- distinguishable from a fresh INSTALLED on purpose, so
+    a caller (or the frontend) can tell a genuine new install from a
+    no-op replay.
+    """
     firestore_store.save_capability("twice_skill", {
         "name": "twice_skill",
         "description": "adds one",
@@ -134,14 +151,25 @@ def test_installing_the_same_capability_twice_is_safe():
 
     from app.synapse.engine import synapse
 
+    events_before = len(firestore_store.list_evolution_events())
+
     first = synapse.install("twice_skill")
     second = synapse.install("twice_skill")
+    third = synapse.install("twice_skill")
 
     assert first["status"] == "INSTALLED"
-    assert second["status"] == "INSTALLED"
+    assert second["status"] == "ALREADY_INSTALLED"
+    assert third["status"] == "ALREADY_INSTALLED"
 
     names = [t["name"] for t in registry.list_tools()]
     assert names.count("twice_skill") == 1, "registry duplicated a capability"
+
+    assert firestore_store.get_capability("twice_skill")["version"] == 1, (
+        "a replayed install must not bump the version again"
+    )
+    assert len(firestore_store.list_evolution_events()) == events_before + 1, (
+        "a replayed install must not write a second evolution event"
+    )
 
     registry.unregister("twice_skill")
 

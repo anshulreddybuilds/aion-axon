@@ -49,6 +49,23 @@ test("a real INSTALLED result reconciles status/stage away from AWAITING_APPROVA
   assert.equal(reconciled.approval_request_id, AWAITING_RECORD.approval_request_id);
 });
 
+// Batch 2: install() is now idempotent -- a replayed install on an
+// already-installed capability returns ALREADY_INSTALLED, not INSTALLED,
+// so the backend can tell a genuine first install apart from a no-op
+// replay. The frontend must still treat it as a real success, not a
+// false failure -- the capability IS installed either way.
+test("an ALREADY_INSTALLED result (idempotent replay) reconciles the same as INSTALLED", () => {
+  const installResult = { status: "ALREADY_INSTALLED", capability: "detect_expense_anomalies", version: 1 };
+
+  const reconciled = reconcileRecord(AWAITING_RECORD, {
+    approved: true,
+    installResult,
+  });
+
+  assert.equal(reconciled.status, "INSTALLED");
+  assert.notEqual(reconciled.status, "FAILED");
+});
+
 // CASE 2: approval succeeded but install did NOT confirm -- must never
 // show an installed/successful state on an unconfirmed install, and must
 // surface the real reason rather than a fabricated one.

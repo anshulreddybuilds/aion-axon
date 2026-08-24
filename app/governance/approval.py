@@ -4,6 +4,7 @@ from typing import Optional
 from uuid import uuid4
 
 from .guardian import RiskLevel
+from .kill_switch import kill_switch
 from app.memory.firestore_store import firestore_store
 
 
@@ -40,6 +41,15 @@ class ApprovalRequest:
         self.approved = False
         self.decided_by = decided_by
         self.decided_at = datetime.now(timezone.utc).isoformat()
+
+
+class KillSwitchActive(RuntimeError):
+    """Raised by decide() when the kill switch is active.
+
+    A distinct type from the existing KeyError (unknown request) and
+    ValueError (already decided) so the API layer can map it to its own
+    clear BLOCKED response instead of colliding with either.
+    """
 
 
 class ApprovalManager:
@@ -128,6 +138,22 @@ class ApprovalManager:
         approved: bool,
         decided_by: str = "human",
     ) -> ApprovalRequest:
+
+        # Batch 2 / REL-01: found live that neither decide() nor
+        # synapse.install() checked this -- only execution_gate did. The
+        # kill switch is meant to stop ALL mutation, not just tool
+        # execution; recording a real approve/reject decision while it is
+        # active is exactly the kind of "alternate mutation path" that
+        # bypassed it. Blocks both APPROVE and REJECT while active, on
+        # purpose -- deactivating the switch is one deliberate extra step,
+        # not a silent carve-out for "just this one decision."
+        if kill_switch.is_active():
+            firestore_store.write_audit_event("DECISION_BLOCKED", {
+                "request_id": request_id,
+                "attempted_approved": approved,
+                "reason": "Kill switch is active.",
+            })
+            raise KillSwitchActive("Kill switch is active.")
 
         request = self.get(request_id)
 

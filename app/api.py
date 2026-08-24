@@ -4,18 +4,21 @@ Every route that can cause execution goes through MissionService ->
 Orchestrator -> ExecutionGate. There is no route that executes a tool
 directly, and adding one would break the governance guarantee.
 """
+import json
 import os
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.capabilities.declarations import catalog_summary
 from app.capabilities.registry import registry
 from app.capabilities.rehydrate import rehydrate_capabilities
-from app.governance.approval import approval_manager
+from app.governance.approval import KillSwitchActive, approval_manager
 from app.governance.autonomy_ledger import (
     SUPERVISION_THRESHOLD,
     autonomy_ledger,
@@ -23,6 +26,7 @@ from app.governance.autonomy_ledger import (
 from app.governance.ground_truth import all_facts, lookup, record_fact
 from app.governance.kill_switch import kill_switch
 from app.governance.owner_auth import HEADER as OWNER_TOKEN_HEADER, require_owner
+from app.governance.rate_limit import rate_limit_planned_mission, rate_limit_propose
 from app.governance.review import review_package
 from app.memory.firestore_store import firestore_store
 from app.missions.service import mission_service
@@ -95,6 +99,84 @@ PREVIEW_CHANNEL_ORIGIN = r"^https://aion-axon-2026--[a-z0-9-]+\.web\.app$"
 #
 # Listing the header grants no authority: it only lets the request be
 # sent. require_owner still decides whether the token inside it is valid.
+# SEC-API (Batch 2 completion): Starlette places no limit on request body
+# size by default. Every real body this API expects is a short JSON
+# object -- a need, a reason, a handful of args -- so a multi-megabyte
+# body is never legitimate traffic, only an oversized-payload probe.
+# Checked BEFORE routing (so an unauthenticated flood can't reach route
+# logic) via Content-Length when the client declares one; a body sent
+# without Content-Length is still bounded because Pydantic's own
+# max_length constraints on individual fields (added this pass) reject
+# an oversized JSON payload once parsed, just after this coarser check.
+MAX_REQUEST_BODY_BYTES = 256_000
+
+
+def _reject_non_finite_json_constant(token: str):
+    """Passed to json.loads() as parse_constant. The stdlib json module
+    accepts bare NaN/Infinity/-Infinity tokens as a non-standard
+    extension by default -- confirmed live this pass that sending
+    `interval_minutes: NaN` reached Pydantic as a real float('nan') and
+    surfaced as an unhandled 500, not a clean 422 (the "invalid request
+    looks like a server failure" case this whole section exists to
+    prevent). Raising here instead of returning float('nan')/inf makes
+    json.loads itself fail cleanly, before Pydantic or any route logic
+    ever sees the value."""
+    raise ValueError(f"{token} is not a finite JSON number.")
+
+
+class BodySizeLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+
+        if content_length is not None:
+            try:
+                declared = int(content_length)
+            except ValueError:
+                declared = None
+
+            if declared is not None and declared > MAX_REQUEST_BODY_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "status": "ERROR",
+                        "code": "REQUEST_TOO_LARGE",
+                        "message": (
+                            f"Request body exceeds the "
+                            f"{MAX_REQUEST_BODY_BYTES}-byte limit."
+                        ),
+                    },
+                )
+
+        if (
+            request.method in ("POST", "PUT", "PATCH")
+            and "application/json" in request.headers.get("content-type", "")
+        ):
+            body = await request.body()
+
+            if body:
+                try:
+                    json.loads(body, parse_constant=_reject_non_finite_json_constant)
+                except ValueError:
+                    return JSONResponse(
+                        status_code=422,
+                        content={
+                            "status": "ERROR",
+                            "code": "INVALID_JSON",
+                            "message": (
+                                "Request body is not valid JSON, or contains "
+                                "a non-finite number (NaN/Infinity)."
+                            ),
+                        },
+                    )
+                # request.body() caches the bytes on the Request object,
+                # so the route handler's own body parse below reads the
+                # same cached bytes rather than an exhausted stream.
+
+        return await call_next(request)
+
+
+app.add_middleware(BodySizeLimitMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -114,21 +196,37 @@ class MissionRequest(BaseModel):
     # generate a narrative "plan" that described a real computation, and
     # then fail at execution/resume time with a bare TypeError -- the
     # narrative promised work the request never actually specified.
-    request: str = Field(..., description="The messy human request.")
-    tool: str = Field(..., description="Registered tool name.")
-    action: str = Field(..., description="Action being proposed.")
-    risk: str = Field("MEDIUM", description="LOW | MEDIUM | HIGH")
-    args: list[Any] = Field(..., description="Positional args for the tool.")
+    # SEC-API (Batch 2 completion): max_length values are generous bounds
+    # for a short human-typed request/label, not a guess -- they exist so
+    # an oversized field can't inflate a stored mission record or (for
+    # `request`, on the planned path) an LLM prompt built from it.
+    # `risk` moving from a bare `str` to this Literal closes a real,
+    # reproduced bug: mission_service.start() does `RiskLevel(risk)` with
+    # no try/except, so an invalid string previously reached that line
+    # and surfaced as an unhandled 500 instead of a clean 422 -- the
+    # exact "invalid request looks like a server failure" case this
+    # section exists to prevent. `args` gets a max item count for the
+    # same reason as the string fields: bound what a single mutating
+    # request can make this service store or act on.
+    request: str = Field(..., max_length=4000, description="The messy human request.")
+    tool: str = Field(..., max_length=200, description="Registered tool name.")
+    action: str = Field(..., max_length=500, description="Action being proposed.")
+    risk: Literal["LOW", "MEDIUM", "HIGH"] = Field(
+        "MEDIUM", description="LOW | MEDIUM | HIGH"
+    )
+    args: list[Any] = Field(
+        ..., max_length=50, description="Positional args for the tool.",
+    )
 
 
 class ApprovalDecision(BaseModel):
     approved: bool
-    decided_by: str = "owner"
+    decided_by: str = Field("owner", max_length=200)
 
 
 class KillSwitchRequest(BaseModel):
     active: bool
-    reason: str = "Human emergency stop"
+    reason: str = Field("Human emergency stop", max_length=500)
 
 
 @app.get("/")
@@ -154,11 +252,34 @@ def capabilities() -> dict[str, Any]:
     }
 
 
+def _reject_blank_after_stripping(value: str) -> str:
+    """min_length alone does not catch this: "   " (3 spaces) satisfies
+    min_length=3 numerically while being semantically empty. Found live
+    this pass -- a whitespace-only need reached synapse.propose()
+    unconstrained despite the field's own comment claiming this was
+    already handled, spending a real (wasted) generation attempt before
+    failing downstream instead of a clean 422 up front."""
+    if not value.strip():
+        raise ValueError("must not be empty or whitespace-only")
+    return value
+
+
 class PlannedMissionRequest(BaseModel):
-    request: str = Field(..., description="The messy human request.")
+    # This request text is built directly into a real Gemini prompt
+    # (mission_service.start_planned() -> the planner) -- min_length
+    # mirrors AcquisitionRequest.need's existing empty-input guard,
+    # max_length bounds what a single call can spend on planning.
+    request: str = Field(
+        ..., min_length=3, max_length=4000, description="The messy human request.",
+    )
+
+    _reject_blank = field_validator("request")(_reject_blank_after_stripping)
 
 
-@app.post("/missions/planned", dependencies=[Depends(require_owner)])
+@app.post(
+    "/missions/planned",
+    dependencies=[Depends(require_owner), Depends(rate_limit_planned_mission)],
+)
 def create_planned_mission(body: PlannedMissionRequest) -> dict[str, Any]:
     """Plan a messy request with Gemini, then run it through the gate."""
     return mission_service.start_planned(body.request)
@@ -324,11 +445,14 @@ def telemetry(limit: int = 500) -> dict[str, Any]:
 
 
 class GroundTruthRequest(BaseModel):
-    key: str = Field(..., description="Short identifier for the fact.")
-    statement: str = Field(..., description="What the fact is about.")
-    value: str = Field(..., description="The independently known value.")
-    source: str = Field(..., description="Where it came from. Required.")
-    recorded_by: str = Field("owner", description="Who recorded it.")
+    # This is written into Firestore and read back to grade the agent's
+    # future claims -- bounded so a single fact can't become an
+    # unbounded storage/ledger-bloat vector.
+    key: str = Field(..., max_length=200, description="Short identifier for the fact.")
+    statement: str = Field(..., max_length=1000, description="What the fact is about.")
+    value: str = Field(..., max_length=1000, description="The independently known value.")
+    source: str = Field(..., max_length=1000, description="Where it came from. Required.")
+    recorded_by: str = Field("owner", max_length=200, description="Who recorded it.")
 
 
 @app.post("/ground-truth", dependencies=[Depends(require_owner)])
@@ -359,7 +483,13 @@ def list_ground_truth() -> dict[str, Any]:
 
 
 @app.get("/ground-truth/match")
-def match_ground_truth(query: str) -> dict[str, Any]:
+def match_ground_truth(
+    # SEC-API: a bare `str` query param has no length bound by default --
+    # found during the Batch 2 route inventory. Public, read-only, local
+    # lexical match only (no LLM call), so this bounds compute per
+    # request rather than cost/quota.
+    query: str = Query(..., max_length=4000),
+) -> dict[str, Any]:
     """Show which fact WOULD be applied to a query, without running it.
 
     Useful before a demo: it makes the contradiction check inspectable
@@ -398,7 +528,12 @@ class AcquisitionRequest(BaseModel):
     # or whitespace-only need previously reached synapse.propose()
     # unconstrained; Pydantic now refuses it with a 422 before any real
     # resource is spent. See tests/test_reliability.py.
-    need: str = Field(..., min_length=3, description="The capability AION Axon lacks.")
+    need: str = Field(
+        ..., min_length=3, max_length=4000,
+        description="The capability AION Axon lacks.",
+    )
+
+    _reject_blank = field_validator("need")(_reject_blank_after_stripping)
     mission_id: Optional[str] = Field(
         None,
         description="Mission this acquisition should unblock, if any.",
@@ -413,7 +548,10 @@ class AcquisitionRequest(BaseModel):
     )
 
 
-@app.post("/synapse/propose", dependencies=[Depends(require_owner)])
+@app.post(
+    "/synapse/propose",
+    dependencies=[Depends(require_owner), Depends(rate_limit_propose)],
+)
 def synapse_propose(body: AcquisitionRequest) -> dict[str, Any]:
     """Run the acquisition loop up to — and stopping at — human approval.
 
@@ -433,7 +571,9 @@ def synapse_install(capability: str) -> dict[str, Any]:
 
 
 class RollbackRequest(BaseModel):
-    reason: str = Field(..., description="Why the capability is removed.")
+    reason: str = Field(
+        ..., max_length=1000, description="Why the capability is removed.",
+    )
 
 
 @app.post("/synapse/rollback/{capability}", dependencies=[Depends(require_owner)])
@@ -461,11 +601,13 @@ def skill_passport(capability: str) -> dict[str, Any]:
 
 
 class MonitorRequest(BaseModel):
-    name: str
-    capability: str
-    args: list[str] = Field(default_factory=list)
-    interval_minutes: int = Field(60, ge=1)
-    description: str = ""
+    name: str = Field(..., max_length=200)
+    capability: str = Field(..., max_length=200)
+    args: list[str] = Field(default_factory=list, max_length=50)
+    # An upper bound alongside the existing ge=1: a monitor scheduled to
+    # "run" once a decade is not a real schedule.
+    interval_minutes: int = Field(60, ge=1, le=525_600)
+    description: str = Field("", max_length=1000)
 
 
 @app.post("/monitors", dependencies=[Depends(require_owner)])
@@ -502,7 +644,7 @@ def run_due_monitors() -> dict[str, Any]:
 
 
 class DisableMonitorRequest(BaseModel):
-    reason: str = "Disabled by owner"
+    reason: str = Field("Disabled by owner", max_length=500)
 
 
 @app.post("/monitors/{monitor_id}/disable", dependencies=[Depends(require_owner)])
@@ -554,6 +696,12 @@ def decide_approval(
             body.approved,
             body.decided_by,
         )
+    except KillSwitchActive:
+        return {
+            "status": "BLOCKED",
+            "reason": "Kill switch is active.",
+            "request_id": request_id,
+        }
     except KeyError:
         return {"status": "NOT_FOUND", "request_id": request_id}
     except ValueError as error:
@@ -739,7 +887,14 @@ def beastmode_explain_approval(request_id: str) -> dict[str, Any]:
 
 
 class MemoryQuery(BaseModel):
-    need: str = Field(..., description="Free-text capability need to check against memory.")
+    # Public, unauthenticated endpoint (read-only, no LLM call -- see the
+    # route's own docstring) -- max_length bounds the local lexical-match
+    # work an anonymous caller can trigger per request, not a cost/quota
+    # concern like the LLM-facing fields above.
+    need: str = Field(
+        ..., max_length=4000,
+        description="Free-text capability need to check against memory.",
+    )
 
 
 @app.post("/beastmode/memory/query")
@@ -780,7 +935,11 @@ def beastmode_memory_history(capability: str) -> dict[str, Any]:
 
 
 class PlanQuery(BaseModel):
-    need: str = Field(..., description="Free-text capability need to plan for.")
+    # Same rationale as MemoryQuery.need above: public, read-only, no LLM
+    # call (see app/synapse/planner.py's own docstring).
+    need: str = Field(
+        ..., max_length=4000, description="Free-text capability need to plan for.",
+    )
 
 
 @app.post("/beastmode/plan")

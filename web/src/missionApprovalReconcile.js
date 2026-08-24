@@ -22,7 +22,17 @@ export function reconcileRecord(record, { approved, installResult }) {
     return { ...record, status: "REJECTED", stage: "REJECTED" };
   }
 
-  if (installResult?.status === "INSTALLED") {
+  // ALREADY_INSTALLED (Batch 2): install() is now idempotent against a
+  // replayed call on the same already-installed approval -- see
+  // app/synapse/engine.py's install() idempotency guard. That's a real
+  // success (the capability genuinely is installed), not a failure, so
+  // it must reconcile the same way INSTALLED does rather than falling
+  // through to the FAILED branch below and showing a false failure for
+  // a race/replay that did no harm.
+  if (
+    installResult?.status === "INSTALLED" ||
+    installResult?.status === "ALREADY_INSTALLED"
+  ) {
     return { ...record, status: "INSTALLED", stage: "INSTALLED" };
   }
 
