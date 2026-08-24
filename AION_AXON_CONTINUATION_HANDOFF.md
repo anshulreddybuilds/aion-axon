@@ -2,7 +2,17 @@
 
 Written at the end of a credit-efficient security/reliability pass. Read this before re-deriving anything — it is deliberately complete.
 
-## Update — re-verification pass at HEAD 8052a9f
+## Update 2 — P5 Judge Mode card, HEAD 57ccbb2
+
+Built the frontend card for `GET /beastmode/state-machine` (the one real open item from Update 1 below). Files: `web/src/stateMachineProof.js` (pure display logic, testable), `web/src/stateMachineProof.test.mjs` (7 new tests, all passing), `web/src/api.js` (+`stateMachine()` client method), `web/src/JudgeMode.jsx` (+`StateMachineCard`, reusing the existing generic `ProofCard` pattern exactly — no new UI architecture). The card renders the real success path and checks 4 concrete self-authorization shortcuts (e.g. `AWAITING_APPROVAL → INSTALLED`) against the live transition data, showing `BLOCKED`/`ALLOWED` per shortcut rather than asserting security as prose.
+
+Frontend tests: **24 passed** (7 new + 6 reconciliation + 11 demo fixture, up from 17). Build: clean. Backend untouched this update — not re-run (nothing backend changed).
+
+P1 (Firestore emulator) re-checked once more at the start of this update: `java` still not on PATH. Not attempted again. Remains the one genuinely open, environment-blocked item.
+
+**Current HEAD: `57ccbb23bb9c134436380b43cfb11b5118ccf22c`** — supersedes every hash below.
+
+## Update 1 — re-verification pass at HEAD 8052a9f
 
 A follow-up session re-checked every priority (P0–P5) against this exact checkpoint. **No code changes were required or made** — everything below was either already correct or blocked by the same environment limitation already documented (no Java). Specifically re-confirmed this pass, not just carried forward from memory:
 
