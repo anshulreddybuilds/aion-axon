@@ -150,6 +150,24 @@ def test_known_exfiltration_shapes_are_all_rejected(payload):
     assert screen(payload).safe is False
 
 
+@pytest.mark.parametrize("payload", [
+    # Aliasing a forbidden builtin to a local name, then calling the
+    # ALIAS, evades a screen that only inspects the literal name at the
+    # call site. Found live during a red-team review 24 Aug: neither
+    # payload below tripped a single finding before this fix -- the
+    # second is a complete sandbox-escape path (aliased __import__ ->
+    # os.system) with no forbidden import statement, no forbidden call
+    # name at any call site, and no dunder attribute access anywhere.
+    "def f():\n    x = eval\n    return x('1+1')\n",
+    "def f():\n    imp = __import__\n    m = imp('os')\n    return m.system('echo pwned')\n",
+    "def f():\n    o = open\n    return o('/etc/passwd').read()\n",
+])
+def test_aliasing_a_forbidden_builtin_before_calling_it_is_still_rejected(payload):
+    result = screen(payload)
+    assert result.safe is False
+    assert any("forbidden builtin" in f.lower() for f in result.findings)
+
+
 def test_sandbox_env_scan_detects_a_planted_secret():
     """The proof must be falsifiable, or it proves nothing."""
     import importlib

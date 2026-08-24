@@ -102,6 +102,20 @@ def screen(code: str) -> ScreenResult:
             if node.attr.startswith("__") and node.attr.endswith("__"):
                 findings.append(f"Dunder attribute access: {node.attr}")
 
+        elif isinstance(node, ast.Name):
+            # `x = eval; x(...)` calls the ALIAS, not `eval` -- the Call
+            # branch above only ever sees the literal name at the call
+            # site, so it never sees `eval` there at all. This catches
+            # every bare reference to a forbidden builtin (assigned,
+            # passed as an argument, returned, aliased) regardless of
+            # whether it is ever actually called by its real name. Found
+            # live 24 Aug: `imp = __import__; imp('os').system(...)` is a
+            # complete sandbox-escape path with zero forbidden imports,
+            # zero forbidden call names, and zero dunder attribute
+            # access -- this was the only layer that could have caught it.
+            if node.id in FORBIDDEN_CALLS:
+                findings.append(f"Reference to forbidden builtin: {node.id}")
+
     return ScreenResult(safe=not findings, findings=sorted(set(findings)))
 
 

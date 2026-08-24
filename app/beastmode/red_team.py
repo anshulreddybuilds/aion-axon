@@ -57,6 +57,23 @@ _NEW_STATIC_PAYLOADS = [
     ),
 ]
 
+# Aliasing bypass: a screen that only inspects the literal name at a
+# call site (`eval(...)`) misses `x = eval; x(...)` -- the call site
+# says `x`, never `eval`. Found live 24 Aug during this red-team review;
+# the __import__ payload is a complete sandbox-escape path (aliased
+# __import__ -> os.system) that previously produced ZERO findings at
+# ANY layer -- no forbidden import statement, no forbidden call name at
+# any call site, no dunder attribute access. Fixed in
+# app/synapse/safety_screen.py by also flagging any bare reference to a
+# forbidden builtin, not only a direct call by its real name.
+_ALIASING_PAYLOADS = [
+    ("aliased eval() call", "def f():\n    x = eval\n    return x('1+1')\n"),
+    (
+        "aliased __import__() -> os.system (full sandbox-escape path)",
+        "def f():\n    imp = __import__\n    m = imp('os')\n    return m.system('echo pwned')\n",
+    ),
+]
+
 
 def _run() -> tuple[list[dict], int]:
     results = []
@@ -123,6 +140,20 @@ def _run() -> tuple[list[dict], int]:
             "detail": note,
             "ms": round(ms, 2),
             "expected_miss_here": label.startswith("resource exhaustion"),
+        })
+
+    for label, payload in _ALIASING_PAYLOADS:
+        t0 = time.monotonic()
+        report = screen(payload)
+        ms = (time.monotonic() - t0) * 1000
+        blocked = report.safe is False
+
+        results.append({
+            "vector": label,
+            "layer": "AST static screen",
+            "blocked": blocked,
+            "detail": "; ".join(report.findings) or "(no finding — SAFE, real gap if this attack should block)",
+            "ms": round(ms, 2),
         })
 
     contained = sum(1 for r in results if r["blocked"])
