@@ -1,5 +1,15 @@
 # AION AXON — Project Handoff (Claude Code owns the build)
 
+## CURRENT STATE — see the handoff checkpoint, not this file's phase list below
+
+This file's PHASES/DAY-1 sections below are Day-1-era planning docs, not
+kept current. For the actual current state (HEAD, production revisions,
+test baseline, completed work, next action), read **`AION_AXON_HANDOFF.md`**
+and **`AION_AXON_STATE.json`** first — they are the live checkpoint,
+updated through Phase 29. `AION_AXON_PHASE_INDEX.md` gives a one-line
+summary per phase. `AION_AXON_NEXT_SESSION_PROMPT.md` is what a new
+session should be started with.
+
 Claude Code is the PRIMARY and SOLE implementation agent through submission.
 Do not route work back to ChatGPT. Self-drive the phases below in order.
 Stop and ask the owner ONLY for: (a) a click in a Google/GitHub/Devpost web

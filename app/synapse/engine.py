@@ -57,6 +57,15 @@ class AcquisitionRecord:
     guardian: dict[str, Any] = field(default_factory=dict)
     approval_request_id: Optional[str] = None
 
+    # One entry per generate+screen+sandbox attempt the retry loop made,
+    # in order. `candidate`/`tests` above are always the LAST attempt's
+    # data (unchanged, so nothing that reads them breaks); this is the
+    # only place a caller can see that attempt 1 failed and attempt 2 was
+    # generated from its real stderr rather than from scratch. Empty on
+    # every call made before this field existed and on any single-attempt
+    # run today -- it is not backfilled and does not change behavior.
+    attempts: list[dict[str, Any]] = field(default_factory=list)
+
     reason: Optional[str] = None
     started_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
@@ -75,6 +84,7 @@ class AcquisitionRecord:
             "evaluation": self.evaluation,
             "guardian": self.guardian,
             "approval_request_id": self.approval_request_id,
+            "attempts": self.attempts,
             "reason": self.reason,
             "started_at": self.started_at,
         }
@@ -86,8 +96,20 @@ class SynapseEngine:
         self,
         need: str,
         mission_id: Optional[str] = None,
+        allow_retry: bool = False,
     ) -> AcquisitionRecord:
-        """Run every stage up to (and stopping at) human approval."""
+        """Run every stage up to (and stopping at) human approval.
+
+        `allow_retry` is OFF by default, matching every call site that
+        existed before this parameter did (the live UI, stage_take.py, and
+        every test in the suite) byte-for-byte. Passing True permits
+        exactly ONE additional generate+screen+sandbox attempt if the
+        first candidate fails its own sandbox test, feeding the real
+        stderr back into generation. Bounded to one retry -- unbounded
+        retrying on a real rejection would spend quota chasing something
+        that may not be fixable, and would blur "the candidate was
+        rejected" into "the system tried until it got lucky".
+        """
         record = AcquisitionRecord(need=need, mission_id=mission_id)
 
         # --- GUARDIAN PRE-SCREEN --------------------------------------
@@ -127,56 +149,122 @@ class SynapseEngine:
             "degraded_reason": research.get("degraded_reason"),
         }
 
-        # --- GENERATE --------------------------------------------------
-        record.stage = "GENERATE"
-        candidate, error = generate_candidate(
-            need, record.research.get("findings")
-        )
+        # --- GENERATE / SCREEN / SANDBOX --------------------------------
+        #
+        # A plain loop of 1 (allow_retry=False) or up to 2 (allow_retry=True)
+        # attempts. Every branch below is IDENTICAL to what existed before
+        # this loop was added; the only new behaviour is that a sandbox
+        # failure with attempts remaining feeds the real stderr back into
+        # generation and tries once more, instead of returning immediately.
+        max_attempts = 2 if allow_retry else 1
+        prior_failure: Optional[str] = None
+        candidate = None
+        tests: dict[str, Any] = {}
 
-        if candidate is None:
-            record.status = "FAILED"
-            record.reason = error
-            self._audit(record, "SYNAPSE_FAILED")
-            return record
+        for attempt in range(1, max_attempts + 1):
+            record.stage = "GENERATE"
+            # Only pass prior_failure on an actual retry (attempt > 1).
+            # The first attempt calls generate_candidate with exactly the
+            # same 2 positional args as before this loop existed, so every
+            # test (and any other caller) that mocks generate_candidate
+            # with a 2-argument stub keeps working unchanged.
+            if prior_failure is not None:
+                candidate, error = generate_candidate(
+                    need, record.research.get("findings"), prior_failure,
+                )
+            else:
+                candidate, error = generate_candidate(
+                    need, record.research.get("findings"),
+                )
 
-        record.candidate = candidate.model_dump()
+            if candidate is None:
+                record.status = "FAILED"
+                record.reason = error
+                self._audit(record, "SYNAPSE_FAILED")
+                return record
 
-        # --- SAFETY SCREEN ---------------------------------------------
-        record.stage = "SAFETY_SCREEN"
-        screened = screen(candidate.code)
-        record.safety = screened.to_dict()
+            record.candidate = candidate.model_dump()
 
-        if not screened.safe:
-            record.status = "REJECTED"
-            record.reason = (
-                "Candidate failed the static safety screen: "
-                + "; ".join(screened.findings)
+            # --- SAFETY SCREEN -------------------------------------------
+            record.stage = "SAFETY_SCREEN"
+            screened = screen(candidate.code)
+            record.safety = screened.to_dict()
+
+            if not screened.safe:
+                record.attempts.append({
+                    "attempt": attempt,
+                    "candidate": candidate.name,
+                    "outcome": "SAFETY_REJECTED",
+                    "detail": "; ".join(screened.findings),
+                })
+                # A safety rejection is never retried -- retrying a policy
+                # refusal until it stops triggering would be indistinguishable
+                # from evading the screen.
+                record.status = "REJECTED"
+                record.reason = (
+                    "Candidate failed the static safety screen: "
+                    + "; ".join(screened.findings)
+                )
+                self._audit(record, "SYNAPSE_REJECTED")
+                return record
+
+            # --- SANDBOX TEST ----------------------------------------------
+            record.stage = "SANDBOX_TEST"
+            tests = execute_in_sandbox(candidate.code, candidate.test)
+            record.tests = tests
+
+            if tests.get("status") == "UNREACHABLE":
+                record.attempts.append({
+                    "attempt": attempt,
+                    "candidate": candidate.name,
+                    "outcome": "SANDBOX_UNREACHABLE",
+                    "detail": tests.get("reason"),
+                })
+                # A sandbox outage is NOT a failing candidate. Installing on
+                # an untested candidate because the tester was down is the
+                # worst available outcome. Never retried -- the sandbox
+                # being down is not something a different candidate fixes.
+                record.status = "BLOCKED"
+                record.reason = (
+                    "Sandbox unreachable; candidate was never tested. "
+                    f"{tests.get('reason')}"
+                )
+                self._audit(record, "SYNAPSE_BLOCKED")
+                return record
+
+            if tests.get("passed"):
+                record.attempts.append({
+                    "attempt": attempt,
+                    "candidate": candidate.name,
+                    "outcome": "SANDBOX_PASSED",
+                    "detail": None,
+                })
+                break  # a working candidate -- proceed to evaluation
+
+            record.attempts.append({
+                "attempt": attempt,
+                "candidate": candidate.name,
+                "outcome": "SANDBOX_FAILED",
+                "detail": (tests.get("stderr") or tests.get("reason") or "")[:1000],
+            })
+
+            if attempt == max_attempts:
+                record.status = "REJECTED"
+                record.reason = (
+                    "Candidate failed its own tests in the sandbox."
+                    if max_attempts == 1
+                    else "Candidate failed its own tests in the sandbox "
+                         f"after {max_attempts} attempts."
+                )
+                self._audit(record, "SYNAPSE_REJECTED")
+                return record
+
+            # One attempt remains: carry the REAL stderr into the next
+            # generation, not a generic "try again".
+            prior_failure = (
+                tests.get("stderr") or tests.get("reason")
+                or "Sandbox test failed with no captured output."
             )
-            self._audit(record, "SYNAPSE_REJECTED")
-            return record
-
-        # --- SANDBOX TEST ----------------------------------------------
-        record.stage = "SANDBOX_TEST"
-        tests = execute_in_sandbox(candidate.code, candidate.test)
-        record.tests = tests
-
-        if tests.get("status") == "UNREACHABLE":
-            # A sandbox outage is NOT a failing candidate. Installing on
-            # an untested candidate because the tester was down is the
-            # worst available outcome.
-            record.status = "BLOCKED"
-            record.reason = (
-                "Sandbox unreachable; candidate was never tested. "
-                f"{tests.get('reason')}"
-            )
-            self._audit(record, "SYNAPSE_BLOCKED")
-            return record
-
-        if not tests.get("passed"):
-            record.status = "REJECTED"
-            record.reason = "Candidate failed its own tests in the sandbox."
-            self._audit(record, "SYNAPSE_REJECTED")
-            return record
 
         # --- EVALUATE ---------------------------------------------------
         record.stage = "EVALUATE"

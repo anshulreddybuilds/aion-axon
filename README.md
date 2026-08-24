@@ -2,8 +2,8 @@
 
 **Autonomous Governed Capability Spine for Enterprise AI Agents**
 
-[![Tests](https://img.shields.io/badge/tests-280%20passing-brightgreen)](#verify-it-yourself--no-api-key-needed)
-[![Assertions](https://img.shields.io/badge/assertions-522-blue)](#verify-it-yourself--no-api-key-needed)
+[![Tests](https://img.shields.io/badge/tests-295%20passing-brightgreen)](#verify-it-yourself--no-api-key-needed)
+[![Assertions](https://img.shields.io/badge/assertions-552-blue)](#verify-it-yourself--no-api-key-needed)
 [![Deployment](https://img.shields.io/badge/deployment-Google%20Cloud%20Run-4285F4)](https://aion-core-638298765129.asia-south1.run.app)
 [![Sandbox](https://img.shields.io/badge/sandbox-zero%20credentials-critical)](#threat-model)
 [![License](https://img.shields.io/badge/license-Apache%202.0-lightgrey)](LICENSE)
@@ -71,7 +71,7 @@ second path — verified by tracing every caller in `app/workflows/`.
 |---|---|---|
 | **Credential access attempt** | Refused at the doorway under policy **G-04**, before a token is spent. Prohibited policies cannot be satisfied by approval — if approval could unlock it, it would be a permission, not a prohibition. | `app/governance/` |
 | **Policy override / jailbreak** | Refused under **G-06**, where the override attempt is itself the refusal, because a guardrail you can talk out of is a suggestion. Covered by parametrised persuasion tests. | `tests/test_adversarial.py` |
-| **Arbitrary code execution** | Two independent layers. A static AST walk rejects **17 imports** (`os`, `sys`, `subprocess`, `socket`, `shutil`, `pathlib`, `ctypes`, `importlib`, `pickle`, `marshal`, `multiprocessing`, `threading`, `google`, `firebase_admin`, …) and **13 builtins** (`eval`, `exec`, `compile`, `__import__`, `open`, `getattr`, `setattr`, …). Whatever survives runs in a separate Cloud Run service holding **zero credentials and zero IAM roles**, which answers **HTTP 403** to the public internet. | `app/synapse/safety_screen.py` |
+| **Arbitrary code execution** | Two independent layers. A static AST walk rejects **15 imports** (`os`, `sys`, `subprocess`, `socket`, `shutil`, `pathlib`, `ctypes`, `importlib`, `pickle`, `marshal`, `multiprocessing`, `threading`, `google`, `google.cloud`, `firebase_admin`) and **13 builtins** (`eval`, `exec`, `compile`, `__import__`, `open`, `getattr`, `setattr`, …). Whatever survives runs in a separate Cloud Run service holding **zero credentials and zero IAM roles**, which answers **HTTP 403** to the public internet. | `app/synapse/safety_screen.py` |
 | **Unauthorised capability persistence** | `install()` re-reads the approval from Firestore and refuses if it is absent or not `APPROVED`. It trusts the record of the decision, never the proposal that requested it. | `app/synapse/engine.py` |
 | **Generated code reaching secrets** | An installed capability is a **proxy that calls the sandbox** — before *and* after approval. Approval means the owner accepted the capability, not that the code earned a seat beside the credentials. | `app/synapse/engine.py` |
 | **Runaway execution** | A kill switch halts every path at the gate, asserted across *all* execution routes rather than one. | `tests/test_adversarial.py` |
@@ -110,7 +110,7 @@ model calls whenever an API key happened to be exported, turning a green run
 into an accident of which terminal you used. Fixed, and opt-in behind
 `AXON_LIVE_MODEL_TESTS=1`.
 
-**19 of the 280 are adversarial** — they attack the governance rather than
+**19 of the 295 are adversarial, plus 15 more testing the additive beastmode layer** — they attack the governance rather than
 confirm it: exfiltration payloads, persuasion phrasings, a planted secret in
 the sandbox scan, and kill-switch coverage on every path.
 

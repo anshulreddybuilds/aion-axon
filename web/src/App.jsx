@@ -3,6 +3,8 @@ import Command from "./Command.jsx";
 import Topology, { computeStages } from "./Topology.jsx";
 import Topology3D from "./Topology3D.jsx";
 import Inventory from "./Inventory.jsx";
+import JudgeMode from "./JudgeMode.jsx";
+import MissionTheater from "./MissionTheater.jsx";
 import { CompletionRing, Hero, Sidebar, TopStrip } from "./Shell.jsx";
 import { api, loadAll } from "./api.js";
 import {
@@ -43,6 +45,18 @@ const HEROES = {
     title: "Why this skill exists.",
     blurb:
       "Every acquired capability keeps its chain of custody — the need, the research, the screen, the sandbox, the score, and who approved it.",
+  },
+  judge: {
+    crumb: "JUDGE MODE",
+    title: "Don't trust the claim. Call the endpoint.",
+    blurb:
+      "A live proof center over the same governed API the rest of this dashboard uses — red team, ledger verification, quarantine, contracts, lineage, and why a human had to decide. Nothing here is seeded.",
+  },
+  theater: {
+    crumb: "MISSION THEATER",
+    title: "Watch the spine run, live.",
+    blurb:
+      "Type a real capability need and run the actual governed acquisition loop against production — research, generation, screening, sandbox, evaluation, and a human approval gate that really installs or really rejects.",
   },
 };
 
@@ -276,6 +290,15 @@ export default function App() {
                 <SkillPassport capability={selected} />
               </div>
             </div>
+          )}
+
+          {view === "theater" && <MissionTheater />}
+
+          {view === "judge" && (
+            <JudgeMode
+              pending={pending}
+              acquiredNames={acquired.map((c) => c.name)}
+            />
           )}
 
           <footer className="mt-6 text-[9px] text-muted">

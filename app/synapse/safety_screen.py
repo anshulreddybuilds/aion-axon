@@ -32,6 +32,30 @@ FORBIDDEN_IMPORTS = {
     "marshal",
     "multiprocessing",
     "threading",
+    # `socket` alone only blocks the module named `socket` -- every one
+    # of these is a standard-library network client with no legitimate
+    # use in a data-transformation capability, and none of them were
+    # blocked before this was found in a systematic network-egress
+    # review: `import urllib.request; urllib.request.urlopen(...)`
+    # passed the screen completely clean.
+    "urllib",
+    "http",
+    "ftplib",
+    "smtplib",
+    "xmlrpc",
+    "telnetlib",
+    "asyncio",
+    # Frame objects expose f_globals/f_back/f_locals -- ordinary,
+    # non-dunder attribute names, so the dunder-attribute/dunder-name
+    # checks below have no opinion about them. `inspect.currentframe()
+    # .f_back.f_globals` and `gc.get_objects()` are both real
+    # object-graph reflection primitives with no legitimate use in a
+    # data-transformation capability. Found during a systematic
+    # category audit; `contextvars` was investigated in the same pass
+    # and correctly has no comparable capability, so it stays off this
+    # list.
+    "inspect",
+    "gc",
     "google",
     "google.cloud",
     "firebase_admin",
@@ -97,10 +121,59 @@ def screen(code: str) -> ScreenResult:
             if name in FORBIDDEN_CALLS:
                 findings.append(f"Forbidden call: {name}()")
 
+            # str.format()/.format_map() resolves a dunder attribute
+            # chain embedded IN THE STRING ITSELF via its own runtime
+            # mini-language -- confirmed by direct repro:
+            # '{0.__class__.__bases__[0].__subclasses__}'.format(x)
+            # returns a live bound method, walking the full class
+            # hierarchy with zero ast.Attribute/ast.Name nodes anywhere
+            # in the program (this is a well-known Python sandbox-escape
+            # technique). f-strings are NOT this case -- their `{expr}`
+            # parses into a real ast.Attribute node already caught
+            # above, confirmed via ast.dump(). A legitimate format
+            # string never needs a dunder field, so this has no
+            # meaningful false-positive cost.
+            if (
+                name in ("format", "format_map")
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Constant)
+                and isinstance(node.func.value.value, str)
+                and "__" in node.func.value.value
+            ):
+                findings.append(
+                    "Dunder-shaped field in a .format()/.format_map() "
+                    "string literal (sandbox-escape technique)"
+                )
+
         elif isinstance(node, ast.Attribute):
             # Dunder access is how sandbox escapes usually start.
             if node.attr.startswith("__") and node.attr.endswith("__"):
                 findings.append(f"Dunder attribute access: {node.attr}")
+
+        elif isinstance(node, ast.Name):
+            # `x = eval; x(...)` calls the ALIAS, not `eval` -- the Call
+            # branch above only ever sees the literal name at the call
+            # site, so it never sees `eval` there at all. This catches
+            # every bare reference to a forbidden builtin (assigned,
+            # passed as an argument, returned, aliased) regardless of
+            # whether it is ever actually called by its real name. Found
+            # live 24 Aug: `imp = __import__; imp('os').system(...)` is a
+            # complete sandbox-escape path with zero forbidden imports,
+            # zero forbidden call names, and zero dunder attribute
+            # access -- this was the only layer that could have caught it.
+            if node.id in FORBIDDEN_CALLS:
+                findings.append(f"Reference to forbidden builtin: {node.id}")
+            # `__builtins__` is dunder-SHAPED but is a NAME, not an
+            # Attribute -- the check above only ever inspects
+            # ast.Attribute.attr, so `b = __builtins__` was invisible to
+            # it. Captured this way, __builtins__ is a live module/dict
+            # exposing eval/exec/__import__ under their ORDINARY
+            # (non-dunder) attribute or key names -- `b.eval` or
+            # `b['eval']` -- reaching real execution via zero tokens any
+            # other check flags. Found live 24 Aug immediately after the
+            # aliasing fix above, in the same review.
+            elif node.id.startswith("__") and node.id.endswith("__"):
+                findings.append(f"Dunder attribute access: {node.id}")
 
     return ScreenResult(safe=not findings, findings=sorted(set(findings)))
 

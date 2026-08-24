@@ -16,6 +16,8 @@ export function Sidebar({ view, onView }) {
     { key: "pipeline", label: "Pipeline" },
     { key: "ledger", label: "Autonomy ledger" },
     { key: "evidence", label: "Evidence" },
+    { key: "theater", label: "Mission Theater" },
+    { key: "judge", label: "Judge Mode" },
   ];
 
   return (

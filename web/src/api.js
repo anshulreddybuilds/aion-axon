@@ -101,6 +101,22 @@ export const api = {
       body: JSON.stringify({}),
     }),
 
+  // Runs the REAL acquisition loop synchronously and returns the
+  // terminal AcquisitionRecord (research → generate → screen → sandbox
+  // → evaluate → guardian → approval). This IS the governed pipeline,
+  // not a summary of it — the call blocks on real Gemini/sandbox work,
+  // typically 10-30s. allow_retry permits one real regenerate-on-failure
+  // attempt; see app/synapse/engine.py's retry loop.
+  proposeCapability: (need, { missionId, allowRetry = false } = {}) =>
+    request("/synapse/propose", {
+      method: "POST",
+      body: JSON.stringify({
+        need,
+        mission_id: missionId || null,
+        allow_retry: allowRetry,
+      }),
+    }),
+
   // Cloud Run returns HTTP 411 on a POST with no body, so every POST
   // sends one even when the endpoint ignores it.
   setKillSwitch: (active) =>
@@ -108,6 +124,42 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ active, reason: "Holo-Deck" }),
     }),
+
+  // Beastmode governance proof surface — every call here is a real GET/POST
+  // against app/beastmode/*.py. Nothing in this block is mocked; a failed
+  // call is surfaced as NOT AVAILABLE, never silently swapped for a fake
+  // result. See docs/AXON_BEASTMODE_AUDIT.md for what each module verifies.
+  redTeam: () => request("/beastmode/red-team"),
+  ledgerVerify: () => request("/beastmode/ledger/verify"),
+  ledgerSeal: () => request("/beastmode/ledger/seal", { method: "POST" }),
+  contract: (capability) => request(`/beastmode/contract/${capability}`),
+  lineage: (capability) => request(`/beastmode/lineage/${capability}`),
+  quarantine: () => request("/beastmode/quarantine"),
+  explainApproval: (requestId) =>
+    request(`/beastmode/approval/${requestId}/explain`),
+
+  // Read-only lexical-overlap memory over the real capability registry +
+  // audit trail. Never generates, screens, sandboxes, approves or
+  // installs anything -- see app/beastmode/memory.py's module docstring.
+  memoryQuery: (need) =>
+    request("/beastmode/memory/query", {
+      method: "POST",
+      body: JSON.stringify({ need }),
+    }),
+  memoryHistory: (capability) => request(`/beastmode/memory/${capability}`),
+
+  // The memory-informed plan for a need -- REUSE_EXISTING_CAPABILITY /
+  // ACQUIRE_NEW (with strategy) / ESCALATE. Read-only, same invariant as
+  // memoryQuery: see app/synapse/planner.py's module docstring.
+  plan: (need) =>
+    request("/beastmode/plan", {
+      method: "POST",
+      body: JSON.stringify({ need }),
+    }),
+
+  securityReport: () => request("/beastmode/security/report"),
+
+  missionReadiness: () => request("/beastmode/mission/readiness"),
 };
 
 /** Fetch everything the dashboard shows, tolerating partial failure.

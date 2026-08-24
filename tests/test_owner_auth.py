@@ -39,6 +39,19 @@ WRITES = [
     ("/monitors", {"name": "m", "capability": "calculator",
                    "args": ["1+1"], "interval_minutes": 60}),
     ("/monitors/run-due", {}),
+    # Added after an audit found these real, existing write endpoints had
+    # never been in this systematic list -- each was individually gated
+    # in app/api.py with dependencies=[Depends(require_owner)], but
+    # nothing would have caught the gate silently being dropped from any
+    # of them in a future refactor, which is exactly the failure mode
+    # this file exists to prevent (see its own docstring).
+    ("/missions/some-id/acquire", {}),
+    ("/missions/some-id/resume", {}),
+    ("/missions/some-id/resume-blocked", {}),
+    ("/missions/some-id/resume-planned", {}),
+    ("/synapse/rollback/anything", {"reason": "no longer needed"}),
+    ("/monitors/some-id/disable", {}),
+    ("/beastmode/ledger/seal", {}),
 ]
 
 

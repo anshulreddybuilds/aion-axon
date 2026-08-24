@@ -150,6 +150,144 @@ def test_known_exfiltration_shapes_are_all_rejected(payload):
     assert screen(payload).safe is False
 
 
+@pytest.mark.parametrize("payload", [
+    # Aliasing a forbidden builtin to a local name, then calling the
+    # ALIAS, evades a screen that only inspects the literal name at the
+    # call site. Found live during a red-team review 24 Aug: neither
+    # payload below tripped a single finding before this fix -- the
+    # second is a complete sandbox-escape path (aliased __import__ ->
+    # os.system) with no forbidden import statement, no forbidden call
+    # name at any call site, and no dunder attribute access anywhere.
+    "def f():\n    x = eval\n    return x('1+1')\n",
+    "def f():\n    imp = __import__\n    m = imp('os')\n    return m.system('echo pwned')\n",
+    "def f():\n    o = open\n    return o('/etc/passwd').read()\n",
+])
+def test_aliasing_a_forbidden_builtin_before_calling_it_is_still_rejected(payload):
+    result = screen(payload)
+    assert result.safe is False
+    assert any("forbidden builtin" in f.lower() for f in result.findings)
+
+
+@pytest.mark.parametrize("payload", [
+    # `__builtins__` is a dunder-SHAPED NAME, not a dunder ATTRIBUTE
+    # (that check only inspects ast.Attribute.attr) and not in
+    # FORBIDDEN_CALLS (the Name check added for the aliasing fix above
+    # only flags names already in that specific set). Captured as a bare
+    # reference, `__builtins__` is a live module/dict holding `eval`,
+    # `exec`, `__import__` etc. under ordinary (non-dunder) attribute/key
+    # names -- `b.eval` or `b['eval']` -- so this reaches real code
+    # execution with ZERO tokens any prior check would have flagged.
+    # Found live during the same red-team review, immediately after
+    # fixing the aliasing bypass above.
+    "def f():\n    b = __builtins__\n    return b\n",
+    "def f():\n    b = __builtins__\n    e = b.eval\n    return e('1+1')\n",
+])
+def test_capturing_dunder_builtins_by_bare_name_is_rejected(payload):
+    result = screen(payload)
+    assert result.safe is False
+    assert any("dunder" in f.lower() for f in result.findings)
+
+
+@pytest.mark.parametrize("module", [
+    # `socket` was always in FORBIDDEN_IMPORTS, but a blocklist only
+    # blocks what was enumerated -- every one of these is a STANDARD
+    # LIBRARY module (always present, no extra dependency needed) that
+    # can make a real network request or otherwise act as a covert
+    # channel, and none of them were on the list. Found during a
+    # systematic network-egress review, same session as the __builtins__
+    # fix: `import urllib.request; urllib.request.urlopen(...)` passed
+    # the screen completely clean before this fix.
+    "urllib", "http", "ftplib", "smtplib", "xmlrpc", "telnetlib", "asyncio",
+])
+def test_network_capable_stdlib_modules_are_forbidden(module):
+    result = screen(f"import {module}\ndef f():\n    return {module}\n")
+    assert result.safe is False
+    assert any(module in finding for finding in result.findings)
+
+
+def test_urllib_request_egress_attempt_is_rejected():
+    """The concrete exploit, not just the bare import: this is the exact
+    payload that reached example.com's DNS/connect path in a local repro
+    before this fix (screen()-level rejection, not a live network call --
+    see tests/test_sandbox_service.py for the sandbox-level equivalent)."""
+    payload = (
+        "import urllib.request\n"
+        "def f():\n"
+        "    return urllib.request.urlopen('http://example.com').read()\n"
+    )
+    assert screen(payload).safe is False
+
+
+# --- format-string attribute traversal: a well-known Python sandbox
+# escape, distinct from every AST-node-based check above because the
+# dangerous attribute chain lives INSIDE A STRING LITERAL, never as a
+# real ast.Attribute/ast.Name node. `str.format()`'s own mini-language
+# resolves `{0.__class__.__bases__[0].__subclasses__}` via genuine
+# attribute lookups at RUNTIME -- confirmed with a direct repro (this
+# really returns a live bound `__subclasses__` method, which a caller
+# could enumerate to find and instantiate something dangerous, such as
+# subprocess.Popen). f-strings are a DIFFERENT, safe case: `f"{x.__
+# class__}"` parses into a real ast.Attribute node (confirmed via
+# ast.dump) and was already caught before this fix.
+
+def test_format_string_dunder_attribute_traversal_is_rejected():
+    payload = (
+        "def f():\n"
+        "    class X:\n"
+        "        pass\n"
+        "    return '{0.__class__.__bases__[0].__subclasses__}'.format(X())\n"
+    )
+    result = screen(payload)
+    assert result.safe is False
+    assert any("format" in f.lower() for f in result.findings)
+
+
+def test_format_map_with_dunder_field_is_also_rejected():
+    payload = (
+        "def f():\n"
+        "    return '{x.__class__}'.format_map({'x': 1})\n"
+    )
+    result = screen(payload)
+    assert result.safe is False
+
+
+def test_ordinary_format_calls_are_not_false_positives():
+    """The fix must be precise: format strings that never reference a
+    dunder are completely legitimate and must not be flagged."""
+    payload = (
+        "def f(name, value):\n"
+        "    return '{}: {}'.format(name, value)\n"
+    )
+    assert screen(payload).safe is True
+
+
+# --- frame/object-graph reflection: found during the Phase 26 category
+# audit ("reflection" / "exception-frame traversal"). Frame objects
+# expose f_globals/f_back/f_locals -- ordinary, non-dunder attribute
+# names -- so every dunder-based check built earlier this session has no
+# opinion about them. `inspect` and `gc` are the two stdlib modules that
+# reach this surface with no legitimate use in a data-transformation
+# capability (same "no legitimate reason" rationale FORBIDDEN_IMPORTS
+# already applies to os/sys/threading). `contextvars` was also tested
+# and correctly has no comparable capability -- left unblocked.
+
+@pytest.mark.parametrize("payload", [
+    "import inspect\ndef f():\n    return inspect.currentframe().f_back.f_globals\n",
+    "import gc\ndef f():\n    return gc.get_objects()\n",
+])
+def test_frame_and_object_graph_reflection_modules_are_forbidden(payload):
+    assert screen(payload).safe is False
+
+
+def test_contextvars_has_no_comparable_reflection_capability_and_stays_unblocked():
+    """Negative control: contextvars was investigated in the same audit
+    and found to have no frame/object-graph reflection surface -- it
+    must NOT be blocked, proving the fix above is targeted rather than
+    a reflexive ban on anything reflection-adjacent."""
+    payload = "import contextvars\ndef f():\n    return contextvars.copy_context()\n"
+    assert screen(payload).safe is True
+
+
 def test_sandbox_env_scan_detects_a_planted_secret():
     """The proof must be falsifiable, or it proves nothing."""
     import importlib

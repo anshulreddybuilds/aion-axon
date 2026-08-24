@@ -392,10 +392,24 @@ def evolution_events() -> dict[str, Any]:
 
 
 class AcquisitionRequest(BaseModel):
-    need: str = Field(..., description="The capability AION Axon lacks.")
+    # min_length: the frontend already guards with `!need.trim()`, but this
+    # is the real, expensive, mutating path (spends a real Gemini call and
+    # a real sandbox run) -- it must not trust the client alone. An empty
+    # or whitespace-only need previously reached synapse.propose()
+    # unconstrained; Pydantic now refuses it with a 422 before any real
+    # resource is spent. See tests/test_reliability.py.
+    need: str = Field(..., min_length=3, description="The capability AION Axon lacks.")
     mission_id: Optional[str] = Field(
         None,
         description="Mission this acquisition should unblock, if any.",
+    )
+    allow_retry: bool = Field(
+        False,
+        description=(
+            "Permit ONE additional generate+sandbox attempt if the first "
+            "candidate fails its own test, fed the real stderr. Defaults "
+            "to False, matching behavior before this field existed."
+        ),
     )
 
 
@@ -406,7 +420,9 @@ def synapse_propose(body: AcquisitionRequest) -> dict[str, Any]:
     This route can never install anything. It ends at AWAITING_APPROVAL
     at best; installation requires a separate call after a real decision.
     """
-    return synapse.propose(body.need, body.mission_id).to_dict()
+    return synapse.propose(
+        body.need, body.mission_id, allow_retry=body.allow_retry,
+    ).to_dict()
 
 
 @app.post("/synapse/install/{capability}", dependencies=[Depends(require_owner)])
@@ -567,3 +583,241 @@ def set_kill_switch(body: KillSwitchRequest) -> dict[str, Any]:
 @app.get("/killswitch")
 def get_kill_switch() -> dict[str, Any]:
     return {"kill_switch_active": kill_switch.is_active()}
+
+
+# --- Beastmode: additive governance narration -----------------------------
+#
+# Everything below reads real signals from the pipeline above and returns
+# them; nothing here can execute, approve or block anything. See
+# app/beastmode/ and docs/AXON_BEASTMODE_AUDIT.md for what each module
+# does and does not do.
+
+@app.get("/beastmode/red-team")
+def beastmode_red_team() -> dict[str, Any]:
+    """Runs the REAL AST screen and Guardian against real attack payloads,
+    right now, on this request. Not a cached or canned result."""
+    from app.beastmode.red_team import _run
+
+    results, contained = _run()
+    genuine_misses = sum(
+        1 for r in results if not r["blocked"] and not r.get("expected_miss_here")
+    )
+    return {
+        "results": results,
+        "total": len(results),
+        "contained_at_layer_tested": contained,
+        "genuine_misses": genuine_misses,
+    }
+
+
+@app.get("/beastmode/ledger/verify")
+def beastmode_ledger_verify() -> dict[str, Any]:
+    """Re-hashes the REAL live evolution ledger and compares it to the
+    last seal on disk. See app/beastmode/ledger_chain.py for exactly what
+    this can and cannot prove."""
+    from app.beastmode.ledger_chain import verify
+
+    events = firestore_store.list_evolution_events()
+    return verify(events)
+
+
+@app.post("/beastmode/ledger/seal", dependencies=[Depends(require_owner)])
+def beastmode_ledger_seal() -> dict[str, Any]:
+    """Writes a new seal over the CURRENT real ledger state. Owner-gated:
+    unlike verify, this changes what future verifications compare against."""
+    from app.beastmode.ledger_chain import seal
+
+    events = firestore_store.list_evolution_events()
+    return seal(events)
+
+
+@app.get("/beastmode/contract/{capability}")
+def beastmode_contract(capability: str) -> dict[str, Any]:
+    """Assembles the declared contract for an ALREADY-ACQUIRED capability
+    from its real passport -- the AST findings and risk it was actually
+    screened and approved under, not a fresh re-screen."""
+    from app.beastmode.contracts import build_contract
+
+    passport_body = skill_passport(capability)  # reuses the existing endpoint's own logic
+    passport = (passport_body.get("passport") or {})
+
+    if not passport:
+        return {"status": "NOT_FOUND", "capability": capability}
+
+    contract = build_contract(
+        name=capability,
+        entrypoint=(passport.get("candidate") or {}).get("entrypoint", capability),
+        risk=(passport.get("candidate") or {}).get("risk", "LOW"),
+        ast_safe=(passport.get("safety") or {}).get("safe", False),
+        ast_findings=(passport.get("safety") or {}).get("findings", []),
+    )
+    return {"status": "OK", "contract": contract.to_dict()}
+
+
+@app.get("/beastmode/quarantine")
+def beastmode_quarantine() -> dict[str, Any]:
+    """Which capabilities are quarantined right now, derived from the real
+    audit trail -- not a new write path. See app/beastmode/quarantine.py."""
+    from app.beastmode.quarantine import compute_quarantine, to_dict
+
+    events = firestore_store.list_audit_events(limit=1000)
+    entries = compute_quarantine(events)
+    return {"count": len(entries), "quarantined": [to_dict(e) for e in entries]}
+
+
+@app.get("/beastmode/lineage/{capability}")
+def beastmode_lineage(capability: str) -> dict[str, Any]:
+    """A real version history, reconstructed from the real evolution
+    ledger. No new write path -- every acquisition and rollback was
+    already recorded by app/synapse/engine.py; this only groups, sorts
+    and numbers them per capability."""
+    from app.beastmode.lineage import build_lineage, current_version, to_dict
+
+    events = firestore_store.list_evolution_events()
+    steps = build_lineage(capability, events)
+
+    return {
+        "capability": capability,
+        "current_version": current_version(capability, events),
+        "currently_installed": current_version(capability, events) > 0,
+        "history": [to_dict(s) for s in steps],
+    }
+
+
+@app.get("/beastmode/approval/{request_id}/explain")
+def beastmode_explain_approval(request_id: str) -> dict[str, Any]:
+    """WHY does this need a human? Assembled from the same real signals
+    the review endpoint already exposes -- a risk score and a contract
+    layered on top, not a second source of truth. Read-only: this cannot
+    approve, reject or install anything, unlike /approvals/{id}/decide."""
+    from app.beastmode.contracts import build_contract
+    from app.beastmode.risk_score import compute_risk_score
+
+    review = review_approval(request_id)
+    if review.get("status") == "NOT_FOUND":
+        return review
+
+    safety = review.get("safety") or {}
+    tests = review.get("tests") or {}
+    evaluation = review.get("evaluation") or {}
+
+    risk = compute_risk_score(
+        ast_finding_count=len(safety.get("findings") or []),
+        sandbox_passed=bool(tests.get("passed")),
+        evaluator_score=evaluation.get("score"),
+    )
+
+    contract = build_contract(
+        name=review.get("capability", ""),
+        entrypoint=review.get("entrypoint", ""),
+        risk=review.get("risk", "LOW"),
+        ast_safe=safety.get("safe", False),
+        ast_findings=safety.get("findings", []),
+    )
+
+    return {
+        "status": "OK",
+        "request_id": request_id,
+        "capability": review.get("capability"),
+        "why_human": {
+            "risk_score": risk.to_dict(),
+            "declared_contract": contract.to_dict(),
+            "sandbox_result": {
+                "passed": tests.get("passed"),
+                "exit_code": tests.get("exit_code"),
+            },
+            "evaluator_result": {
+                "status": evaluation.get("status"),
+                "reason_code": evaluation.get("reason_code"),
+                "score": evaluation.get("score"),
+                "verdict": evaluation.get("verdict"),
+                "reason": evaluation.get("reason"),
+            },
+            "policy_id": review.get("policy_id"),
+        },
+    }
+
+
+class MemoryQuery(BaseModel):
+    need: str = Field(..., description="Free-text capability need to check against memory.")
+
+
+@app.post("/beastmode/memory/query")
+def beastmode_memory_query(body: MemoryQuery) -> dict[str, Any]:
+    """What does memory already know about this need? Read-only: this
+    NEVER generates, screens, sandboxes, evaluates, approves or installs
+    anything -- it is lexical-overlap search plus the real quarantine and
+    audit history, exactly the same real records the rest of Beastmode
+    already exposes. See app/beastmode/memory.py's module docstring for
+    why the recommendation carries no authorization."""
+    from app.beastmode.memory import recommend
+
+    capabilities = firestore_store.list_capabilities()
+    events = firestore_store.list_audit_events(limit=1000)
+
+    result = recommend(body.need, capabilities, events)
+    return {"need": body.need, **result.to_dict()}
+
+
+@app.get("/beastmode/memory/{capability}")
+def beastmode_memory_history(capability: str) -> dict[str, Any]:
+    """The real audit history for ONE named capability -- every
+    SYNAPSE_* outcome it has ever produced, oldest first."""
+    from app.beastmode.memory import capability_history
+
+    events = firestore_store.list_audit_events(limit=1000)
+    history = capability_history(capability, events)
+    stored = firestore_store.get_capability(capability)
+
+    return {
+        "capability": capability,
+        "known": stored is not None,
+        "state": (stored or {}).get("state"),
+        "implemented": bool((stored or {}).get("implemented")),
+        "attempts": len(history),
+        "history": [h.to_dict() for h in history],
+    }
+
+
+class PlanQuery(BaseModel):
+    need: str = Field(..., description="Free-text capability need to plan for.")
+
+
+@app.post("/beastmode/plan")
+def beastmode_plan(body: PlanQuery) -> dict[str, Any]:
+    """The memory-informed plan for `need`: REUSE_EXISTING_CAPABILITY /
+    ACQUIRE_NEW (with a strategy, informed by real retry-recovery
+    history) / ESCALATE. Read-only, deterministic given the same
+    underlying data -- see app/synapse/planner.py's module docstring for
+    why a plan cannot authorize anything the real pipeline wouldn't
+    already require."""
+    from app.synapse.planner import plan as build_plan
+
+    capabilities = firestore_store.list_capabilities()
+    events = firestore_store.list_audit_events(limit=1000)
+
+    result = build_plan(body.need, capabilities, events)
+    return {"need": body.need, **result.to_dict()}
+
+
+@app.get("/beastmode/security/report")
+def beastmode_security_report() -> dict[str, Any]:
+    """A judge-facing summary of what's actually been tested and what
+    remains a known limitation. Read-only and zero-side-effect: the only
+    thing it does beyond reading two module constants is call the real
+    red-team suite (the same _run() GET /beastmode/red-team calls) --
+    see app/beastmode/security_report.py's module docstring for the
+    honest-status-model this follows."""
+    from app.beastmode.security_report import build_report
+
+    return build_report()
+
+
+@app.get("/beastmode/mission/readiness")
+def beastmode_mission_readiness() -> dict[str, Any]:
+    """Is AION Axon ready for one real owner-authorized mission? Never
+    itself creates a capability, approval, ledger event, or evolution
+    event -- see app/beastmode/mission_readiness.py's module docstring."""
+    from app.beastmode.mission_readiness import build_readiness
+
+    return build_readiness()
