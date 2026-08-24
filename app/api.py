@@ -980,3 +980,43 @@ def beastmode_mission_readiness() -> dict[str, Any]:
     from app.beastmode.mission_readiness import build_readiness
 
     return build_readiness()
+
+
+@app.get("/beastmode/state-machine")
+def beastmode_state_machine() -> dict[str, Any]:
+    """The formal capability-lifecycle transition table, for direct
+    inspection -- this IS the proof that AI cannot self-authorize a
+    promotion, not a description of it. Pure constants (states and legal
+    transitions); nothing here is computed from live data or secret.
+
+    Read-only, existed as app/beastmode/state_machine.py before this
+    endpoint -- see that module's docstring for exactly what it can and
+    cannot prove (it's a compatibility mapping FROM the real pipeline's
+    own status strings, validated against an explicit transition table;
+    the real enforcement lives in app/synapse/engine.py and
+    app/governance/approval.py, which this table describes rather than
+    replaces)."""
+    from app.beastmode.state_machine import (
+        CANONICAL_STATES,
+        FAILURE_STATES,
+        SUCCESS_PATH,
+        TERMINAL_STATES,
+        _TRANSITIONS,
+    )
+
+    return {
+        "success_path": list(SUCCESS_PATH),
+        "failure_states": list(FAILURE_STATES),
+        "terminal_states": sorted(TERMINAL_STATES),
+        "transitions": {
+            state: sorted(targets) for state, targets in _TRANSITIONS.items()
+        },
+        "invariant": (
+            "A state not listed as a legal target from its current state "
+            "is unreachable -- there is no default 'allow' path. In "
+            "particular: nothing transitions directly to INSTALLED except "
+            "from INSTALLING, which itself is only reachable from APPROVED, "
+            "which is only reachable from AWAITING_APPROVAL via a real "
+            "human decision (see POST /approvals/{id}/decide, owner-gated)."
+        ),
+    }
