@@ -140,3 +140,153 @@ def test_the_child_environment_is_stripped_of_real_secret_shaped_names(monkeypat
     # ENVIRONMENT contains if code somehow runs, independent of the AST
     # layer -- defense in depth, not a substitute for it.
     assert "sk-should-never-be-visible-to-a-candidate" not in body.get("stdout", "")
+
+
+def _free_local_port() -> int:
+    import socket as _socket
+    with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _local_http_server():
+    """A real local HTTP server bound to 127.0.0.1 -- never a real
+    external system, per the explicit instruction not to attack anything
+    real. Returns (port, server, thread); caller must shut it down."""
+    import http.server
+    import threading
+
+    class _OK(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"reached")
+
+        def log_message(self, *a):
+            pass  # keep test output quiet
+
+    port = _free_local_port()
+    server = http.server.HTTPServer(("127.0.0.1", port), _OK)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return port, server, thread
+
+
+def test_network_egress_via_the_real_execute_endpoint_as_deployed_today():
+    """Calls /execute directly with EXACTLY the child_env sandbox/main.py
+    actually uses today -- bypassing AST entirely, to isolate what the
+    sandbox process layer alone contributes.
+
+    RESULT ON THIS MACHINE: the connection attempt fails, but NOT because
+    of any network policy -- it fails with Windows error 10106 ("service
+    provider could not be loaded"), because the real child_env has no
+    SYSTEMROOT and Winsock cannot initialize without it. This is a
+    Windows-only quirk of this stripped environment, not a deliberate
+    control, and it says nothing about whether the same stripped env
+    would block a connection on the actual deployed Linux container
+    (POSIX sockets have no such requirement). See the next test for the
+    isolated, platform-neutral answer to the real question.
+    """
+    port, server, thread = _local_http_server()
+    try:
+        response = client.post("/execute", json={
+            "code": (
+                "import urllib.request\n"
+                "def f():\n"
+                f"    return urllib.request.urlopen('http://127.0.0.1:{port}', timeout=5).read()\n"
+            ),
+            "test": "print(f().decode())\n",
+        })
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+    body = response.json()
+    print(f"\nSANDBOX NETWORK EGRESS as deployed today (Windows dev machine): {body}")
+    assert response.status_code == 200  # the call itself must not error
+
+
+def test_network_egress_is_not_actually_blocked_by_the_sandbox_process_layer():
+    """The real finding, isolated from the Windows Winsock artifact
+    above: replicate sandbox/main.py's OWN subprocess call (-I flag,
+    same stripped env, same real subprocess) with exactly one addition
+    -- SYSTEMROOT, required only for Windows socket initialization and
+    irrelevant on POSIX -- to answer the actual question the previous
+    test's platform quirk obscured: does the sandbox's stripped
+    environment, on its own, prevent a network connection?
+
+    HONEST RESULT: no. Confirmed by first connecting to a closed local
+    port (proves Winsock initializes and produces a real connection
+    error, not another 10106) and then to the real local test server
+    (proves data actually round-trips). No VPC egress rule or firewall
+    is configured anywhere in this repository (checked sandbox/Dockerfile
+    and docs/deployment/ -- neither mentions network policy), so this is
+    the accurate current answer FOR THIS MACHINE: the sandbox process
+    layer provides no network isolation on its own. AST screening
+    (app/synapse/safety_screen.py, covering socket/urllib/http/ftplib/
+    smtplib/xmlrpc/telnetlib/asyncio as of this session) is the ONLY
+    control against this vector today -- a blocklist, which is
+    inherently incomplete against imports not yet enumerated. This is a
+    real, documented gap, not a claim of safety.
+
+    Still cannot prove Cloud Run's actual VPC/egress configuration,
+    which is GCP infrastructure this session has no way to inspect.
+    """
+    import os
+    import subprocess
+    import sys
+    import tempfile
+
+    def _run(code: str, timeout: float = 5) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as workdir:
+            path = os.path.join(workdir, "candidate.py")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(code)
+            child_env = {
+                "PATH": "/usr/local/bin:/usr/bin:/bin",
+                "HOME": workdir,
+                "PYTHONDONTWRITEBYTECODE": "1",
+                # The one addition versus sandbox/main.py's real
+                # child_env -- Windows-only, required for Winsock, does
+                # not exist as a concept on POSIX.
+                "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
+            }
+            return subprocess.run(
+                [sys.executable, "-I", path], cwd=workdir, env=child_env,
+                capture_output=True, text=True, timeout=timeout,
+            )
+
+    # Step 1: prove sockets initialize at all with this env (a real
+    # connection-refused error, not a Winsock provider-load failure).
+    closed_port = _free_local_port()  # freed immediately -- nothing listens
+    refusal = _run(
+        "import urllib.request\n"
+        f"urllib.request.urlopen('http://127.0.0.1:{closed_port}', timeout=2).read()\n"
+    )
+    assert "10106" not in refusal.stderr, (
+        "Winsock still failed to initialize -- SYSTEMROOT alone did not "
+        "neutralize the platform artifact; the result below is not yet "
+        "meaningful:\n" + refusal.stderr
+    )
+
+    # Step 2: the real question -- does data actually round-trip.
+    port, server, thread = _local_http_server()
+    try:
+        completed = _run(
+            "import urllib.request\n"
+            f"print(urllib.request.urlopen('http://127.0.0.1:{port}', timeout=5).read().decode())\n"
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+    reached = "reached" in completed.stdout
+    print(f"\nSANDBOX NETWORK EGRESS, Winsock artifact neutralized: "
+          f"{'REACHED the local test server' if reached else 'did not reach it'} "
+          f"(stdout={completed.stdout!r}, stderr={completed.stderr[-200:]!r})")
+    assert reached, (
+        "If this ever fails, that is GOOD NEWS: it means something now "
+        "blocks the connection this test previously proved was open. "
+        "Investigate and update this docstring before treating it as a "
+        "regression."
+    )

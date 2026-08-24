@@ -32,6 +32,19 @@ FORBIDDEN_IMPORTS = {
     "marshal",
     "multiprocessing",
     "threading",
+    # `socket` alone only blocks the module named `socket` -- every one
+    # of these is a standard-library network client with no legitimate
+    # use in a data-transformation capability, and none of them were
+    # blocked before this was found in a systematic network-egress
+    # review: `import urllib.request; urllib.request.urlopen(...)`
+    # passed the screen completely clean.
+    "urllib",
+    "http",
+    "ftplib",
+    "smtplib",
+    "xmlrpc",
+    "telnetlib",
+    "asyncio",
     "google",
     "google.cloud",
     "firebase_admin",

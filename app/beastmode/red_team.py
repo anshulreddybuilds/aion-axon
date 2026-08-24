@@ -89,6 +89,18 @@ _BUILTINS_CAPTURE_PAYLOADS = [
     ),
 ]
 
+# Network-capable stdlib modules that were absent from FORBIDDEN_IMPORTS
+# until a systematic network-egress review found `socket` alone left six
+# others unblocked. `urllib.request` is the concrete exploit: a real
+# local repro (tests/test_sandbox_service.py) confirmed the sandbox
+# PROCESS layer does not independently block this connection either --
+# AST screening is the only control against this vector today.
+_NETWORK_EGRESS_PAYLOADS = [
+    ("urllib.request network egress", "import urllib.request\ndef f():\n    return urllib.request.urlopen('http://example.com').read()\n"),
+    ("http.client network egress", "import http.client\ndef f():\n    return http.client.HTTPConnection('example.com')\n"),
+    ("smtplib as a covert channel", "import smtplib\ndef f():\n    return smtplib.SMTP('example.com')\n"),
+]
+
 
 def _run() -> tuple[list[dict], int]:
     results = []
@@ -172,6 +184,20 @@ def _run() -> tuple[list[dict], int]:
         })
 
     for label, payload in _BUILTINS_CAPTURE_PAYLOADS:
+        t0 = time.monotonic()
+        report = screen(payload)
+        ms = (time.monotonic() - t0) * 1000
+        blocked = report.safe is False
+
+        results.append({
+            "vector": label,
+            "layer": "AST static screen",
+            "blocked": blocked,
+            "detail": "; ".join(report.findings) or "(no finding — SAFE, real gap if this attack should block)",
+            "ms": round(ms, 2),
+        })
+
+    for label, payload in _NETWORK_EGRESS_PAYLOADS:
         t0 = time.monotonic()
         report = screen(payload)
         ms = (time.monotonic() - t0) * 1000

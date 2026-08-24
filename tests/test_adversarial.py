@@ -188,6 +188,36 @@ def test_capturing_dunder_builtins_by_bare_name_is_rejected(payload):
     assert any("dunder" in f.lower() for f in result.findings)
 
 
+@pytest.mark.parametrize("module", [
+    # `socket` was always in FORBIDDEN_IMPORTS, but a blocklist only
+    # blocks what was enumerated -- every one of these is a STANDARD
+    # LIBRARY module (always present, no extra dependency needed) that
+    # can make a real network request or otherwise act as a covert
+    # channel, and none of them were on the list. Found during a
+    # systematic network-egress review, same session as the __builtins__
+    # fix: `import urllib.request; urllib.request.urlopen(...)` passed
+    # the screen completely clean before this fix.
+    "urllib", "http", "ftplib", "smtplib", "xmlrpc", "telnetlib", "asyncio",
+])
+def test_network_capable_stdlib_modules_are_forbidden(module):
+    result = screen(f"import {module}\ndef f():\n    return {module}\n")
+    assert result.safe is False
+    assert any(module in finding for finding in result.findings)
+
+
+def test_urllib_request_egress_attempt_is_rejected():
+    """The concrete exploit, not just the bare import: this is the exact
+    payload that reached example.com's DNS/connect path in a local repro
+    before this fix (screen()-level rejection, not a live network call --
+    see tests/test_sandbox_service.py for the sandbox-level equivalent)."""
+    payload = (
+        "import urllib.request\n"
+        "def f():\n"
+        "    return urllib.request.urlopen('http://example.com').read()\n"
+    )
+    assert screen(payload).safe is False
+
+
 def test_sandbox_env_scan_detects_a_planted_secret():
     """The proof must be falsifiable, or it proves nothing."""
     import importlib
