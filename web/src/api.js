@@ -101,6 +101,22 @@ export const api = {
       body: JSON.stringify({}),
     }),
 
+  // Runs the REAL acquisition loop synchronously and returns the
+  // terminal AcquisitionRecord (research → generate → screen → sandbox
+  // → evaluate → guardian → approval). This IS the governed pipeline,
+  // not a summary of it — the call blocks on real Gemini/sandbox work,
+  // typically 10-30s. allow_retry permits one real regenerate-on-failure
+  // attempt; see app/synapse/engine.py's retry loop.
+  proposeCapability: (need, { missionId, allowRetry = false } = {}) =>
+    request("/synapse/propose", {
+      method: "POST",
+      body: JSON.stringify({
+        need,
+        mission_id: missionId || null,
+        allow_retry: allowRetry,
+      }),
+    }),
+
   // Cloud Run returns HTTP 411 on a POST with no body, so every POST
   // sends one even when the endpoint ignores it.
   setKillSwitch: (active) =>

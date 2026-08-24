@@ -92,6 +92,17 @@ def test_retry_recovers_when_the_second_candidate_passes():
     assert record.status == "AWAITING_APPROVAL"
     assert record.tests["passed"] is True
 
+    # The record must carry visible proof that attempt 1 failed and
+    # attempt 2 succeeded -- this is what a UI needs to show the retry
+    # ever happened, since `record.candidate`/`record.tests` only ever
+    # hold the LAST attempt's data.
+    assert len(record.attempts) == 2
+    assert record.attempts[0]["attempt"] == 1
+    assert record.attempts[0]["outcome"] == "SANDBOX_FAILED"
+    assert "AssertionError" in record.attempts[0]["detail"]
+    assert record.attempts[1]["attempt"] == 2
+    assert record.attempts[1]["outcome"] == "SANDBOX_PASSED"
+
 
 def test_retry_still_rejects_if_the_second_attempt_also_fails():
     """Bounded means bounded: two real failures in a row must reject, not
@@ -109,6 +120,8 @@ def test_retry_still_rejects_if_the_second_attempt_also_fails():
     assert record.status == "REJECTED"
     assert call_count["n"] == 2, "must attempt exactly twice, never a third time"
     assert "2 attempts" in record.reason
+    assert len(record.attempts) == 2
+    assert all(a["outcome"] == "SANDBOX_FAILED" for a in record.attempts)
 
 
 def test_a_safety_screen_rejection_is_never_retried_even_with_allow_retry():

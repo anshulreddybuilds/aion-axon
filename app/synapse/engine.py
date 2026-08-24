@@ -57,6 +57,15 @@ class AcquisitionRecord:
     guardian: dict[str, Any] = field(default_factory=dict)
     approval_request_id: Optional[str] = None
 
+    # One entry per generate+screen+sandbox attempt the retry loop made,
+    # in order. `candidate`/`tests` above are always the LAST attempt's
+    # data (unchanged, so nothing that reads them breaks); this is the
+    # only place a caller can see that attempt 1 failed and attempt 2 was
+    # generated from its real stderr rather than from scratch. Empty on
+    # every call made before this field existed and on any single-attempt
+    # run today -- it is not backfilled and does not change behavior.
+    attempts: list[dict[str, Any]] = field(default_factory=list)
+
     reason: Optional[str] = None
     started_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
@@ -75,6 +84,7 @@ class AcquisitionRecord:
             "evaluation": self.evaluation,
             "guardian": self.guardian,
             "approval_request_id": self.approval_request_id,
+            "attempts": self.attempts,
             "reason": self.reason,
             "started_at": self.started_at,
         }
@@ -181,6 +191,12 @@ class SynapseEngine:
             record.safety = screened.to_dict()
 
             if not screened.safe:
+                record.attempts.append({
+                    "attempt": attempt,
+                    "candidate": candidate.name,
+                    "outcome": "SAFETY_REJECTED",
+                    "detail": "; ".join(screened.findings),
+                })
                 # A safety rejection is never retried -- retrying a policy
                 # refusal until it stops triggering would be indistinguishable
                 # from evading the screen.
@@ -198,6 +214,12 @@ class SynapseEngine:
             record.tests = tests
 
             if tests.get("status") == "UNREACHABLE":
+                record.attempts.append({
+                    "attempt": attempt,
+                    "candidate": candidate.name,
+                    "outcome": "SANDBOX_UNREACHABLE",
+                    "detail": tests.get("reason"),
+                })
                 # A sandbox outage is NOT a failing candidate. Installing on
                 # an untested candidate because the tester was down is the
                 # worst available outcome. Never retried -- the sandbox
@@ -211,7 +233,20 @@ class SynapseEngine:
                 return record
 
             if tests.get("passed"):
+                record.attempts.append({
+                    "attempt": attempt,
+                    "candidate": candidate.name,
+                    "outcome": "SANDBOX_PASSED",
+                    "detail": None,
+                })
                 break  # a working candidate -- proceed to evaluation
+
+            record.attempts.append({
+                "attempt": attempt,
+                "candidate": candidate.name,
+                "outcome": "SANDBOX_FAILED",
+                "detail": (tests.get("stderr") or tests.get("reason") or "")[:1000],
+            })
 
             if attempt == max_attempts:
                 record.status = "REJECTED"
