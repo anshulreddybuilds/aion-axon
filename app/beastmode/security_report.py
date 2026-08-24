@@ -223,9 +223,10 @@ def build_report() -> dict[str, Any]:
         "categories": [c.to_dict() for c in _static_categories()],
         "known_limitations": list(KNOWN_LIMITATIONS),
         "regression_tests": {
-            "latest_known": {"value": 439, "as_of_commit": "10037a2"},
+            "latest_known": {"value": 454, "as_of_commit": "3a68bfa"},
             "history": [
                 {"value": 432, "as_of_commit": "15cc7c7"},
+                {"value": 439, "as_of_commit": "10037a2"},
             ],
             "note": "STATIC snapshots, manually recorded when this file was last "
                     "edited -- NEVER computed live. This endpoint does not run "

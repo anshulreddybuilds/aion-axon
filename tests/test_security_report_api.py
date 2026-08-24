@@ -100,3 +100,29 @@ def test_live_and_historical_evidence_are_never_conflated():
     assert "not_live" in reg["note"].lower() or "never" in reg["note"].lower()
     assert "top_level" not in body  # no bare ambiguous count exists anywhere
     assert "test_count" not in body
+
+
+def test_regression_history_is_appended_not_overwritten():
+    """The staleness in this field is expected and disclosed (see its own
+    'note') -- what must never happen is a future edit that bumps
+    'latest_known' by overwriting 'history' instead of appending to it,
+    silently destroying the provenance trail. Known past snapshots (each
+    tied to a real, immutable commit) must never disappear from the
+    record -- that's the append-only invariant this field claims to hold.
+    Deliberately does NOT pin today's 'latest_known' value, which is
+    expected to go stale and get bumped again; it pins only commits that
+    are already history and can never change underneath us."""
+    reg = client.get("/beastmode/security/report").json()["regression_tests"]
+    all_entries = reg["history"] + [reg["latest_known"]]
+    commits = [entry["as_of_commit"] for entry in all_entries]
+
+    # every snapshot recorded in an earlier session must still be present
+    for known_past_commit in ("15cc7c7", "10037a2"):
+        assert known_past_commit in commits, (
+            f"snapshot at {known_past_commit} was dropped from regression_tests "
+            "-- history must be appended to, never overwritten"
+        )
+
+    assert len(commits) == len(set(commits))  # every snapshot has its own commit
+    values = [entry["value"] for entry in all_entries]
+    assert values == sorted(values)  # counts only ever grow across recorded snapshots
