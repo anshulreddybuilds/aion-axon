@@ -236,6 +236,39 @@ function LineageCard({ capability }) {
   );
 }
 
+function MemoryHistoryCard({ capability }) {
+  return (
+    <ProofCard
+      title={`Capability Memory — ${capability}`}
+      fetcher={() => api.memoryHistory(capability)}
+      render={(d) =>
+        !d.known ? (
+          <Empty>Memory has no record of this capability name.</Empty>
+        ) : (
+          <div className="text-[10px] space-y-2">
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+              <span className="text-muted">State</span><span className="text-white/90">{d.state}</span>
+              <span className="text-muted">Implemented</span>
+              <span className={d.implemented ? "text-ok" : "text-muted"}>{String(d.implemented)}</span>
+              <span className="text-muted">Attempts</span><span className="text-white/90">{d.attempts}</span>
+            </div>
+            {d.history.length > 0 && (
+              <div className="space-y-1 pt-1 border-t border-edge">
+                {d.history.map((h, i) => (
+                  <p key={i} className="text-muted">
+                    {h.timestamp} — {h.stage} → <span className="text-white/80">{h.status}</span>
+                    {h.reason ? `: ${h.reason}` : ""}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      }
+    />
+  );
+}
+
 function ContractCard({ capability }) {
   return (
     <ProofCard
@@ -365,6 +398,7 @@ export default function JudgeMode({ pending, acquiredNames }) {
         <div className="grid gap-4 lg:grid-cols-2">
           <ContractCard capability={inspectCapability} />
           <LineageCard capability={inspectCapability} />
+          <MemoryHistoryCard capability={inspectCapability} />
         </div>
       )}
 

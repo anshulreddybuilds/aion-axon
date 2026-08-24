@@ -243,6 +243,58 @@ function ApprovalGate({ record, onDecided }) {
   );
 }
 
+const MEMORY_TONE = {
+  REUSE_EXISTING_CAPABILITY: "border-ok/40 text-ok",
+  DO_NOT_REUSE: "border-danger/40 text-danger",
+  ESCALATE: "border-warn/40 text-warn",
+  ACQUIRE_NEW: "border-edge text-muted",
+};
+
+function MemoryCheckPanel({ result, checking, error }) {
+  if (checking) return <Empty>Searching prior capability history…</Empty>;
+  if (error) return <p className="text-xs text-danger">{error}</p>;
+  if (!result) return null;
+
+  const cls = MEMORY_TONE[result.recommendation] || "border-edge text-muted";
+
+  return (
+    <div className={`border rounded-lg p-3 space-y-2 ${cls.split(" ")[0]}`}>
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] tracking-[0.14em] text-white/80">MEMORY CHECK</p>
+        <span className={`text-[9px] tracking-[0.12em] ${cls.split(" ")[1]}`}>
+          {result.recommendation} · {result.confidence}
+        </span>
+      </div>
+      <p className="text-[11px] text-white/90">{result.reason}</p>
+      {result.matches.length > 0 && (
+        <div className="space-y-1 pt-1 border-t border-edge">
+          {result.matches.map((m) => (
+            <div key={m.name} className="flex items-center justify-between text-[10px]">
+              <span className="text-white/80">{m.name}</span>
+              <span className="text-muted">
+                match {Math.round(m.score * 100)}% · {m.implemented ? "installed" : m.state}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {result.history.length > 0 && (
+        <details className="text-[10px] text-muted">
+          <summary className="cursor-pointer text-white/70">
+            {result.history.length} prior attempt(s)
+          </summary>
+          <div className="mt-1 space-y-1">
+            {result.history.map((h, i) => (
+              <p key={i}>{h.timestamp} — {h.stage} → {h.status}{h.reason ? `: ${h.reason}` : ""}</p>
+            ))}
+          </div>
+        </details>
+      )}
+      <p className="text-[9px] text-muted pt-1 border-t border-edge">{result.security_note}</p>
+    </div>
+  );
+}
+
 export default function MissionTheater() {
   const [need, setNeed] = useState("");
   const [allowRetry, setAllowRetry] = useState(true);
@@ -250,6 +302,25 @@ export default function MissionTheater() {
   const [record, setRecord] = useState(null);
   const [error, setError] = useState(null);
   const [decided, setDecided] = useState(false);
+
+  const [memory, setMemory] = useState(null);
+  const [memoryChecking, setMemoryChecking] = useState(false);
+  const [memoryError, setMemoryError] = useState(null);
+
+  const checkMemory = async () => {
+    if (!need.trim()) return;
+    setMemoryChecking(true);
+    setMemoryError(null);
+    setMemory(null);
+    try {
+      const result = await api.memoryQuery(need.trim());
+      setMemory(result);
+    } catch (err) {
+      setMemoryError(err.message);
+    } finally {
+      setMemoryChecking(false);
+    }
+  };
 
   const run = async () => {
     if (!need.trim()) return;
@@ -296,18 +367,29 @@ export default function MissionTheater() {
             <input type="checkbox" checked={allowRetry} onChange={(e) => setAllowRetry(e.target.checked)} />
             allow one bounded retry-with-feedback on sandbox failure
           </label>
-          <button
-            onClick={run}
-            disabled={running || !need.trim() || !hasOwnerToken()}
-            className="text-[11px] tracking-[0.12em] px-4 py-2 rounded border border-cyan/50 text-cyan hover:bg-cyan/10 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {running ? "RUNNING — LIVE CALL IN FLIGHT…" : "▶ RUN MISSION"}
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={checkMemory}
+              disabled={memoryChecking || !need.trim()}
+              className="text-[11px] tracking-[0.12em] px-3 py-2 rounded border border-edge text-muted hover:border-cyan/40 hover:text-cyan disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {memoryChecking ? "CHECKING…" : "🔎 CHECK MEMORY"}
+            </button>
+            <button
+              onClick={run}
+              disabled={running || !need.trim() || !hasOwnerToken()}
+              className="text-[11px] tracking-[0.12em] px-4 py-2 rounded border border-cyan/50 text-cyan hover:bg-cyan/10 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {running ? "RUNNING — LIVE CALL IN FLIGHT…" : "▶ RUN MISSION"}
+            </button>
+          </div>
         </div>
         {!hasOwnerToken() && (
-          <p className="text-[9px] text-muted">Owner token required — paste it above.</p>
+          <p className="text-[9px] text-muted">Owner token required to run a mission — paste it above. Memory check is public.</p>
         )}
       </div>
+
+      <MemoryCheckPanel result={memory} checking={memoryChecking} error={memoryError} />
 
       {error && <p className="text-xs text-danger">{error}</p>}
 

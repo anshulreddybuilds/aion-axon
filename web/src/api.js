@@ -137,6 +137,16 @@ export const api = {
   quarantine: () => request("/beastmode/quarantine"),
   explainApproval: (requestId) =>
     request(`/beastmode/approval/${requestId}/explain`),
+
+  // Read-only lexical-overlap memory over the real capability registry +
+  // audit trail. Never generates, screens, sandboxes, approves or
+  // installs anything -- see app/beastmode/memory.py's module docstring.
+  memoryQuery: (need) =>
+    request("/beastmode/memory/query", {
+      method: "POST",
+      body: JSON.stringify({ need }),
+    }),
+  memoryHistory: (capability) => request(`/beastmode/memory/${capability}`),
 };
 
 /** Fetch everything the dashboard shows, tolerating partial failure.

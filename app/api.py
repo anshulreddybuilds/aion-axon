@@ -730,3 +730,44 @@ def beastmode_explain_approval(request_id: str) -> dict[str, Any]:
             "policy_id": review.get("policy_id"),
         },
     }
+
+
+class MemoryQuery(BaseModel):
+    need: str = Field(..., description="Free-text capability need to check against memory.")
+
+
+@app.post("/beastmode/memory/query")
+def beastmode_memory_query(body: MemoryQuery) -> dict[str, Any]:
+    """What does memory already know about this need? Read-only: this
+    NEVER generates, screens, sandboxes, evaluates, approves or installs
+    anything -- it is lexical-overlap search plus the real quarantine and
+    audit history, exactly the same real records the rest of Beastmode
+    already exposes. See app/beastmode/memory.py's module docstring for
+    why the recommendation carries no authorization."""
+    from app.beastmode.memory import recommend
+
+    capabilities = firestore_store.list_capabilities()
+    events = firestore_store.list_audit_events(limit=1000)
+
+    result = recommend(body.need, capabilities, events)
+    return {"need": body.need, **result.to_dict()}
+
+
+@app.get("/beastmode/memory/{capability}")
+def beastmode_memory_history(capability: str) -> dict[str, Any]:
+    """The real audit history for ONE named capability -- every
+    SYNAPSE_* outcome it has ever produced, oldest first."""
+    from app.beastmode.memory import capability_history
+
+    events = firestore_store.list_audit_events(limit=1000)
+    history = capability_history(capability, events)
+    stored = firestore_store.get_capability(capability)
+
+    return {
+        "capability": capability,
+        "known": stored is not None,
+        "state": (stored or {}).get("state"),
+        "implemented": bool((stored or {}).get("implemented")),
+        "attempts": len(history),
+        "history": [h.to_dict() for h in history],
+    }
