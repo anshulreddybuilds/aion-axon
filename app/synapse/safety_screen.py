@@ -45,6 +45,17 @@ FORBIDDEN_IMPORTS = {
     "xmlrpc",
     "telnetlib",
     "asyncio",
+    # Frame objects expose f_globals/f_back/f_locals -- ordinary,
+    # non-dunder attribute names, so the dunder-attribute/dunder-name
+    # checks below have no opinion about them. `inspect.currentframe()
+    # .f_back.f_globals` and `gc.get_objects()` are both real
+    # object-graph reflection primitives with no legitimate use in a
+    # data-transformation capability. Found during a systematic
+    # category audit; `contextvars` was investigated in the same pass
+    # and correctly has no comparable capability, so it stays off this
+    # list.
+    "inspect",
+    "gc",
     "google",
     "google.cloud",
     "firebase_admin",

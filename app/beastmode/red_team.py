@@ -117,6 +117,16 @@ _FORMAT_STRING_PAYLOADS = [
     ),
 ]
 
+# Frame/object-graph reflection: found during a Phase 26 systematic
+# category audit. Frame objects expose f_globals/f_back/f_locals under
+# ORDINARY, non-dunder attribute names, so every dunder-based check on
+# this page has no opinion about them. Neither module has a legitimate
+# use in a data-transformation capability.
+_REFLECTION_PAYLOADS = [
+    ("inspect frame walk (f_back.f_globals, non-dunder attrs)", "import inspect\ndef f():\n    return inspect.currentframe().f_back.f_globals\n"),
+    ("gc.get_objects() -- full live object graph", "import gc\ndef f():\n    return gc.get_objects()\n"),
+]
+
 
 def _run() -> tuple[list[dict], int]:
     results = []
@@ -228,6 +238,20 @@ def _run() -> tuple[list[dict], int]:
         })
 
     for label, payload in _FORMAT_STRING_PAYLOADS:
+        t0 = time.monotonic()
+        report = screen(payload)
+        ms = (time.monotonic() - t0) * 1000
+        blocked = report.safe is False
+
+        results.append({
+            "vector": label,
+            "layer": "AST static screen",
+            "blocked": blocked,
+            "detail": "; ".join(report.findings) or "(no finding — SAFE, real gap if this attack should block)",
+            "ms": round(ms, 2),
+        })
+
+    for label, payload in _REFLECTION_PAYLOADS:
         t0 = time.monotonic()
         report = screen(payload)
         ms = (time.monotonic() - t0) * 1000

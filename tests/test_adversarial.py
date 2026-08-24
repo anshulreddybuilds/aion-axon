@@ -261,6 +261,33 @@ def test_ordinary_format_calls_are_not_false_positives():
     assert screen(payload).safe is True
 
 
+# --- frame/object-graph reflection: found during the Phase 26 category
+# audit ("reflection" / "exception-frame traversal"). Frame objects
+# expose f_globals/f_back/f_locals -- ordinary, non-dunder attribute
+# names -- so every dunder-based check built earlier this session has no
+# opinion about them. `inspect` and `gc` are the two stdlib modules that
+# reach this surface with no legitimate use in a data-transformation
+# capability (same "no legitimate reason" rationale FORBIDDEN_IMPORTS
+# already applies to os/sys/threading). `contextvars` was also tested
+# and correctly has no comparable capability -- left unblocked.
+
+@pytest.mark.parametrize("payload", [
+    "import inspect\ndef f():\n    return inspect.currentframe().f_back.f_globals\n",
+    "import gc\ndef f():\n    return gc.get_objects()\n",
+])
+def test_frame_and_object_graph_reflection_modules_are_forbidden(payload):
+    assert screen(payload).safe is False
+
+
+def test_contextvars_has_no_comparable_reflection_capability_and_stays_unblocked():
+    """Negative control: contextvars was investigated in the same audit
+    and found to have no frame/object-graph reflection surface -- it
+    must NOT be blocked, proving the fix above is targeted rather than
+    a reflexive ban on anything reflection-adjacent."""
+    payload = "import contextvars\ndef f():\n    return contextvars.copy_context()\n"
+    assert screen(payload).safe is True
+
+
 def test_sandbox_env_scan_detects_a_planted_secret():
     """The proof must be falsifiable, or it proves nothing."""
     import importlib
