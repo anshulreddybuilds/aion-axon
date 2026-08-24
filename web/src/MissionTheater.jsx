@@ -3,6 +3,7 @@ import { api, hasOwnerToken } from "./api.js";
 import { Panel, Empty } from "./panels.jsx";
 import DemoRecoveryMode from "./DemoRecoveryMode.jsx";
 import { deriveStages, StageRow } from "./missionStages.jsx";
+import { reconcileRecord } from "./missionApprovalReconcile.js";
 
 /**
  * Mission Theater — one real acquisition, watched stage by stage.
@@ -39,7 +40,7 @@ function ApprovalGate({ record, onDecided }) {
         installResult = await api.install(record.candidate.name);
       }
       setResult({ approved, installResult });
-      onDecided?.(approved);
+      onDecided?.(approved, installResult);
     } catch (err) {
       setResult({ approved, error: err.message });
     } finally {
@@ -385,7 +386,15 @@ export default function MissionTheater() {
       )}
 
       {record?.status === "AWAITING_APPROVAL" && !decided && (
-        <ApprovalGate record={record} onDecided={() => setDecided(true)} />
+        <ApprovalGate
+          record={record}
+          onDecided={(approved, installResult) => {
+            setDecided(true);
+            setRecord((prev) =>
+              prev ? reconcileRecord(prev, { approved, installResult }) : prev
+            );
+          }}
+        />
       )}
 
       {record && (
