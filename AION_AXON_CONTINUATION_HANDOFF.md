@@ -2,7 +2,20 @@
 
 Written at the end of a credit-efficient security/reliability pass. Read this before re-deriving anything — it is deliberately complete.
 
-## Current HEAD
+## Update — re-verification pass at HEAD 8052a9f
+
+A follow-up session re-checked every priority (P0–P5) against this exact checkpoint. **No code changes were required or made** — everything below was either already correct or blocked by the same environment limitation already documented (no Java). Specifically re-confirmed this pass, not just carried forward from memory:
+
+- P0 (authorization boundary): no new mutation path found.
+- P1 (Firestore emulator): `java` still not on PATH — checked again live, not assumed. Scaffold unchanged, still correctly skips.
+- P2 (monitor/kill-switch governance): unchanged, no new gap.
+- P3 (rate limiting): unchanged, no new gap; confirmed the 429 error body never includes the token.
+- P4 (fresh adversarial re-run): ran `test_evaluator.py`, `test_adversarial.py`, `test_ledger_forensics.py`, `test_owner_auth.py`, `test_api_hardening.py`, `test_rate_limit.py`, `test_concurrency.py`, `test_monitors.py`, `test_reliability.py` together fresh — **203 passed, 2 failed** in that subset run; both failures are the same pre-existing order-dependent flake (confirmed again by the full-suite run passing clean). Full suite: **531 passed, 1 skipped, 0 failed** — identical to the last checkpoint, zero regressions.
+- P5: backend endpoint judged sufficient; frontend card still not built (still the one real optional item left — see below).
+
+This update was made on top of HEAD `8052a9f30d2935ee0ef856cec63eec526ca699fb` and committed as its own docs-only commit — check `git log -1` for the exact new HEAD, which supersedes both hashes below.
+
+## Current HEAD (as of the ORIGINAL writing of this file — see update above for the current one)
 
 `195f7697fd139380afcd844f1d86627346c53b51`
 
