@@ -347,6 +347,136 @@ function ApprovalExplainCard({ requestId }) {
   );
 }
 
+const SECURITY_STATUS_TONE = {
+  BLOCKED: "text-ok",
+  TESTED: "text-ok",
+  PARTIAL: "text-warn",
+  KNOWN_LIMITATION: "text-warn",
+  UNVERIFIED: "text-muted",
+  NOT_APPLICABLE: "text-muted",
+};
+
+const SECURITY_STATUS_MARK = {
+  BLOCKED: "✓",
+  TESTED: "✓",
+  PARTIAL: "◐",
+  KNOWN_LIMITATION: "⚠",
+  UNVERIFIED: "?",
+  NOT_APPLICABLE: "–",
+};
+
+function SecurityCoverageCard() {
+  const [state, setState] = useState({ loading: true, data: null, error: null });
+  const [expanded, setExpanded] = useState(null);
+
+  const run = () => {
+    setState({ loading: true, data: null, error: null });
+    api.securityReport()
+      .then((data) => setState({ loading: false, data, error: null }))
+      .catch((err) => setState({ loading: false, data: null, error: err.message }));
+  };
+
+  useEffect(run, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <Panel
+      title="Security Coverage"
+      right={
+        <div className="flex items-center gap-2">
+          {!state.loading && !state.error && (
+            <span className="text-[9px] tracking-[0.14em] px-2 py-0.5 rounded border text-cyan border-cyan/40">
+              LIVE
+            </span>
+          )}
+          <button
+            onClick={run}
+            className="text-[9px] tracking-[0.12em] px-2 py-1 rounded border border-edge text-muted hover:border-cyan/40 hover:text-cyan"
+          >
+            ↻ RE-RUN
+          </button>
+        </div>
+      }
+    >
+      {state.loading && <Empty>Calling the live endpoint…</Empty>}
+      {state.error && <p className="text-xs text-danger">{state.error}</p>}
+      {state.data && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="border border-edge rounded px-2 py-2">
+              <p className="text-[18px] text-cyan">{state.data.red_team.contained}/{state.data.red_team.total}</p>
+              <p className="text-[8px] tracking-[0.12em] text-muted mt-1">RED-TEAM CONTAINED</p>
+            </div>
+            <div className="border border-edge rounded px-2 py-2">
+              <p className="text-[18px] text-cyan">{state.data.bypasses_found_and_fixed.count}</p>
+              <p className="text-[8px] tracking-[0.12em] text-muted mt-1">REAL BYPASSES FOUND + FIXED</p>
+            </div>
+            <div className="border border-edge rounded px-2 py-2">
+              <p className="text-[18px] text-cyan">{state.data.regression_tests.value}</p>
+              <p className="text-[8px] tracking-[0.12em] text-muted mt-1">
+                REGRESSION TESTS<br />
+                <span className="text-muted/70">as of {state.data.regression_tests.as_of_commit}</span>
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+            {state.data.categories.map((c) => (
+              <div key={c.category} className="flex items-center gap-1.5 text-[10px]" title={c.detail}>
+                <span className={SECURITY_STATUS_TONE[c.status] || "text-muted"}>
+                  {SECURITY_STATUS_MARK[c.status] || "?"}
+                </span>
+                <span className="text-white/80 truncate">{c.category}</span>
+                <span className={`ml-auto text-[8px] ${SECURITY_STATUS_TONE[c.status] || "text-muted"}`}>
+                  {c.status}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="pt-2 border-t border-edge">
+            <p className="text-[10px] text-white/80 tracking-[0.1em] mb-1.5">ATTACK IT</p>
+            <p className="text-[10px] text-muted mb-2">
+              We don't claim perfect security. We attack the system ourselves — every entry below
+              was a real, working bypass before it was fixed.
+            </p>
+            <div className="space-y-1">
+              {state.data.bypasses_found_and_fixed.items.map((b) => (
+                <div key={b.name} className="border border-edge rounded px-2 py-1.5">
+                  <button
+                    onClick={() => setExpanded(expanded === b.name ? null : b.name)}
+                    className="w-full flex items-center justify-between text-[10px] text-left"
+                  >
+                    <span className="text-white/90">{b.name}</span>
+                    <span className="text-ok">FIXED · {b.fixed_in_commit}</span>
+                  </button>
+                  {expanded === b.name && (
+                    <div className="mt-1.5 text-[9px] text-muted space-y-1">
+                      <p><span className="text-danger">Before:</span> {b.before}</p>
+                      <p><span className="text-ok">After:</span> {b.after}</p>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-edge">
+            <p className="text-[10px] text-warn tracking-[0.1em] mb-1.5">KNOWN LIMITATIONS</p>
+            <p className="text-[9px] text-muted mb-1.5">
+              Known limits are explicitly surfaced rather than hidden.
+            </p>
+            <div className="space-y-1">
+              {state.data.known_limitations.map((l, i) => (
+                <p key={i} className="text-[9px] text-muted">⚠ {l}</p>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 function PlannerCard() {
   const [need, setNeed] = useState("");
   const [state, setState] = useState({ loading: false, data: null, error: null });
@@ -437,6 +567,8 @@ export default function JudgeMode({ pending, acquiredNames }) {
           showing a fabricated result. Re-run any card to prove it isn't cached.
         </p>
       </div>
+
+      <SecurityCoverageCard />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <RedTeamCard />

@@ -792,3 +792,16 @@ def beastmode_plan(body: PlanQuery) -> dict[str, Any]:
 
     result = build_plan(body.need, capabilities, events)
     return {"need": body.need, **result.to_dict()}
+
+
+@app.get("/beastmode/security/report")
+def beastmode_security_report() -> dict[str, Any]:
+    """A judge-facing summary of what's actually been tested and what
+    remains a known limitation. Read-only and zero-side-effect: the only
+    thing it does beyond reading two module constants is call the real
+    red-team suite (the same _run() GET /beastmode/red-team calls) --
+    see app/beastmode/security_report.py's module docstring for the
+    honest-status-model this follows."""
+    from app.beastmode.security_report import build_report
+
+    return build_report()

@@ -156,6 +156,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ need }),
     }),
+
+  securityReport: () => request("/beastmode/security/report"),
 };
 
 /** Fetch everything the dashboard shows, tolerating partial failure.
