@@ -218,6 +218,49 @@ def test_urllib_request_egress_attempt_is_rejected():
     assert screen(payload).safe is False
 
 
+# --- format-string attribute traversal: a well-known Python sandbox
+# escape, distinct from every AST-node-based check above because the
+# dangerous attribute chain lives INSIDE A STRING LITERAL, never as a
+# real ast.Attribute/ast.Name node. `str.format()`'s own mini-language
+# resolves `{0.__class__.__bases__[0].__subclasses__}` via genuine
+# attribute lookups at RUNTIME -- confirmed with a direct repro (this
+# really returns a live bound `__subclasses__` method, which a caller
+# could enumerate to find and instantiate something dangerous, such as
+# subprocess.Popen). f-strings are a DIFFERENT, safe case: `f"{x.__
+# class__}"` parses into a real ast.Attribute node (confirmed via
+# ast.dump) and was already caught before this fix.
+
+def test_format_string_dunder_attribute_traversal_is_rejected():
+    payload = (
+        "def f():\n"
+        "    class X:\n"
+        "        pass\n"
+        "    return '{0.__class__.__bases__[0].__subclasses__}'.format(X())\n"
+    )
+    result = screen(payload)
+    assert result.safe is False
+    assert any("format" in f.lower() for f in result.findings)
+
+
+def test_format_map_with_dunder_field_is_also_rejected():
+    payload = (
+        "def f():\n"
+        "    return '{x.__class__}'.format_map({'x': 1})\n"
+    )
+    result = screen(payload)
+    assert result.safe is False
+
+
+def test_ordinary_format_calls_are_not_false_positives():
+    """The fix must be precise: format strings that never reference a
+    dunder are completely legitimate and must not be flagged."""
+    payload = (
+        "def f(name, value):\n"
+        "    return '{}: {}'.format(name, value)\n"
+    )
+    assert screen(payload).safe is True
+
+
 def test_sandbox_env_scan_detects_a_planted_secret():
     """The proof must be falsifiable, or it proves nothing."""
     import importlib

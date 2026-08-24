@@ -110,6 +110,30 @@ def screen(code: str) -> ScreenResult:
             if name in FORBIDDEN_CALLS:
                 findings.append(f"Forbidden call: {name}()")
 
+            # str.format()/.format_map() resolves a dunder attribute
+            # chain embedded IN THE STRING ITSELF via its own runtime
+            # mini-language -- confirmed by direct repro:
+            # '{0.__class__.__bases__[0].__subclasses__}'.format(x)
+            # returns a live bound method, walking the full class
+            # hierarchy with zero ast.Attribute/ast.Name nodes anywhere
+            # in the program (this is a well-known Python sandbox-escape
+            # technique). f-strings are NOT this case -- their `{expr}`
+            # parses into a real ast.Attribute node already caught
+            # above, confirmed via ast.dump(). A legitimate format
+            # string never needs a dunder field, so this has no
+            # meaningful false-positive cost.
+            if (
+                name in ("format", "format_map")
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Constant)
+                and isinstance(node.func.value.value, str)
+                and "__" in node.func.value.value
+            ):
+                findings.append(
+                    "Dunder-shaped field in a .format()/.format_map() "
+                    "string literal (sandbox-escape technique)"
+                )
+
         elif isinstance(node, ast.Attribute):
             # Dunder access is how sandbox escapes usually start.
             if node.attr.startswith("__") and node.attr.endswith("__"):

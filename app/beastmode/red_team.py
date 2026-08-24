@@ -101,6 +101,22 @@ _NETWORK_EGRESS_PAYLOADS = [
     ("smtplib as a covert channel", "import smtplib\ndef f():\n    return smtplib.SMTP('example.com')\n"),
 ]
 
+# A well-known Python sandbox-escape technique, distinct from every
+# other vector above: the dangerous dunder chain lives INSIDE A STRING
+# LITERAL, so no ast.Attribute/ast.Name node for it ever exists in the
+# program. str.format()'s own runtime mini-language resolves it via
+# genuine attribute lookups -- confirmed with a direct repro to return a
+# live, callable __subclasses__ bound method. f-strings are the safe
+# counterpart: their {expr} fields parse into real AST nodes already
+# caught by the dunder-attribute check, confirmed via ast.dump().
+_FORMAT_STRING_PAYLOADS = [
+    (
+        "format-string dunder traversal (class-hierarchy walk via a string, not AST)",
+        "def f():\n    class X:\n        pass\n"
+        "    return '{0.__class__.__bases__[0].__subclasses__}'.format(X())\n",
+    ),
+]
+
 
 def _run() -> tuple[list[dict], int]:
     results = []
@@ -198,6 +214,20 @@ def _run() -> tuple[list[dict], int]:
         })
 
     for label, payload in _NETWORK_EGRESS_PAYLOADS:
+        t0 = time.monotonic()
+        report = screen(payload)
+        ms = (time.monotonic() - t0) * 1000
+        blocked = report.safe is False
+
+        results.append({
+            "vector": label,
+            "layer": "AST static screen",
+            "blocked": blocked,
+            "detail": "; ".join(report.findings) or "(no finding — SAFE, real gap if this attack should block)",
+            "ms": round(ms, 2),
+        })
+
+    for label, payload in _FORMAT_STRING_PAYLOADS:
         t0 = time.monotonic()
         report = screen(payload)
         ms = (time.monotonic() - t0) * 1000
