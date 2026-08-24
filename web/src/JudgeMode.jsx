@@ -410,11 +410,11 @@ function SecurityCoverageCard() {
               <p className="text-[18px] text-cyan">{state.data.bypasses_found_and_fixed.count}</p>
               <p className="text-[8px] tracking-[0.12em] text-muted mt-1">REAL BYPASSES FOUND + FIXED</p>
             </div>
-            <div className="border border-edge rounded px-2 py-2">
-              <p className="text-[18px] text-cyan">{state.data.regression_tests.value}</p>
+            <div className="border border-warn/30 rounded px-2 py-2">
+              <p className="text-[18px] text-warn">{state.data.regression_tests.latest_known.value}</p>
               <p className="text-[8px] tracking-[0.12em] text-muted mt-1">
-                REGRESSION TESTS<br />
-                <span className="text-muted/70">as of {state.data.regression_tests.as_of_commit}</span>
+                REGRESSION TESTS (STATIC)<br />
+                <span className="text-muted/70">as of {state.data.regression_tests.latest_known.as_of_commit} — not live</span>
               </p>
             </div>
           </div>

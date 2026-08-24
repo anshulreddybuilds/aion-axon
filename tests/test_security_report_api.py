@@ -28,7 +28,7 @@ def test_report_lists_every_real_bypass_with_a_real_commit():
     body = client.get("/beastmode/security/report").json()
     items = body["bypasses_found_and_fixed"]["items"]
     assert body["bypasses_found_and_fixed"]["count"] == len(BYPASSES_FOUND_AND_FIXED)
-    assert len(items) == 4
+    assert len(items) == 5
     for item in items:
         assert item["fixed_in_commit"]  # never an empty/fake reference
         assert item["before"] and item["after"]
@@ -72,3 +72,31 @@ def test_report_has_zero_side_effects():
     assert firestore_store.audit_events == before_audit
     assert firestore_store.approvals == before_approvals
     assert firestore_store.evolution_events == before_evolution
+
+
+def test_live_and_historical_evidence_are_never_conflated():
+    """The report must be structurally honest about WHICH fields are
+    computed right now (red_team, forbidden-list sizes baked into the
+    category detail strings) versus which are static snapshots recorded
+    at a past commit (regression_tests). This asserts the shape itself
+    enforces that distinction -- a future edit that quietly merges them
+    into one ambiguous number would fail this test."""
+    body = client.get("/beastmode/security/report").json()
+
+    # LIVE: red_team.total must be a real, non-zero, freshly-computed
+    # count -- calling it twice in a row must never silently disagree
+    # with itself (it's live, not random), but it is NOT a static field.
+    first = body["red_team"]["total"]
+    second = client.get("/beastmode/security/report").json()["red_team"]["total"]
+    assert first == second > 0
+
+    # HISTORICAL: regression_tests must carry an explicit commit
+    # reference and be nested under a key that says what it is --
+    # never a bare top-level "test_count" number a reader could mistake
+    # for something this request just measured.
+    reg = body["regression_tests"]
+    assert "latest_known" in reg and "history" in reg
+    assert "as_of_commit" in reg["latest_known"]
+    assert "not_live" in reg["note"].lower() or "never" in reg["note"].lower()
+    assert "top_level" not in body  # no bare ambiguous count exists anywhere
+    assert "test_count" not in body

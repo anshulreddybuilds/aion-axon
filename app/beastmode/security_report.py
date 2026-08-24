@@ -105,6 +105,19 @@ BYPASSES_FOUND_AND_FIXED = (
               "'__' is flagged. f-strings were confirmed already safe (their "
               "{expr} fields parse into real ast.Attribute nodes).",
     ),
+    Bypass(
+        name="Frame / object-graph reflection",
+        found="systematic security-category audit (Phase 26)",
+        fixed_in_commit="626bb0a",
+        before="inspect.currentframe().f_back.f_globals and gc.get_objects() "
+               "both passed the screen clean -- frame objects expose "
+               "f_globals/f_back/f_locals under ORDINARY, non-dunder "
+               "attribute names, invisible to every dunder-based check.",
+        after="inspect and gc added to FORBIDDEN_IMPORTS. contextvars was "
+              "investigated in the same pass and correctly left unblocked "
+              "(no comparable capability) -- a negative-control test proves "
+              "this wasn't a reflexive ban on anything reflection-adjacent.",
+    ),
 )
 
 
@@ -166,8 +179,8 @@ def _static_categories() -> tuple[CategoryStatus, ...]:
                         "Derived from real audit events; a quarantined capability is never recommended for reuse by Capability Memory (tested)."),
         CategoryStatus("Approval gate", "BLOCKED", "AUTHORIZATION",
                         "install() never trusts the proposal record's own approval claim -- always re-reads the real approval from Firestore."),
-        CategoryStatus("Cloud Run / VPC egress", "UNVERIFIED", "DEPLOYMENT",
-                        "GCP network configuration is infrastructure this session has no way to inspect or test."),
+        CategoryStatus("Cloud Run / VPC egress", "KNOWN_LIMITATION", "DEPLOYMENT",
+                        "Confirmed via `gcloud run services describe`: no vpc-access-connector annotation on the aion-core service, and the Serverless VPC Access API itself has never been enabled on this GCP project (a live gcloud call to list connectors returned SERVICE_DISABLED). This is positive evidence of ABSENCE, not merely an unchecked box: Cloud Run's default unrestricted internet egress applies, with no VPC-level control layered on top. AST screening (see network-capable imports, above) is the ONLY control against this vector in production today."),
     )
 
 
@@ -175,8 +188,10 @@ KNOWN_LIMITATIONS = (
     "The sandbox process does not independently block network egress once a "
     "connection is attempted -- AST screening is the only control against "
     "this vector today.",
-    "Cloud Run's actual VPC/egress configuration has not been independently "
-    "verified this session.",
+    "Confirmed (not merely unchecked): the deployed aion-core Cloud Run "
+    "service has no VPC connector, and the Serverless VPC Access API has "
+    "never been enabled on this GCP project -- egress is Cloud Run's "
+    "unrestricted default, with no network-level control layered on top.",
     "YAML containment relies on the dependency being absent from the sandbox "
     "container, not on a deliberate AST rule.",
     "AST screening is fundamentally a blocklist. A sufficiently indirect or "
@@ -208,11 +223,18 @@ def build_report() -> dict[str, Any]:
         "categories": [c.to_dict() for c in _static_categories()],
         "known_limitations": list(KNOWN_LIMITATIONS),
         "regression_tests": {
-            "value": 432,
-            "as_of_commit": "15cc7c7",
-            "note": "Static snapshot from the local test suite at that commit -- "
-                    "NOT computed live by this endpoint. This endpoint never runs "
-                    "pytest inside an HTTP request.",
+            "latest_known": {"value": 439, "as_of_commit": "10037a2"},
+            "history": [
+                {"value": 432, "as_of_commit": "15cc7c7"},
+            ],
+            "note": "STATIC snapshots, manually recorded when this file was last "
+                    "edited -- NEVER computed live. This endpoint does not run "
+                    "pytest inside an HTTP request, so it cannot know the true "
+                    "current count; 'latest_known' can go stale the moment a "
+                    "commit lands that this file wasn't updated alongside. "
+                    "Treat this field as historical evidence, never as a live "
+                    "claim about the current suite -- the red_team field above "
+                    "IS live (it just ran), this field is not.",
         },
         "methodology_note": (
             "Every BLOCKED/TESTED claim above is backed by a real regression "
