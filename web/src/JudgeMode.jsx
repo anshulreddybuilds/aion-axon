@@ -347,6 +347,81 @@ function ApprovalExplainCard({ requestId }) {
   );
 }
 
+function PlannerCard() {
+  const [need, setNeed] = useState("");
+  const [state, setState] = useState({ loading: false, data: null, error: null });
+
+  const run = () => {
+    if (!need.trim()) return;
+    setState({ loading: true, data: null, error: null });
+    api.plan(need.trim())
+      .then((data) => setState({ loading: false, data, error: null }))
+      .catch((err) => setState({ loading: false, data: null, error: err.message }));
+  };
+
+  return (
+    <Panel
+      title="Planner / Decision Trace"
+      right={
+        <span className="text-[9px] tracking-[0.14em] px-2 py-0.5 rounded border border-edge text-muted">
+          POST /beastmode/plan
+        </span>
+      }
+    >
+      <div className="flex gap-2 mb-3">
+        <input
+          value={need}
+          onChange={(e) => setNeed(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && run()}
+          placeholder="a capability need, e.g. 'detect year-over-year anomalies'"
+          className="flex-1 bg-transparent border border-edge rounded px-2 py-1.5 text-[11px] text-white/90 outline-none focus:border-cyan/50"
+        />
+        <button
+          onClick={run}
+          disabled={state.loading || !need.trim()}
+          className="text-[10px] tracking-[0.1em] px-3 py-1.5 rounded border border-cyan/50 text-cyan hover:bg-cyan/10 disabled:opacity-40"
+        >
+          {state.loading ? "…" : "PLAN"}
+        </button>
+      </div>
+
+      {state.loading && <Empty>Consulting memory and building a plan…</Empty>}
+      {state.error && <p className="text-xs text-danger">{state.error}</p>}
+      {state.data && (
+        <div className="text-[10px] space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-white/90">{state.data.decision}</span>
+            {state.data.capability && <span className="text-cyan">{state.data.capability}</span>}
+          </div>
+          <p className="text-muted">{state.data.reason}</p>
+          {state.data.strategy && (
+            <p className="text-muted">
+              strategy: <span className="text-white/80">{state.data.strategy}</span>
+              {state.data.planned_attempts ? ` (${state.data.planned_attempts} attempts)` : ""}
+            </p>
+          )}
+          {state.data.memory?.matches?.length > 0 && (
+            <div className="pt-1 border-t border-edge space-y-1">
+              <p className="text-white/70">evidence</p>
+              {state.data.memory.matches.map((m) => (
+                <p key={m.name} className="text-muted">
+                  {m.name} — match {Math.round(m.score * 100)}%, {m.implemented ? "installed" : m.state}
+                </p>
+              ))}
+            </div>
+          )}
+          {state.data.required_checks?.length > 0 && (
+            <p className="text-muted">
+              required: <span className="text-white/80">{state.data.required_checks.join(", ")}</span>
+            </p>
+          )}
+          <p className="text-muted pt-1 border-t border-edge">{state.data.authorization_note}</p>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 export default function JudgeMode({ pending, acquiredNames }) {
   const [inspectCapability, setInspectCapability] = useState(acquiredNames?.[0] || "");
   const [explainRequestId, setExplainRequestId] = useState(pending?.[0]?.request_id || "");
@@ -372,6 +447,8 @@ export default function JudgeMode({ pending, acquiredNames }) {
         <QuarantineCard />
         <LedgerSealCard />
       </div>
+
+      <PlannerCard />
 
       <div className="border border-edge rounded-lg p-3 flex flex-wrap items-center gap-3">
         <label className="text-[10px] text-muted tracking-[0.1em]">

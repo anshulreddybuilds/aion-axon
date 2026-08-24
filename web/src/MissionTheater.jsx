@@ -295,6 +295,55 @@ function MemoryCheckPanel({ result, checking, error }) {
   );
 }
 
+function PlanPanel({ plan, planning, error }) {
+  if (planning) return <Empty>Consulting memory and building a plan…</Empty>;
+  if (error) return <p className="text-xs text-danger">{error}</p>;
+  if (!plan) return null;
+
+  const cls = MEMORY_TONE[plan.decision] || "border-edge text-muted";
+
+  return (
+    <div className={`border-2 rounded-lg p-4 space-y-3 ${cls.split(" ")[0]}`}>
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] tracking-[0.14em] text-white/90">WHY THIS PLAN?</p>
+        <span className={`text-[10px] tracking-[0.12em] ${cls.split(" ")[1]}`}>{plan.decision}</span>
+      </div>
+
+      <p className="text-[12px] text-white/90">{plan.reason}</p>
+
+      {plan.capability && (
+        <p className="text-[10px] text-muted">
+          target capability: <span className="text-cyan">{plan.capability}</span>
+        </p>
+      )}
+
+      {plan.strategy && (
+        <div className="text-[10px] text-muted space-y-1">
+          <p>strategy: <span className="text-white/80">{plan.strategy}</span> ({plan.planned_attempts} planned attempt{plan.planned_attempts === 1 ? "" : "s"})</p>
+          {plan.previous_failure && (
+            <p>historical failure fed forward: <span className="text-danger">{plan.previous_failure.slice(0, 200)}</span></p>
+          )}
+        </div>
+      )}
+
+      {plan.required_checks.length > 0 && (
+        <div className="text-[10px] text-muted">
+          <p className="text-white/70 mb-1">still required, regardless of this plan:</p>
+          <div className="flex flex-wrap gap-1.5">
+            {plan.required_checks.map((c) => (
+              <span key={c} className="px-2 py-0.5 rounded border border-edge">{c}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <MemoryCheckPanel result={plan.memory} checking={false} error={null} />
+
+      <p className="text-[9px] text-muted pt-1 border-t border-edge">{plan.authorization_note}</p>
+    </div>
+  );
+}
+
 export default function MissionTheater() {
   const [need, setNeed] = useState("");
   const [allowRetry, setAllowRetry] = useState(true);
@@ -319,6 +368,29 @@ export default function MissionTheater() {
       setMemoryError(err.message);
     } finally {
       setMemoryChecking(false);
+    }
+  };
+
+  const [plan, setPlan] = useState(null);
+  const [planning, setPlanning] = useState(false);
+  const [planError, setPlanError] = useState(null);
+
+  const generatePlan = async () => {
+    if (!need.trim()) return;
+    setPlanning(true);
+    setPlanError(null);
+    setPlan(null);
+    try {
+      const result = await api.plan(need.trim());
+      setPlan(result);
+      // A plan with retry evidence should default the mission's retry
+      // toggle to match what the plan actually intends to do -- the
+      // toggle stays user-editable, this just starts it honest.
+      if (result.strategy === "GENERATE_WITH_RETRY") setAllowRetry(true);
+    } catch (err) {
+      setPlanError(err.message);
+    } finally {
+      setPlanning(false);
     }
   };
 
@@ -376,6 +448,13 @@ export default function MissionTheater() {
               {memoryChecking ? "CHECKING…" : "🔎 CHECK MEMORY"}
             </button>
             <button
+              onClick={generatePlan}
+              disabled={planning || !need.trim()}
+              className="text-[11px] tracking-[0.12em] px-3 py-2 rounded border border-edge text-muted hover:border-cyan/40 hover:text-cyan disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {planning ? "PLANNING…" : "🧭 GENERATE PLAN"}
+            </button>
+            <button
               onClick={run}
               disabled={running || !need.trim() || !hasOwnerToken()}
               className="text-[11px] tracking-[0.12em] px-4 py-2 rounded border border-cyan/50 text-cyan hover:bg-cyan/10 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -385,11 +464,12 @@ export default function MissionTheater() {
           </div>
         </div>
         {!hasOwnerToken() && (
-          <p className="text-[9px] text-muted">Owner token required to run a mission — paste it above. Memory check is public.</p>
+          <p className="text-[9px] text-muted">Owner token required to run a mission — paste it above. Memory check and planning are public.</p>
         )}
       </div>
 
-      <MemoryCheckPanel result={memory} checking={memoryChecking} error={memoryError} />
+      <PlanPanel plan={plan} planning={planning} error={planError} />
+      {!plan && <MemoryCheckPanel result={memory} checking={memoryChecking} error={memoryError} />}
 
       {error && <p className="text-xs text-danger">{error}</p>}
 

@@ -147,6 +147,15 @@ export const api = {
       body: JSON.stringify({ need }),
     }),
   memoryHistory: (capability) => request(`/beastmode/memory/${capability}`),
+
+  // The memory-informed plan for a need -- REUSE_EXISTING_CAPABILITY /
+  // ACQUIRE_NEW (with strategy) / ESCALATE. Read-only, same invariant as
+  // memoryQuery: see app/synapse/planner.py's module docstring.
+  plan: (need) =>
+    request("/beastmode/plan", {
+      method: "POST",
+      body: JSON.stringify({ need }),
+    }),
 };
 
 /** Fetch everything the dashboard shows, tolerating partial failure.

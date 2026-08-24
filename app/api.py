@@ -771,3 +771,24 @@ def beastmode_memory_history(capability: str) -> dict[str, Any]:
         "attempts": len(history),
         "history": [h.to_dict() for h in history],
     }
+
+
+class PlanQuery(BaseModel):
+    need: str = Field(..., description="Free-text capability need to plan for.")
+
+
+@app.post("/beastmode/plan")
+def beastmode_plan(body: PlanQuery) -> dict[str, Any]:
+    """The memory-informed plan for `need`: REUSE_EXISTING_CAPABILITY /
+    ACQUIRE_NEW (with a strategy, informed by real retry-recovery
+    history) / ESCALATE. Read-only, deterministic given the same
+    underlying data -- see app/synapse/planner.py's module docstring for
+    why a plan cannot authorize anything the real pipeline wouldn't
+    already require."""
+    from app.synapse.planner import plan as build_plan
+
+    capabilities = firestore_store.list_capabilities()
+    events = firestore_store.list_audit_events(limit=1000)
+
+    result = build_plan(body.need, capabilities, events)
+    return {"need": body.need, **result.to_dict()}
