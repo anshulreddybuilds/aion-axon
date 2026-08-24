@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, hasOwnerToken } from "./api.js";
 import { Panel, Empty } from "./panels.jsx";
+import DemoRecoveryMode from "./DemoRecoveryMode.jsx";
+import { deriveStages, StageRow } from "./missionStages.jsx";
 
 /**
  * Mission Theater — one real acquisition, watched stage by stage.
@@ -15,134 +17,6 @@ import { Panel, Empty } from "./panels.jsx";
  * it returns is reconstructed from the real terminal record, never
  * invented. See app/synapse/engine.py for the exact fields.
  */
-
-const STAGE_ORDER = [
-  "GUARDIAN_PRESCREEN",
-  "RESEARCH",
-  "GENERATE",
-  "SAFETY_SCREEN",
-  "SANDBOX_TEST",
-  "EVALUATE",
-  "GUARDIAN_SCREEN",
-  "AWAITING_APPROVAL",
-];
-
-const TONE = {
-  PASSED: "border-ok/40 text-ok",
-  BLOCKED: "border-danger/40 text-danger",
-  REFUSED: "border-danger/40 text-danger",
-  REJECTED: "border-danger/40 text-danger",
-  FAILED: "border-danger/40 text-danger",
-  WAITING: "border-warn/40 text-warn",
-  DONE: "border-ok/40 text-ok",
-  SKIPPED: "border-edge text-muted",
-};
-
-function StageRow({ label, tone, detail, children }) {
-  const cls = TONE[tone] || "border-edge text-muted";
-  return (
-    <div className={`border rounded px-3 py-2 ${cls.split(" ")[0]}`}>
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] text-white/90 tracking-[0.08em]">{label}</span>
-        <span className={`text-[9px] tracking-[0.14em] ${cls.split(" ")[1]}`}>{tone}</span>
-      </div>
-      {detail && <p className="text-[10px] text-muted mt-1">{detail}</p>}
-      {children}
-    </div>
-  );
-}
-
-/** Reconstructs the stage-by-stage picture from ONE real terminal record.
- *  Never fabricates a stage the record doesn't evidence. */
-function deriveStages(record) {
-  const stages = [];
-
-  if (record.guardian?.decision === "REFUSE" && record.stage === "GUARDIAN_PRESCREEN") {
-    stages.push({
-      key: "GUARDIAN_PRESCREEN", label: "Guardian pre-screen", tone: "REFUSED",
-      detail: `${record.guardian.policy_id || ""} — ${record.reason}`,
-    });
-    return stages; // pipeline never left the doorway
-  }
-
-  if (record.research?.status) {
-    stages.push({
-      key: "RESEARCH", label: "Research",
-      tone: record.research.grounded ? "PASSED" : "WAITING",
-      detail: `${record.research.source_count} source(s)${
-        record.research.degraded_reason ? ` — degraded: ${record.research.degraded_reason}` : ""
-      }`,
-    });
-  }
-
-  if (record.attempts?.length) {
-    record.attempts.forEach((a) => {
-      const tone = a.outcome === "SANDBOX_PASSED" ? "PASSED"
-        : a.outcome === "SANDBOX_UNREACHABLE" ? "BLOCKED"
-        : "FAILED";
-      stages.push({
-        key: `attempt-${a.attempt}`,
-        label: `Generate + sandbox — attempt ${a.attempt}${a.attempt > 1 ? " (retry, fed real stderr)" : ""}`,
-        tone,
-        detail: a.candidate ? `${a.candidate} — ${a.outcome}${a.detail ? `: ${String(a.detail).slice(0, 160)}` : ""}` : a.outcome,
-      });
-    });
-  } else if (record.candidate) {
-    stages.push({
-      key: "GENERATE", label: "Generate",
-      tone: "PASSED",
-      detail: record.candidate.name,
-    });
-  }
-
-  if (record.safety?.safe !== undefined) {
-    stages.push({
-      key: "SAFETY_SCREEN", label: "AST static screen",
-      tone: record.safety.safe ? "PASSED" : "BLOCKED",
-      detail: record.safety.findings?.length ? record.safety.findings.join("; ") : "no findings",
-    });
-  }
-
-  if (record.tests?.status && !record.attempts?.length) {
-    stages.push({
-      key: "SANDBOX_TEST", label: "Sandbox",
-      tone: record.tests.passed ? "PASSED" : record.tests.status === "UNREACHABLE" ? "BLOCKED" : "FAILED",
-      detail: `exit ${record.tests.exit_code ?? "?"}`,
-    });
-  }
-
-  if (record.evaluation?.status) {
-    stages.push({
-      key: "EVALUATE", label: "Independent evaluation",
-      tone: record.evaluation.status === "SCORED"
-        ? (record.evaluation.verdict === "PASS" ? "PASSED" : "REJECTED")
-        : "WAITING",
-      detail: `${record.evaluation.status}${record.evaluation.score != null ? ` — score ${record.evaluation.score}` : ""}${
-        record.evaluation.reason_code ? ` (${record.evaluation.reason_code})` : ""
-      }`,
-    });
-  }
-
-  if (record.guardian?.decision && record.stage !== "GUARDIAN_PRESCREEN") {
-    stages.push({
-      key: "GUARDIAN_SCREEN", label: "Guardian screen",
-      tone: record.guardian.decision === "REFUSE" ? "REFUSED"
-        : record.guardian.decision === "APPROVAL_REQUIRED" ? "WAITING" : "PASSED",
-      detail: `${record.guardian.policy_id || "no policy matched"}${record.guardian.reason ? ` — ${record.guardian.reason}` : ""}`,
-    });
-  }
-
-  if (record.status === "AWAITING_APPROVAL") {
-    stages.push({
-      key: "AWAITING_APPROVAL", label: "Human approval", tone: "WAITING",
-      detail: `request ${record.approval_request_id}`,
-    });
-  } else if (["REJECTED", "REFUSED", "BLOCKED", "FAILED"].includes(record.status)) {
-    stages.push({ key: "TERMINAL", label: `Mission stopped — ${record.status}`, tone: record.status, detail: record.reason });
-  }
-
-  return stages;
-}
 
 function ApprovalGate({ record, onDecided }) {
   const [explain, setExplain] = useState(null);
@@ -345,6 +219,7 @@ function PlanPanel({ plan, planning, error }) {
 }
 
 export default function MissionTheater() {
+  const [mode, setMode] = useState("live"); // "live" | "demo"
   const [need, setNeed] = useState("");
   const [allowRetry, setAllowRetry] = useState(true);
   const [running, setRunning] = useState(false);
@@ -414,6 +289,29 @@ export default function MissionTheater() {
 
   return (
     <div className="space-y-4">
+      <div className="flex gap-2">
+        <button
+          onClick={() => setMode("live")}
+          className={`text-[10px] tracking-[0.12em] px-3 py-1.5 rounded border ${
+            mode === "live" ? "border-cyan/50 text-cyan bg-cyan/10" : "border-edge text-muted hover:text-white"
+          }`}
+        >
+          ● LIVE MISSION — real backend, real approval
+        </button>
+        <button
+          onClick={() => setMode("demo")}
+          className={`text-[10px] tracking-[0.12em] px-3 py-1.5 rounded border ${
+            mode === "demo" ? "border-warn/50 text-warn bg-warn/10" : "border-edge text-muted hover:text-white"
+          }`}
+        >
+          ▶ DEMO RECOVERY — deterministic fixture
+        </button>
+      </div>
+
+      {mode === "demo" && <DemoRecoveryMode />}
+
+      {mode === "live" && (
+      <>
       <div className="border border-cyan/30 rounded-lg p-4 bg-cyan/5">
         <p className="text-[11px] text-cyan tracking-[0.14em]">MISSION THEATER — ONE REAL ACQUISITION</p>
         <p className="text-[11px] text-muted mt-1 leading-relaxed">
@@ -504,6 +402,8 @@ export default function MissionTheater() {
             )}
           </div>
         </Panel>
+      )}
+      </>
       )}
     </div>
   );
