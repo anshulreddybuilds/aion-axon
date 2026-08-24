@@ -108,6 +108,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ active, reason: "Holo-Deck" }),
     }),
+
+  // Beastmode governance proof surface — every call here is a real GET/POST
+  // against app/beastmode/*.py. Nothing in this block is mocked; a failed
+  // call is surfaced as NOT AVAILABLE, never silently swapped for a fake
+  // result. See docs/AXON_BEASTMODE_AUDIT.md for what each module verifies.
+  redTeam: () => request("/beastmode/red-team"),
+  ledgerVerify: () => request("/beastmode/ledger/verify"),
+  ledgerSeal: () => request("/beastmode/ledger/seal", { method: "POST" }),
+  contract: (capability) => request(`/beastmode/contract/${capability}`),
+  lineage: (capability) => request(`/beastmode/lineage/${capability}`),
+  quarantine: () => request("/beastmode/quarantine"),
+  explainApproval: (requestId) =>
+    request(`/beastmode/approval/${requestId}/explain`),
 };
 
 /** Fetch everything the dashboard shows, tolerating partial failure.
