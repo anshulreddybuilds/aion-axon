@@ -65,3 +65,46 @@ def test_unavailable_model_yields_unscored(monkeypatch):
     assert result["status"] == "UNSCORED"
     assert result["score"] is None
     assert "404" in result["reason"]
+    assert result["reason_code"] == "EVALUATOR_UNAVAILABLE"
+
+
+def test_timeout_gets_its_own_reason_code(monkeypatch):
+    """A deadline/timeout is a distinct, actionable failure mode from a
+    generic outage -- collapsing both into one code would hide whether
+    retrying is likely to help."""
+    async def boom(prompt):
+        raise TimeoutError("deadline exceeded")
+
+    monkeypatch.setattr(evaluator, "_score", boom)
+
+    result = evaluator.evaluate("x", "y", "code", {"passed": True})
+
+    assert result["status"] == "UNSCORED"
+    assert result["reason_code"] == "EVALUATOR_TIMEOUT"
+
+
+def test_malformed_output_gets_its_own_reason_code(monkeypatch):
+    async def rambling(prompt):
+        return "I think this code is pretty good overall!"
+
+    monkeypatch.setattr(evaluator, "_score", rambling)
+
+    result = evaluator.evaluate("x", "y", "code", {"passed": True})
+
+    assert result["reason_code"] == "EVALUATOR_MALFORMED_OUTPUT"
+
+
+def test_scored_pass_and_fail_get_distinct_reason_codes(monkeypatch):
+    async def passing(prompt):
+        return "SCORE: 90 | VERDICT: PASS | REASON: solid coverage"
+
+    monkeypatch.setattr(evaluator, "_score", passing)
+    passed = evaluator.evaluate("x", "y", "code", {"passed": True})
+    assert passed["reason_code"] == "EVALUATOR_SCORED_PASS"
+
+    async def failing(prompt):
+        return "SCORE: 10 | VERDICT: FAIL | REASON: trivial coverage"
+
+    monkeypatch.setattr(evaluator, "_score", failing)
+    failed = evaluator.evaluate("x", "y", "code", {"passed": True})
+    assert failed["reason_code"] == "EVALUATOR_SCORED_FAIL"

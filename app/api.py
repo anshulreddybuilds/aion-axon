@@ -722,6 +722,7 @@ def beastmode_explain_approval(request_id: str) -> dict[str, Any]:
             },
             "evaluator_result": {
                 "status": evaluation.get("status"),
+                "reason_code": evaluation.get("reason_code"),
                 "score": evaluation.get("score"),
                 "verdict": evaluation.get("verdict"),
                 "reason": evaluation.get("reason"),

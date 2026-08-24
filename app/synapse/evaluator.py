@@ -109,8 +109,15 @@ def evaluate(
     try:
         raw = asyncio.run(_score(prompt))
     except Exception as error:  # noqa: BLE001
+        # asyncio.run(...) re-raises whatever the SDK call raised; a
+        # deadline/timeout from the SDK surfaces as one of these two
+        # names depending on transport, so both get their own reason
+        # code instead of collapsing into the generic "unavailable" one
+        # a human would otherwise have to read the message to diagnose.
+        is_timeout = type(error).__name__ in ("TimeoutError", "DeadlineExceeded")
         return {
             "status": "UNSCORED",
+            "reason_code": "EVALUATOR_TIMEOUT" if is_timeout else "EVALUATOR_UNAVAILABLE",
             "model": MODEL,
             "reason": (
                 f"Evaluator unavailable: {type(error).__name__}: {error}"
@@ -124,6 +131,7 @@ def evaluate(
     if parsed["score"] is None:
         return {
             "status": "UNSCORED",
+            "reason_code": "EVALUATOR_MALFORMED_OUTPUT",
             "model": MODEL,
             "reason": "Evaluator response could not be parsed into a score.",
             "raw": raw[:300],
@@ -133,6 +141,7 @@ def evaluate(
 
     return {
         "status": "SCORED",
+        "reason_code": "EVALUATOR_SCORED_FAIL" if parsed["verdict"] == "FAIL" else "EVALUATOR_SCORED_PASS",
         "model": MODEL,
         "score": parsed["score"],
         "verdict": parsed["verdict"],

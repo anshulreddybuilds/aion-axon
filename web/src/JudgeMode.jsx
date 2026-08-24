@@ -300,6 +300,9 @@ function ApprovalExplainCard({ requestId }) {
               <span className="text-muted">Evaluator</span>
               <span className="text-white/80">
                 {d.why_human.evaluator_result.status} — score {d.why_human.evaluator_result.score ?? "none"}
+                {d.why_human.evaluator_result.reason_code && (
+                  <span className="text-muted"> ({d.why_human.evaluator_result.reason_code})</span>
+                )}
               </span>
               <span className="text-muted">Policy</span>
               <span className="text-white/80">{d.why_human.policy_id || "none matched"}</span>
