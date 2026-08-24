@@ -158,6 +158,8 @@ export const api = {
     }),
 
   securityReport: () => request("/beastmode/security/report"),
+
+  missionReadiness: () => request("/beastmode/mission/readiness"),
 };
 
 /** Fetch everything the dashboard shows, tolerating partial failure.

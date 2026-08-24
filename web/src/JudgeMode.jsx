@@ -411,10 +411,19 @@ function SecurityCoverageCard() {
               <p className="text-[8px] tracking-[0.12em] text-muted mt-1">REAL BYPASSES FOUND + FIXED</p>
             </div>
             <div className="border border-warn/30 rounded px-2 py-2">
-              <p className="text-[18px] text-warn">{state.data.regression_tests.latest_known.value}</p>
+              {/* Tolerates the OLD flat {value, as_of_commit} shape and the
+                  new {latest_known: {value, as_of_commit}} shape, so this
+                  card never crashes if the frontend and backend are ever
+                  a version apart -- exactly the kind of skew a real
+                  deploy sequence can produce. */}
+              <p className="text-[18px] text-warn">
+                {state.data.regression_tests?.latest_known?.value ?? state.data.regression_tests?.value ?? "—"}
+              </p>
               <p className="text-[8px] tracking-[0.12em] text-muted mt-1">
                 REGRESSION TESTS (STATIC)<br />
-                <span className="text-muted/70">as of {state.data.regression_tests.latest_known.as_of_commit} — not live</span>
+                <span className="text-muted/70">
+                  as of {state.data.regression_tests?.latest_known?.as_of_commit ?? state.data.regression_tests?.as_of_commit ?? "unknown"} — not live
+                </span>
               </p>
             </div>
           </div>
@@ -471,6 +480,95 @@ function SecurityCoverageCard() {
               ))}
             </div>
           </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+const READINESS_TONE = {
+  READY: "text-ok border-ok/40",
+  READY_WITH_LIMITATIONS: "text-warn border-warn/40",
+  NOT_READY: "text-danger border-danger/40",
+};
+
+const AGENCY_NARRATIVE = [
+  "THE SYSTEM CAN PLAN",
+  "THE SYSTEM CAN ACQUIRE",
+  "THE SYSTEM CAN FAIL",
+  "THE SYSTEM CAN DIAGNOSE",
+  "THE SYSTEM CAN RETRY",
+  "THE SYSTEM CAN BE EVALUATED",
+  "THE SYSTEM STOPS FOR HUMAN AUTHORIZATION",
+  "THE SYSTEM CAN INSTALL AFTER AUTHORIZATION",
+  "THE SYSTEM RECORDS PROVENANCE",
+  "THE SYSTEM CAN BE AUDITED",
+];
+
+function MissionReadinessCard() {
+  const [state, setState] = useState({ loading: true, data: null, error: null });
+
+  const run = () => {
+    setState({ loading: true, data: null, error: null });
+    api.missionReadiness()
+      .then((data) => setState({ loading: false, data, error: null }))
+      .catch((err) => setState({ loading: false, data: null, error: err.message }));
+  };
+
+  useEffect(run, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <Panel
+      title="Mission Readiness"
+      right={
+        <button
+          onClick={run}
+          className="text-[9px] tracking-[0.12em] px-2 py-1 rounded border border-edge text-muted hover:border-cyan/40 hover:text-cyan"
+        >
+          ↻ RE-RUN
+        </button>
+      }
+    >
+      <div className="mb-4 grid grid-cols-2 gap-1.5">
+        {AGENCY_NARRATIVE.map((line) => (
+          <p key={line} className="text-[9px] text-white/70 tracking-[0.04em]">✓ {line}</p>
+        ))}
+      </div>
+
+      {state.loading && <Empty>Calling the live endpoint…</Empty>}
+      {state.error && <p className="text-xs text-danger">{state.error}</p>}
+      {state.data && (
+        <div className="space-y-3">
+          <div className={`border-2 rounded-lg p-3 ${READINESS_TONE[state.data.overall]?.split(" ")[1] || "border-edge"}`}>
+            <div className="flex items-center justify-between">
+              <span className={`text-[12px] tracking-[0.12em] ${READINESS_TONE[state.data.overall]?.split(" ")[0] || "text-muted"}`}>
+                {state.data.overall}
+              </span>
+              <span className="text-[10px] text-muted">
+                REAL PRODUCTION MISSION: <span className="text-warn">{state.data.real_mission_execution}</span>
+              </span>
+            </div>
+            <p className="text-[9px] text-muted mt-2">{state.data.note}</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+            {state.data.checks.map((c) => (
+              <div key={c.name} className="flex items-center gap-1.5 text-[9px]" title={c.detail}>
+                <span className={c.ready ? "text-ok" : "text-danger"}>{c.ready ? "✓" : "✗"}</span>
+                <span className="text-white/80 truncate">{c.name.replace(/_/g, " ")}</span>
+                <span className="ml-auto text-muted/60">{c.kind}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="pt-2 border-t border-warn/30 flex items-center justify-between">
+            <span className="text-[10px] text-warn tracking-[0.1em]">OWNER AUTHORIZATION</span>
+            <span className="text-[10px] text-warn">REQUIRED</span>
+          </div>
+          <p className="text-[9px] text-muted italic">
+            AION Axon does not self-authorize its own production mutations. That boundary is
+            deliberate, not a gap in the demo.
+          </p>
         </div>
       )}
     </Panel>
@@ -568,6 +666,7 @@ export default function JudgeMode({ pending, acquiredNames }) {
         </p>
       </div>
 
+      <MissionReadinessCard />
       <SecurityCoverageCard />
 
       <div className="grid gap-4 lg:grid-cols-2">
