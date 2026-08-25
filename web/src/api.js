@@ -164,7 +164,88 @@ export const api = {
   // The formal capability-lifecycle transition table -- public, pure
   // constants, no secrets. See app/beastmode/state_machine.py.
   stateMachine: () => request("/beastmode/state-machine"),
+
+  /**
+   * proposeStream — SSE-based acquisition that emits stage events live.
+   *
+   * Returns a cleanup function. Call it to abort the stream early.
+   *
+   * callbacks:
+   *   onStage(stage, status, detail) — called for each stage event
+   *   onDone(record)                 — called with the terminal record
+   *   onError(message)               — called on error
+   *   onConnected()                  — called when the SSE connection opens
+   */
+  proposeStream(need, { missionId, allowRetry = false } = {}, {
+    onStage, onDone, onError, onConnected,
+  } = {}) {
+    const params = new URLSearchParams({ need, allow_retry: String(allowRetry) });
+    if (missionId) params.set("mission_id", missionId);
+
+    const headers = {};
+    if (ownerToken) headers["X-Axon-Token"] = ownerToken;
+
+    // EventSource does not support custom headers natively, so we use
+    // fetch + ReadableStream to handle the SSE manually. This lets us
+    // forward the owner token as a header (required for auth).
+    const controller = new AbortController();
+
+    fetch(`${CORE}/synapse/propose/stream?${params}`, {
+      headers,
+      signal: controller.signal,
+    }).then(async (response) => {
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        onError?.(`${response.status} — ${text || "stream failed"}`);
+        return;
+      }
+
+      onConnected?.();
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop(); // keep incomplete last line
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const jsonStr = trimmed.slice(5).trim();
+          if (!jsonStr) continue;
+
+          try {
+            const event = JSON.parse(jsonStr);
+            if (event.type === "connected") {
+              // already called onConnected above
+            } else if (event.type === "stage") {
+              onStage?.(event.stage, event.status, event.detail);
+            } else if (event.type === "done") {
+              onDone?.(event.record);
+            } else if (event.type === "error") {
+              onError?.(event.message);
+            }
+          } catch {
+            // malformed SSE line — skip
+          }
+        }
+      }
+    }).catch((err) => {
+      if (err?.name !== "AbortError") {
+        onError?.(err?.message || "stream connection failed");
+      }
+    });
+
+    return () => controller.abort();
+  },
 };
+
 
 /** Fetch everything the dashboard shows, tolerating partial failure.
  *

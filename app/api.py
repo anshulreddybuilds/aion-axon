@@ -11,7 +11,7 @@ from typing import Any, Literal, Optional
 
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -561,6 +561,48 @@ def synapse_propose(body: AcquisitionRequest) -> dict[str, Any]:
     return synapse.propose(
         body.need, body.mission_id, allow_retry=body.allow_retry,
     ).to_dict()
+
+
+
+@app.get(
+    "/synapse/propose/stream",
+    dependencies=[Depends(require_owner), Depends(rate_limit_propose)],
+)
+def synapse_propose_stream(
+    need: str = Query(..., min_length=3, max_length=4000),
+    mission_id: Optional[str] = Query(None),
+    allow_retry: bool = Query(False),
+    request: Request = None,
+) -> StreamingResponse:
+    """Server-Sent Events stream for an acquisition run.
+
+    Emits one JSON event per SSE message as each pipeline stage starts
+    and completes:
+
+        {"type": "connected"}
+        {"type": "stage", "stage": "RESEARCH", "status": "ACTIVE"}
+        {"type": "stage", "stage": "RESEARCH", "status": "DONE"}
+        ...
+        {"type": "done", "record": { <full AcquisitionRecord> }}
+
+    This is the same governed pipeline as POST /synapse/propose — same
+    engine, same auth, same rate limit. Nothing is simulated: the stages
+    that appear are the stages the engine actually traversed.
+    """
+    from app.synapse.streaming import stream_propose
+
+    need_stripped = (need or "").strip()
+    if not need_stripped:
+        return JSONResponse({"error": "need must not be blank"}, status_code=422)
+
+    return StreamingResponse(
+        stream_propose(need_stripped, mission_id, allow_retry, owner_token=None),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/synapse/install/{capability}", dependencies=[Depends(require_owner)])

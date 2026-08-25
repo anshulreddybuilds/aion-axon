@@ -1,23 +1,130 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import { api, hasOwnerToken } from "./api.js";
 import { Panel, Empty } from "./panels.jsx";
 import DemoRecoveryMode from "./DemoRecoveryMode.jsx";
-import { deriveStages, StageRow } from "./missionStages.jsx";
+import { deriveStages, StageRow, TONE } from "./missionStages.jsx";
 import { reconcileRecord } from "./missionApprovalReconcile.js";
 
 /**
- * Mission Theater — one real acquisition, watched stage by stage.
+ * Mission Theater â€” one real acquisition, watched stage by stage.
  *
  * POST /synapse/propose runs the actual governed pipeline synchronously
  * (research -> generate -> screen -> sandbox -> evaluate -> guardian ->
  * approval) and blocks until it reaches a terminal stage or stops at
  * AWAITING_APPROVAL. There is no separate streaming/polling channel for
- * an in-flight acquisition — this component is honest about that: the
+ * an in-flight acquisition â€” this component is honest about that: the
  * "RUNNING" state below corresponds to one real in-flight HTTP request,
  * not a simulated multi-step animation, and every stage rendered after
  * it returns is reconstructed from the real terminal record, never
  * invented. See app/synapse/engine.py for the exact fields.
+ *
+ * The streaming path (GET /synapse/propose/stream) emits SSE stage events
+ * as each pipeline stage begins and completes, so the judge can watch the
+ * real pipeline traverse in real time rather than waiting for a wall of
+ * text to arrive all at once.
  */
+
+// Human-readable labels for each engine stage name
+const STAGE_LABELS = {
+  GUARDIAN_PRESCREEN: "Guardian pre-screen",
+  RESEARCH:           "Research â€” web grounding",
+  GENERATE:           "Generate capability (Gemini)",
+  SAFETY_SCREEN:      "AST static safety screen",
+  SANDBOX_TEST:       "Sandbox execution test",
+  EVALUATE:           "Independent evaluation (Gemma)",
+  GUARDIAN_SCREEN:    "Guardian capability screen",
+  AWAITING_APPROVAL:  "Human approval gate",
+  KILL_SWITCH:        "Kill switch check",
+};
+
+// The ordered pipeline stages as the engine traverses them
+const PIPELINE_ORDER = [
+  "GUARDIAN_PRESCREEN",
+  "RESEARCH",
+  "GENERATE",
+  "SAFETY_SCREEN",
+  "SANDBOX_TEST",
+  "EVALUATE",
+  "GUARDIAN_SCREEN",
+  "AWAITING_APPROVAL",
+];
+
+function LivePipelineView({ liveStages, running }) {
+  // liveStages: Array of { stage, status, detail }
+  // status: "ACTIVE" | "DONE" | "FAILED" | "BLOCKED" | "REFUSED"
+
+  if (!running && liveStages.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[10px] tracking-[0.14em] text-cyan">
+        LIVE PIPELINE â€” REAL ENGINE STAGES
+      </p>
+      {PIPELINE_ORDER.map((stageName) => {
+        const entry = liveStages.find((s) => s.stage === stageName);
+        if (!entry && running) {
+          // Show upcoming stages as dim placeholders while running
+          const alreadyPassed = liveStages.some((s) => s.stage === stageName);
+          if (alreadyPassed) return null;
+          // Only show the placeholder if we haven't passed this stage yet
+          const firstUnseenIndex = PIPELINE_ORDER.findIndex(
+            (s) => !liveStages.some((ls) => ls.stage === s)
+          );
+          const thisIndex = PIPELINE_ORDER.indexOf(stageName);
+          if (thisIndex > firstUnseenIndex + 1) return null; // too far ahead
+        }
+        if (!entry) return null;
+
+        const isActive = entry.status === "ACTIVE";
+        const isFailed = ["FAILED", "BLOCKED", "REFUSED"].includes(entry.status);
+        const isDone = entry.status === "DONE";
+
+        return (
+          <div
+            key={stageName}
+            className={`border rounded px-3 py-2 transition-all duration-300 ${
+              isActive
+                ? "border-cyan/60 bg-cyan/5 animate-pulse"
+                : isFailed
+                ? "border-danger/40"
+                : isDone
+                ? "border-ok/30"
+                : "border-edge/30"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-white/90 tracking-[0.06em]">
+                {isActive && <span className="text-cyan mr-1.5">â–¶</span>}
+                {isDone && <span className="text-ok mr-1.5">âœ“</span>}
+                {isFailed && <span className="text-danger mr-1.5">âœ•</span>}
+                {STAGE_LABELS[stageName] || stageName}
+              </span>
+              <span
+                className={`text-[9px] tracking-[0.14em] ${
+                  isActive
+                    ? "text-cyan"
+                    : isFailed
+                    ? "text-danger"
+                    : "text-ok"
+                }`}
+              >
+                {isActive ? "RUNNING" : entry.status}
+              </span>
+            </div>
+            {entry.detail && (
+              <p className="text-[10px] text-muted mt-1">{entry.detail}</p>
+            )}
+          </div>
+        );
+      })}
+      {running && (
+        <p className="text-[9px] text-muted animate-pulse">
+          Pipeline executing â€” real Gemini + sandbox calls in flightâ€¦
+        </p>
+      )}
+    </div>
+  );
+}
 
 function ApprovalGate({ record, onDecided }) {
   const [explain, setExplain] = useState(null);
@@ -50,7 +157,7 @@ function ApprovalGate({ record, onDecided }) {
 
   return (
     <div className="border-2 border-warn/50 rounded-lg p-4 bg-warn/5">
-      <p className="text-[11px] tracking-[0.14em] text-warn">⏸ HUMAN APPROVAL REQUIRED</p>
+      <p className="text-[11px] tracking-[0.14em] text-warn">â¸ HUMAN APPROVAL REQUIRED</p>
       <p className="text-[12px] text-white/90 mt-2">
         Capability: <span className="text-cyan">{record.candidate?.name}</span>
       </p>
@@ -62,13 +169,13 @@ function ApprovalGate({ record, onDecided }) {
             Risk <span className="text-white/80">{explain.why_human.risk_score.tier}</span> ({explain.why_human.risk_score.score}/100)
           </p>
           {explain.why_human.risk_score.factors.map((f, i) => (
-            <p key={i} className="text-muted">· {f}</p>
+            <p key={i} className="text-muted">Â· {f}</p>
           ))}
           <p className="text-muted pt-1 border-t border-edge mt-2">
             Sandbox: <span className={explain.why_human.sandbox_result.passed ? "text-ok" : "text-danger"}>
               {explain.why_human.sandbox_result.passed ? "PASSED" : "FAILED"}
             </span>
-            {"  ·  "}Evaluator: <span className="text-white/80">
+            {"  Â·  "}Evaluator: <span className="text-white/80">
               {explain.why_human.evaluator_result.status}
               {explain.why_human.evaluator_result.score != null ? ` (${explain.why_human.evaluator_result.score})` : ""}
             </span>
@@ -99,10 +206,10 @@ function ApprovalGate({ record, onDecided }) {
             <p className="text-danger">{result.error}</p>
           ) : result.approved ? (
             <div className="space-y-1">
-              <p className="text-ok">✓ HUMAN APPROVED — install requested</p>
+              <p className="text-ok">âœ“ HUMAN APPROVED â€” install requested</p>
               <p className="text-muted">
                 {result.installResult?.status === "INSTALLED"
-                  ? "INSTALLED → ACTIVE. Mission's original need is now satisfiable."
+                  ? "INSTALLED â†’ ACTIVE. Mission's original need is now satisfiable."
                   : `Install: ${result.installResult?.status || result.installResult?.reason || "unknown"}`}
               </p>
             </div>
@@ -112,7 +219,7 @@ function ApprovalGate({ record, onDecided }) {
         </div>
       )}
       {!hasOwnerToken() && !result && (
-        <p className="text-[9px] text-muted mt-2">Owner token required to approve or reject — paste it above.</p>
+        <p className="text-[9px] text-muted mt-2">Owner token required to approve or reject â€” paste it above.</p>
       )}
     </div>
   );
@@ -126,7 +233,7 @@ const MEMORY_TONE = {
 };
 
 function MemoryCheckPanel({ result, checking, error }) {
-  if (checking) return <Empty>Searching prior capability history…</Empty>;
+  if (checking) return <Empty>Searching prior capability historyâ€¦</Empty>;
   if (error) return <p className="text-xs text-danger">{error}</p>;
   if (!result) return null;
 
@@ -137,7 +244,7 @@ function MemoryCheckPanel({ result, checking, error }) {
       <div className="flex items-center justify-between">
         <p className="text-[10px] tracking-[0.14em] text-white/80">MEMORY CHECK</p>
         <span className={`text-[9px] tracking-[0.12em] ${cls.split(" ")[1]}`}>
-          {result.recommendation} · {result.confidence}
+          {result.recommendation} Â· {result.confidence}
         </span>
       </div>
       <p className="text-[11px] text-white/90">{result.reason}</p>
@@ -147,7 +254,7 @@ function MemoryCheckPanel({ result, checking, error }) {
             <div key={m.name} className="flex items-center justify-between text-[10px]">
               <span className="text-white/80">{m.name}</span>
               <span className="text-muted">
-                match {Math.round(m.score * 100)}% · {m.implemented ? "installed" : m.state}
+                match {Math.round(m.score * 100)}% Â· {m.implemented ? "installed" : m.state}
               </span>
             </div>
           ))}
@@ -160,7 +267,7 @@ function MemoryCheckPanel({ result, checking, error }) {
           </summary>
           <div className="mt-1 space-y-1">
             {result.history.map((h, i) => (
-              <p key={i}>{h.timestamp} — {h.stage} → {h.status}{h.reason ? `: ${h.reason}` : ""}</p>
+              <p key={i}>{h.timestamp} â€” {h.stage} â†’ {h.status}{h.reason ? `: ${h.reason}` : ""}</p>
             ))}
           </div>
         </details>
@@ -171,7 +278,7 @@ function MemoryCheckPanel({ result, checking, error }) {
 }
 
 function PlanPanel({ plan, planning, error }) {
-  if (planning) return <Empty>Consulting memory and building a plan…</Empty>;
+  if (planning) return <Empty>Consulting memory and building a planâ€¦</Empty>;
   if (error) return <p className="text-xs text-danger">{error}</p>;
   if (!plan) return null;
 
@@ -228,6 +335,10 @@ export default function MissionTheater() {
   const [error, setError] = useState(null);
   const [decided, setDecided] = useState(false);
 
+  // Live streaming stage state
+  const [liveStages, setLiveStages] = useState([]);
+  const cleanupRef = useRef(null);
+
   const [memory, setMemory] = useState(null);
   const [memoryChecking, setMemoryChecking] = useState(false);
   const [memoryError, setMemoryError] = useState(null);
@@ -259,9 +370,6 @@ export default function MissionTheater() {
     try {
       const result = await api.plan(need.trim());
       setPlan(result);
-      // A plan with retry evidence should default the mission's retry
-      // toggle to match what the plan actually intends to do -- the
-      // toggle stays user-editable, this just starts it honest.
       if (result.strategy === "GENERATE_WITH_RETRY") setAllowRetry(true);
     } catch (err) {
       setPlanError(err.message);
@@ -270,21 +378,60 @@ export default function MissionTheater() {
     }
   };
 
-  const run = async () => {
+  const run = () => {
     if (!need.trim()) return;
+
+    // Abort any in-flight stream
+    if (cleanupRef.current) {
+      cleanupRef.current();
+      cleanupRef.current = null;
+    }
+
     setRunning(true);
     setError(null);
     setRecord(null);
     setDecided(false);
-    try {
-      const result = await api.proposeCapability(need.trim(), { allowRetry });
-      setRecord(result);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setRunning(false);
-    }
+    setLiveStages([]);
+
+    const cleanup = api.proposeStream(
+      need.trim(),
+      { allowRetry },
+      {
+        onConnected() {
+          // stream is open â€” nothing extra needed
+        },
+        onStage(stage, status, detail) {
+          setLiveStages((prev) => {
+            // Update existing entry or append
+            const idx = prev.findIndex((s) => s.stage === stage);
+            if (idx >= 0) {
+              const next = [...prev];
+              next[idx] = { stage, status, detail };
+              return next;
+            }
+            return [...prev, { stage, status, detail }];
+          });
+        },
+        onDone(terminalRecord) {
+          setRecord(terminalRecord);
+          setRunning(false);
+          cleanupRef.current = null;
+        },
+        onError(message) {
+          setError(message);
+          setRunning(false);
+          cleanupRef.current = null;
+        },
+      }
+    );
+
+    cleanupRef.current = cleanup;
   };
+
+  // Cleanup stream on unmount
+  useEffect(() => {
+    return () => { if (cleanupRef.current) cleanupRef.current(); };
+  }, []);
 
   const stages = record ? deriveStages(record) : [];
 
@@ -297,8 +444,8 @@ export default function MissionTheater() {
             mode === "live" ? "border-cyan/60 text-cyan bg-cyan/10" : "border-edge text-muted hover:text-white"
           }`}
         >
-          <div>● LIVE MISSION</div>
-          <div className="text-[8px] opacity-80 mt-0.5">REAL PRODUCTION · HUMAN AUTHORIZATION REQUIRED</div>
+          <div>â— LIVE MISSION</div>
+          <div className="text-[8px] opacity-80 mt-0.5">REAL PRODUCTION Â· HUMAN AUTHORIZATION REQUIRED</div>
         </button>
         <button
           onClick={() => setMode("demo")}
@@ -306,8 +453,8 @@ export default function MissionTheater() {
             mode === "demo" ? "border-warn/60 text-warn bg-warn/10" : "border-edge text-muted hover:text-white"
           }`}
         >
-          <div>▶ DEMO RECOVERY</div>
-          <div className="text-[8px] opacity-80 mt-0.5">DEMO FIXTURE · NO PRODUCTION MUTATION</div>
+          <div>â–¶ DEMO RECOVERY</div>
+          <div className="text-[8px] opacity-80 mt-0.5">DEMO FIXTURE Â· NO PRODUCTION MUTATION</div>
         </button>
       </div>
 
@@ -316,13 +463,14 @@ export default function MissionTheater() {
       {mode === "live" && (
       <>
       <div className="border border-cyan/30 rounded-lg p-4 bg-cyan/5">
-        <p className="text-[11px] text-cyan tracking-[0.14em]">MISSION THEATER — ONE REAL ACQUISITION</p>
+        <p className="text-[11px] text-cyan tracking-[0.14em]">MISSION THEATER â€” ONE REAL ACQUISITION</p>
         <p className="text-[11px] text-muted mt-1 leading-relaxed">
           This calls the real governed pipeline (<code>POST /synapse/propose</code>) with whatever
-          you type below. It is a live network call against production — typically 10–30s,
+          you type below. It is a live network call against production â€” typically 10â€“30s,
           since it really invokes Gemini and the sandbox. There is no pre-recorded state:
           if you type a need that already has a satisfying capability, expect it to say so
-          honestly rather than manufacture a new gap.
+          honestly rather than manufacture a new gap.{" "}
+          <span className="text-cyan/80">Stages appear live as the engine traverses them.</span>
         </p>
       </div>
 
@@ -346,26 +494,26 @@ export default function MissionTheater() {
               disabled={memoryChecking || !need.trim()}
               className="text-[11px] tracking-[0.12em] px-3 py-2 rounded border border-edge text-muted hover:border-cyan/40 hover:text-cyan disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {memoryChecking ? "CHECKING…" : "🔎 CHECK MEMORY"}
+              {memoryChecking ? "CHECKINGâ€¦" : "ðŸ”Ž CHECK MEMORY"}
             </button>
             <button
               onClick={generatePlan}
               disabled={planning || !need.trim()}
               className="text-[11px] tracking-[0.12em] px-3 py-2 rounded border border-edge text-muted hover:border-cyan/40 hover:text-cyan disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {planning ? "PLANNING…" : "🧭 GENERATE PLAN"}
+              {planning ? "PLANNINGâ€¦" : "ðŸ§­ GENERATE PLAN"}
             </button>
             <button
               onClick={run}
               disabled={running || !need.trim() || !hasOwnerToken()}
               className="text-[11px] tracking-[0.12em] px-4 py-2 rounded border border-cyan/50 text-cyan hover:bg-cyan/10 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {running ? "RUNNING — LIVE CALL IN FLIGHT…" : "▶ RUN MISSION"}
+              {running ? "â–¶ PIPELINE RUNNINGâ€¦" : "â–¶ RUN MISSION"}
             </button>
           </div>
         </div>
         {!hasOwnerToken() && (
-          <p className="text-[9px] text-muted">Owner token required to run a mission — paste it above. Memory check and planning are public.</p>
+          <p className="text-[9px] text-muted">Owner token required to run a mission â€” paste it above. Memory check and planning are public.</p>
         )}
       </div>
 
@@ -374,8 +522,15 @@ export default function MissionTheater() {
 
       {error && <p className="text-xs text-danger">{error}</p>}
 
+      {/* Live streaming pipeline â€” shows while running AND after completion */}
+      {(running || liveStages.length > 0) && !record && (
+        <Panel title="Live pipeline â€” real engine stages">
+          <LivePipelineView liveStages={liveStages} running={running} />
+        </Panel>
+      )}
+
       {record && (
-        <Panel title="Live governance spine — real terminal record">
+        <Panel title="Governed pipeline â€” verified terminal record">
           <div className="space-y-2">
             {stages.length === 0 && <Empty>No stages evidenced by this record.</Empty>}
             {stages.map((s) => (
@@ -403,9 +558,9 @@ export default function MissionTheater() {
             <span className="text-muted">Need</span><span className="text-white/80">{record.need}</span>
             <span className="text-muted">Final stage</span><span className="text-white/80">{record.stage}</span>
             <span className="text-muted">Status</span><span className="text-white/80">{record.status}</span>
-            <span className="text-muted">Capability</span><span className="text-white/80">{record.candidate?.name || "—"}</span>
+            <span className="text-muted">Capability</span><span className="text-white/80">{record.candidate?.name || "â€”"}</span>
             <span className="text-muted">Attempts made</span><span className="text-white/80">{record.attempts?.length || 1}</span>
-            <span className="text-muted">Approval request</span><span className="text-white/80">{record.approval_request_id || "—"}</span>
+            <span className="text-muted">Approval request</span><span className="text-white/80">{record.approval_request_id || "â€”"}</span>
             {record.reason && (
               <>
                 <span className="text-muted">Reason</span><span className="text-white/80">{record.reason}</span>
