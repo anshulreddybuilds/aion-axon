@@ -7,20 +7,41 @@ never silently downgraded to a MemoryFirestore/threading test dressed up
 as proof of distributed atomicity. Those already exist separately in
 tests/test_concurrency.py, with their own honest scope statement.
 
-Why this couldn't be exercised this session: the Firestore emulator
-requires a JVM (`gcloud emulators firestore start` shells out to a bundled
-jar). `java` is not on PATH in this environment. Installing a full JDK
-just to run one test session is a heavyweight, one-way environment change
-disproportionate to a single verification pass -- flagged for the human
-owner to decide, not done silently.
+Why this couldn't be exercised: the Firestore emulator requires a JVM
+(`gcloud emulators firestore start` shells out to a bundled jar). `java`
+is not on PATH in this environment -- confirmed across multiple sessions,
+not assumed. Installing a full JDK just to run one test session is a
+heavyweight, one-way environment change disproportionate to a single
+verification pass -- flagged for the human owner to decide, not done
+silently.
 
-To actually run this test for real:
+A Docker-based alternative was genuinely attempted (not just considered)
+in a later session: Docker Desktop (29.6.1) is installed, but its backend
+process crashed on launch (`backend process exited` in Docker Desktop's
+own log, ~20s after start, no container ever created) -- almost certainly
+a sandboxed/VM environment where the virtualization (WSL2/Hyper-V) Docker
+Desktop needs on Windows is restricted. Re-enabling that would mean
+changing host virtualization/BIOS-level settings, which is a real system
+configuration change, not a "safe and cheap" one -- out of scope here.
+Do not re-attempt the Docker path in this same environment without first
+confirming virtualization support changed.
 
+To actually run this test for real, in an environment with EITHER a JDK
+OR working Docker:
+
+    Option A -- native JDK:
     1. Install a JDK (any recent LTS; the emulator just needs `java` on PATH).
     2. gcloud components install cloud-firestore-emulator
     3. gcloud emulators firestore start --host-port=localhost:8080
     4. In another shell: export FIRESTORE_EMULATOR_HOST=localhost:8080
     5. AXON_FIRESTORE_MODE=emulator python -m pytest tests/test_concurrency_firestore_emulator.py -v
+
+    Option B -- Docker (if the daemon actually starts there):
+    1. docker pull gcr.io/google.com/cloudsdktool/cloud-sdk:emulators
+    2. docker run -p 8080:8080 gcr.io/google.com/cloudsdktool/cloud-sdk:emulators \
+         gcloud emulators firestore start --host-port=0.0.0.0:8080
+    3. export FIRESTORE_EMULATOR_HOST=localhost:8080
+    4. python -m pytest tests/test_concurrency_firestore_emulator.py -v
 
 The google-cloud-firestore SDK installed here (checked this session) does
 expose `Client.transaction()` -- the real API to use for an atomic
