@@ -2,6 +2,19 @@
 
 Written at the end of a credit-efficient security/reliability pass. Read this before re-deriving anything — it is deliberately complete.
 
+## Update 4 — genuine Docker attempt for P1, still environment-blocked, HEAD 08883d2
+
+A session was explicitly directed to try harder to close P1 rather than just re-documenting it. Result: **still genuinely blocked, now with stronger evidence.**
+
+- Confirmed (again) `java` absent on PATH.
+- **New this pass**: found Docker Desktop (29.6.1) is installed. Attempted to actually use it as an alternative path to run the Firestore emulator (no JDK needed inside a container). Launched Docker Desktop, waited ~70s, checked `docker ps`. **Docker Desktop's own backend process crashed on launch** (`backend process exited` in its log, ~20s in, no container ever created). Confirmed no docker processes left running afterward — nothing to clean up, no side effects left on the host.
+- Diagnosis: almost certainly a sandboxed/VM environment where the virtualization (WSL2/Hyper-V) Docker Desktop needs on Windows is restricted. Fixing that would mean host-level virtualization/BIOS configuration changes — a real system change, not "safe and cheap," explicitly out of scope.
+- **Do not re-attempt Docker in this same environment** without first independently confirming virtualization support has changed. Updated `tests/test_concurrency_firestore_emulator.py`'s own docstring with both the Java and Docker findings, plus a documented Option B (Docker) run path for an environment where Docker actually works.
+
+**P1 verdict stands: UNVERIFIED — ENVIRONMENT BLOCKED**, now via two independently-confirmed blockers (no Java, Docker backend non-functional), not merely "wasn't tried."
+
+**Current HEAD: `08883d2edf139ab02e6e6fec38f2c74ecbedd49a`** — supersedes every hash below.
+
 ## Update 3 — the "test-order flake" was a real stale-test bug, now fixed, HEAD 7398796
 
 Investigated the pre-existing "isolation-only flake" properly instead of just documenting around it again. It was never actually shared-state ordering nondeterminism — both affected tests (`tests/test_monitors.py::test_monitor_on_an_unimplemented_capability_is_refused`, `tests/test_reliability.py::test_declared_but_unbuilt_capability_is_also_a_gap`) hardcoded `"write_brief"` as an example of an unimplemented capability. Confirmed by source inspection: `write_brief` has a real registered function (`app/capabilities/bootstrap.py`) and `implemented=True` (`app/capabilities/seed.py`) — it's been genuinely implemented for a while. Both tests failed honestly on their own merits when run in a way that exposed this, and only "passed" by accident as part of a specific full-suite ordering. Fixed both using the exact same dynamic "pick whatever capability is currently still unimplemented" pattern already established elsewhere in this codebase (`tests/test_adversarial.py::test_declared_capability_cannot_be_invoked_at_all`, which solved this identical class of problem previously). Verified both pass in isolation now (15/15, 10/10) and the full suite is unaffected (531 passed, 1 skipped, 0 failed — same count, since these were fixes to existing tests, not new ones).
