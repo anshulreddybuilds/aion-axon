@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone  # noqa: E402
 import pytest  # noqa: E402
 
 import app.capabilities.bootstrap  # noqa: E402,F401
+from app.capabilities.registry import registry  # noqa: E402
 from app.governance.kill_switch import kill_switch  # noqa: E402
 from app.memory.firestore_store import firestore_store  # noqa: E402
 from app.monitors.service import (  # noqa: E402
@@ -47,8 +48,35 @@ def test_monitor_is_created_and_due_immediately():
 
 
 def test_monitor_on_an_unimplemented_capability_is_refused():
-    """Refuse at creation rather than failing silently on every tick."""
-    result = make(capability="write_brief")
+    """Refuse at creation rather than failing silently on every tick.
+
+    Real bug, not a flake, found and fixed this pass: this test hardcoded
+    "write_brief" as an example of an unimplemented capability, but
+    write_brief has genuinely been implemented for a while (real function
+    registered in app/capabilities/bootstrap.py, `implemented=True` in
+    app/capabilities/seed.py) -- confirmed by source inspection, not
+    guessed. The test failed honestly in isolation and happened to pass
+    in the full suite only because some other file's cleanup left the
+    shared registry in a state where it looked unimplemented -- an
+    accident, not a real property being tested. Anchoring to "whatever is
+    still unbuilt" (the same fix already applied to
+    tests/test_adversarial.py::test_declared_capability_cannot_be_invoked_at_all
+    for this exact class of problem) keeps the property covered as
+    capabilities get implemented, instead of decaying as the code
+    improves.
+    """
+    declared_only = [
+        tool["name"] for tool in registry.list_tools()
+        if not tool["implemented"]
+    ]
+
+    assert declared_only, (
+        "Every capability is implemented, so there is nothing left to "
+        "prove this property against. It still matters -- declare a "
+        "throwaway capability here rather than deleting the test."
+    )
+
+    result = make(capability=declared_only[0])
 
     assert result["status"] == "REJECTED"
     assert "not implemented" in result["error"]

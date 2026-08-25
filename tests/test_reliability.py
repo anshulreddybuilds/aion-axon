@@ -337,15 +337,39 @@ def test_unknown_capability_is_a_clean_capability_gap():
 
 
 def test_declared_but_unbuilt_capability_is_also_a_gap():
+    """Real bug, not a flake, found and fixed this pass: this test
+    hardcoded "write_brief" as an example of an unimplemented capability,
+    but write_brief has genuinely been implemented for a while (real
+    function registered in app/capabilities/bootstrap.py,
+    `implemented=True` in app/capabilities/seed.py) -- confirmed by
+    source inspection. The test failed honestly when run in a way that
+    left the shared registry in its natural default state, and only
+    "passed" as part of a larger ordered run by accident. Anchoring to
+    "whatever is still unbuilt" (same fix already applied to
+    tests/test_adversarial.py and tests/test_monitors.py for this exact
+    class of problem) keeps the property covered as capabilities get
+    implemented, instead of decaying as the code improves."""
+    declared_only = [
+        tool["name"] for tool in registry.list_tools()
+        if not tool["implemented"]
+    ]
+
+    assert declared_only, (
+        "Every capability is implemented, so there is nothing left to "
+        "prove this property against."
+    )
+
+    tool_name = declared_only[0]
+
     body = client.post("/missions", json={
-        "request": "x", "tool": "write_brief",
-        "action": "write the brief", "risk": "LOW", "args": [],
+        "request": "x", "tool": tool_name,
+        "action": "run it", "risk": "LOW", "args": [],
     })
 
     result = body.json()["result"]
 
     assert result["status"] == "BLOCKED"
-    assert result["missing_capability"] == "write_brief"
+    assert result["missing_capability"] == tool_name
 
 
 # --- Phase 28I: the real mission path must not trust an empty need --------
