@@ -2,6 +2,14 @@
 
 Written at the end of a credit-efficient security/reliability pass. Read this before re-deriving anything — it is deliberately complete.
 
+## Update 3 — the "test-order flake" was a real stale-test bug, now fixed, HEAD 7398796
+
+Investigated the pre-existing "isolation-only flake" properly instead of just documenting around it again. It was never actually shared-state ordering nondeterminism — both affected tests (`tests/test_monitors.py::test_monitor_on_an_unimplemented_capability_is_refused`, `tests/test_reliability.py::test_declared_but_unbuilt_capability_is_also_a_gap`) hardcoded `"write_brief"` as an example of an unimplemented capability. Confirmed by source inspection: `write_brief` has a real registered function (`app/capabilities/bootstrap.py`) and `implemented=True` (`app/capabilities/seed.py`) — it's been genuinely implemented for a while. Both tests failed honestly on their own merits when run in a way that exposed this, and only "passed" by accident as part of a specific full-suite ordering. Fixed both using the exact same dynamic "pick whatever capability is currently still unimplemented" pattern already established elsewhere in this codebase (`tests/test_adversarial.py::test_declared_capability_cannot_be_invoked_at_all`, which solved this identical class of problem previously). Verified both pass in isolation now (15/15, 10/10) and the full suite is unaffected (531 passed, 1 skipped, 0 failed — same count, since these were fixes to existing tests, not new ones).
+
+**There is no longer a known test flake in this repository.** Do not reintroduce one by hardcoding a capability's implementation status anywhere else — always derive it from `registry.list_tools()`.
+
+**Current HEAD: `739879689568020e4f9b3e80e91c11dabe4c62e9`** — supersedes every hash below.
+
 ## Update 2 — P5 Judge Mode card, HEAD 57ccbb2
 
 Built the frontend card for `GET /beastmode/state-machine` (the one real open item from Update 1 below). Files: `web/src/stateMachineProof.js` (pure display logic, testable), `web/src/stateMachineProof.test.mjs` (7 new tests, all passing), `web/src/api.js` (+`stateMachine()` client method), `web/src/JudgeMode.jsx` (+`StateMachineCard`, reusing the existing generic `ProofCard` pattern exactly — no new UI architecture). The card renders the real success path and checks 4 concrete self-authorization shortcuts (e.g. `AWAITING_APPROVAL → INSTALLED`) against the live transition data, showing `BLOCKED`/`ALLOWED` per shortcut rather than asserting security as prose.
