@@ -2,6 +2,14 @@
 
 Written at the end of a credit-efficient security/reliability pass. Read this before re-deriving anything — it is deliberately complete.
 
+## Notion Source of Truth
+
+A canonical cross-agent "AION AXON — Source of Truth" page now exists in Notion, nested under the existing "AION Axon — Hackathon Master Plan" page: https://app.notion.com/p/3c782243366881aea778e04c35afceba
+
+It mirrors this file's content in a 30-section structure (Executive Summary, Security Posture, Decision Log, Agent Handoff Log, etc.) for Claude Code / Antigravity / ChatGPT / human contributors who don't have this file in their working directory. **Repository/this file remain authoritative for exact current state** (git is ground truth for code); the Notion page is authoritative for cross-agent narrative/decision history. If they ever disagree, trust this file and the repo, then update Notion to match — never the reverse.
+
+Update both whenever a checkpoint materially changes.
+
 ## Update 4 — genuine Docker attempt for P1, still environment-blocked, HEAD 08883d2
 
 A session was explicitly directed to try harder to close P1 rather than just re-documenting it. Result: **still genuinely blocked, now with stronger evidence.**
