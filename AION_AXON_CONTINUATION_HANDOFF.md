@@ -10,6 +10,127 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 9 — final hardening audit: one P0 found and fixed, 10-task adversarial suite 10/10 (LOCAL VERIFIED), HEAD 0569371
+
+Directive: a "FINAL HARDENING + ADVERSARIAL QA MASTER PROMPT" required an
+audit-before-code pass over demo/hardcoded/mock patterns, then a 10-task
+adversarial challenge across specific categories run with genuinely varied,
+non-overfit inputs, honest-failure verification, and a full readiness
+report. It also required treating LOCAL VERIFIED and PRODUCTION VERIFIED
+as never interchangeable.
+
+**P0 found and fixed:** `web/src/v4/AppV4.jsx`'s hero input defaulted to
+the literal string `"Pull the US birth totals from 2005 and brief me"`,
+bound via `value={prompt}` -- a real pre-filled, editable value, not a
+placeholder. A user opening `/v4` and clicking Send with zero typing or
+speech would submit that historical demo phrase as their own request.
+This survived two prior sessions of heavy rework on this exact file
+because every test that exercised `send()` filled the input first (even
+to clear it), never exercising true page-load state. Cross-checking
+`Command.jsx`'s legitimate use of the same phrase (a real `placeholder`,
+confirmed safe) is what prompted re-checking `AppV4.jsx`'s usage, which
+was not the same safe pattern.
+
+Fix: default changed to `useState("")`, with an inline comment
+documenting the bug for future readers. Verified: `npm run build` clean;
+a new Playwright check `prompt_default_check.mjs` (2/2: fresh load has a
+genuinely empty input, clicking Send with zero interaction is a true
+no-op); a full re-run of the pre-existing `voice_smoke.mjs` (13/13, no
+regression). Committed `0569371`, pushed to `feat/beastmode-core-oagiwb`.
+
+Rest of the repo-wide grep sweep (demo/mock/fixture/hardcoded/fake/
+placeholder/sample patterns, ~26 files matched across `app/` and
+`web/src/`) triaged clean: legitimate comments, real `placeholder=`
+attributes, `web/src/v3/replay.js`'s honestly-labeled historical replay,
+and `MissionTheater.jsx`'s explicitly-labeled "DEMO FIXTURE · NO
+PRODUCTION MUTATION" recovery mode. No other P0/P1 found this pass.
+
+**10-task adversarial suite — LOCAL VERIFIED, not PRODUCTION VERIFIED.**
+This environment cannot reach `https://aion-axon-2026.web.app` or
+`https://aion-core-638298765129.asia-south1.run.app` (confirmed via
+`curl` → 403 CONNECT-tunnel-failed, and `WebFetch` → `EGRESS_BLOCKED`,
+both independently, this pass and the prior one). Exact commands for the
+owner to run this same suite for real against production are in the
+readiness report delivered in-conversation; not restated here to avoid
+drift between two copies.
+
+Ran at `/tmp/claude-0/.../scratchpad/adversarial_10.py` (not committed --
+a one-off QA script, not a permanent test) against the real pipeline:
+real Guardian, real registry, real mission engine, real SYNAPSE stage
+machinery (`propose_stream()`), real ExecutionGate, real approval
+manager, real transactional install-claim, real (in-memory) Firestore.
+Only the outermost model calls (`plan_mission`, `search_web`,
+`generate_candidate`, `execute_in_sandbox`, `evaluate`) were mocked, one
+hand-authored plan per scenario -- this does NOT re-test the real
+Gemini planner's semantic judgement (separately validated live with real
+quota in Update 7); it tests everything downstream of a plan the real
+planner could plausibly produce.
+
+Result: **10/10 passed** across all required categories (existing-
+capability reuse, multi-step reasoning, arithmetic, current web research,
+text transformation [new capability], data manipulation [new
+capability], explicit new-capability acquisition, complex multi-step
+combining reuse+acquisition, a voice-shaped phrasing, and an unexpected
+general-purpose question). Two additional hidden-style generalization
+probes (an unimplemented "translate to French" gap, and an oddly-phrased
+weighted-average calculation) both behaved correctly and were not part of
+the official 10.
+
+Every failure hit while building the suite was the suite's own bug, not
+a system defect -- worth recording since each one taught something real
+about the pipeline:
+- `AcquisitionRecord` has no `capability_name` attribute; the installed
+  name lives at `candidate["name"]`.
+- `synapse.install(name)` takes one argument, re-reads the approval
+  itself from Firestore, and internally calls `mission_service
+  .resume_blocked()` when the acquisition was tied to a mission --
+  calling `resume_blocked()` again afterward hits an already-COMPLETED
+  mission. This is real loop-closure behavior worth knowing: install()
+  IS the resume.
+- `propose_stream()` yields the SAME `AcquisitionRecord` object mutated
+  in place at every stage (by design, per its own docstring) -- a real
+  consumer must snapshot via `.to_dict()` inside the loop, same as
+  `api.py`'s SSE route does; collecting raw yielded refs into a list
+  shows the final stage repeated N times, not the real sequence.
+- Two back-to-back `web_research` calls in one mission triggered a real
+  G-07 autonomy-demotion: the first call's ungrounded/DEGRADED result
+  dropped `web_research`'s autonomy score below the 40% oversight
+  threshold, so the second call correctly stopped for human
+  `APPROVAL_REQUIRED` instead of auto-executing on eroded trust. Not a
+  bug -- the governance system behaving exactly as designed.
+- A multi-step plan whose second step (`calculator`) received the first
+  step's raw, unstructured research-findings text as its expression
+  failed HONESTLY (`"Expression contains unsupported characters."`,
+  mission `FAILED` with that reason recorded) rather than fabricating a
+  number. This is the "fail honestly" requirement working correctly, and
+  also flags a genuine planner-quality edge case worth a future pass:
+  the real planner should insert an explicit extraction step before
+  handing free text to `calculator`, not wire `$STEP_N` straight through
+  -- outside this pass's scope, not a governance defect.
+
+Full pytest suite re-run after this pass: **543 passed, 2 skipped**,
+unchanged from the pre-pass baseline (nothing in `app/` was touched this
+pass beyond the one frontend fix already described).
+
+Security/secrets sweep this pass: `git grep` for API-key-shaped and
+private-key-shaped strings across tracked files found only the negative
+assertion already in `tests/test_sandbox_service.py`; no `.env` or
+credential files are tracked; `.gitignore` covers `.env*`, `*.key`,
+`*-credentials.json`. CORS (`ALLOWED_ORIGINS`, `allow_credentials=False`)
+and owner-token auth (`require_owner` on every mutating route) were
+re-confirmed present and unchanged, not re-derived from scratch given
+existing coverage in `test_owner_auth.py` / `test_api_hardening.py` /
+`test_adversarial.py` (all passing in the 543).
+
+Notion update for this pass was **not attempted** at the point this
+handoff entry was written, to be attempted next; the last two Notion
+update attempts (after Updates 6/7 and 8) failed both times with an
+interactive-approval prompt the non-interactive session cannot clear --
+if that recurs, the owner needs to approve it directly in the Notion
+connector.
+
+Current HEAD: `0569371` — supersedes every hash below.
+
 ## Update 8 — voice-first mission interface, one pipeline, no bypass, HEAD 250323b
 
 Directive: AION AXON's primary interaction should be voice -- press a
