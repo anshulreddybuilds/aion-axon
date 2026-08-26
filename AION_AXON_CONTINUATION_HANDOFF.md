@@ -10,6 +10,121 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 8 — voice-first mission interface, one pipeline, no bypass, HEAD 250323b
+
+Directive: AION AXON's primary interaction should be voice -- press a
+mic, speak an arbitrary task, watch it run through the real governed
+pipeline, hear the real result. Explicit non-negotiable: voice is only
+an interface, never a second intelligence pipeline or a governance
+bypass. Audited before writing anything, per that directive.
+
+**Audit found real voice input already existed, live in production.**
+`web/src/Command.jsx`, mounted in `App.jsx` at `/` (the default route).
+Browser-native `SpeechRecognition`, zero cost, two real bugs already
+fixed there in a prior session (recognition not surviving a re-render;
+honest per-error-code messages instead of a dead mic button). It
+already fed `api.plannedMission()` -- the real mission pipeline. Not
+rebuilt; the working parts were reused.
+
+**Audit also found a real architecture bug in what Update 6 shipped.**
+`AppV4.jsx`'s `send()` called `synapse.propose_stream()` directly --
+SYNAPSE's standalone *acquisition* endpoint. That means it always tried
+to research+generate a BRAND NEW capability for whatever was typed,
+even "calculate 17% of 8450", which should just reuse the existing
+`calculator` capability. The mission planner -- the one component whose
+actual job is "decide reuse vs. acquire" -- was never consulted. This
+violated the project's own stated architecture (`IF capability exists ->
+REUSE`) independent of voice, and needed fixing regardless; voice just
+needed the correct entry point to build on, so both were fixed together.
+
+**Built:**
+1. `app/api.py`: new `GET /missions/{mission_id}/acquire/stream`,
+   mirroring the existing `POST /missions/{mission_id}/acquire` but
+   streamed via the same `synapse.propose_stream()` generator
+   `GET /synapse/propose/stream` already uses. Both acquire routes now
+   share `_need_for_blocked_mission()` so the gap-derivation logic
+   can't drift between them -- one generator, reached two ways
+   depending on whether a mission context exists, never two pipelines.
+2. `AppV4.jsx`'s `send()` rewritten: calls `api.plannedMission(need)`
+   FIRST, always. A mission answerable entirely from existing
+   capabilities COMPLETES right there -- no acquisition spent, no
+   wasted research/generate/sandbox cycle. Only a mission that
+   genuinely BLOCKS on a real gap moves on to live-streamed acquisition
+   via the new endpoint above, showing the same real SYNAPSE stages
+   (research/generate/safety/sandbox/evaluate/guardian/approval) the
+   standalone flow already streamed.
+3. `web/src/speechRecognition.js` + `useSpeechInput.js` (new): voice
+   input, ported from `Command.jsx`'s proven `<Speech>` component, not
+   reinvented -- same ref-based render-survival fix (recognition built
+   once, callbacks read from refs updated every render, so a polling
+   parent re-rendering the tree doesn't tear listening down mid-utterance),
+   same honest per-SpeechRecognition-error-code messages. The mic
+   button only sets the prompt box; it never submits a mission by
+   itself -- a deliberate reading of "no accidental mission submission"
+   + "explicit user control before executing potentially consequential
+   tasks" from the directive, over an alternative "auto-submit on
+   recognized speech" design that would have satisfied the literal
+   step-by-step flow description but not those two explicit safety
+   requirements.
+4. `web/src/speechOutput.js` (new): browser-native `SpeechSynthesis`
+   speaks the EXACT terminal result text already shown on screen --
+   same string, never a second, separately-composed line, never spoken
+   from a bare status word. Off by default (unexpected audio on page
+   load is a real accessibility problem, not a feature). Only speaks a
+   TERMINAL outcome (`announceResult()`), never the transient
+   "Planning…" / "Acquiring it now…" busy text.
+5. Real bug found and fixed while wiring this: a speech-recognition
+   error while still in the hero view (before the canvas had ever
+   opened) set a real error message that nothing on screen showed,
+   since `sendOutcome` only renders inside the expanded dual-pane
+   canvas. `onError` now opens the canvas too, matching the existing
+   unlock-gate path's own reasoning for the same fix.
+
+**Verified, in this order, nothing skipped:**
+- Backend: 543 passed, 2 skipped, 0 failed (5 new tests for the
+  streaming acquire endpoint, including one proving the sync and
+  streaming acquire routes derive an identical need from the same real
+  gap -- the exact regression a hand-duplicated second copy of that
+  logic would eventually drift into).
+- Frontend: 58 passed across 6 files (26 new), build clean.
+- **Real browser test** (Playwright + Chromium, a FAKE
+  `SpeechRecognition`/`SpeechSynthesis` injected via `addInitScript`
+  BEFORE any page script runs, so `speechRecognitionSupported()` sees
+  it exactly like a real browser would and the exact `onresult`/
+  `onerror` event shape a real microphone's transcription would produce
+  is what gets exercised -- against a running backend with only the
+  network-calling pipeline stages mocked, same shape as every other
+  session's smoke tests, no real quota spent): **13/13 checks passed**.
+  Confirmed live: a spoken "Calculate 17 percent of 8,450" reuses the
+  real `calculator` capability and completes with the real computed
+  answer (1436.5), zero acquisition spent; a spoken "Create a
+  capability that can detect duplicate rows in a CSV" streams all 8
+  real SYNAPSE stages live and produces a genuinely different
+  capability (`detect_duplicate_csv_rows`); voice fills the prompt but
+  never auto-submits; cancelling (stop before a result) submits
+  nothing; a real speech error shows the honest, actionable message,
+  not a crash or silence; with voice output on, the spoken text
+  matched the exact on-screen result string; zero uncaught console/page
+  errors across the whole run.
+
+**What this pass explicitly could NOT do**: a literal microphone test.
+This sandbox has no audio hardware at all. The browser test above
+exercises the identical JS code path (`onresult`/`onerror` handlers) a
+real microphone's `SpeechRecognition` events would trigger -- proving
+the wiring is correct -- but an actual "I spoke into a real mic and it
+worked" acceptance test has to happen on real hardware, which is the
+owner's own next step, not something achievable from here.
+
+**Governance, explicitly re-confirmed, not just asserted**: nothing in
+this pass touches Guardian, the AST safety screen, the sandbox, the
+evaluator, or the approval gate. Voice and the corrected `send()` both
+terminate in the exact same `synapse.propose_stream()` generator every
+other acquisition path already used and was already tested against.
+The owner token gate is unchanged and still required before either a
+typed or spoken request reaches a mutating endpoint.
+
+**Current HEAD: `250323b`** — supersedes every hash below.
+
 ## Update 7 — real planner validation with a user-provided key: found and fixed a real generalization bug, HEAD 13cc222
 
 A follow-up mega-prompt raised the stakes explicitly: a private 10-task
