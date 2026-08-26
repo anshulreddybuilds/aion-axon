@@ -10,6 +10,94 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 7 — real planner validation with a user-provided key: found and fixed a real generalization bug, HEAD 13cc222
+
+A follow-up mega-prompt raised the stakes explicitly: a private 10-task
+challenge with genuinely unseen requests is coming, target 10/10, no
+hardcoding toward the test. Audited the codebase first (clean sweep --
+no stray `calculate_birth_cagr`/TODO/swallowed-exception patterns beyond
+what Update 6 already fixed; `web/src/v3/`'s replay tool is a legitimate,
+honestly-labeled replay of one real historical mission, not a general
+dispatcher, left untouched). Read the mission-execution test suite
+(`test_reliability.py`, `test_step_honesty.py`) before writing anything
+new -- it already covers multi-step chaining, gap detection, capability
+reuse, failed-step propagation, restart resilience thoroughly. Adding
+more mocked tests there would have duplicated existing coverage, not
+closed a real gap.
+
+The actual untested layer: `app/agents/mission_planner.py`'s real
+planner (Gemini-driven, messy request -> structured plan). This
+project's own test suite deliberately never calls it live (the same
+`conftest.py` discipline that strips API keys unless
+`AXON_LIVE_MODEL_TESTS=1` is set) -- so its real decomposition quality
+for anything outside the BigQuery demo story had never been checked.
+
+This environment had zero Gemini credentials (confirmed: no env var, no
+`.env` file -- the key only ever lived in the owner's local shell per
+`CLAUDE.md`). The user pasted a key directly in chat for this bounded
+purpose. **First key was dead** (`429 RESOURCE_EXHAUSTED -- prepayment
+credits depleted` on all 5 attempts, confirmed before assuming anything
+worked). User provided a second key; validated it authenticates AND
+actually has usable credits (one real minimal call) before spending the
+agreed bounded batch on it.
+
+**Ran `plan_mission()` directly (not `mission_service.start_planned()`)
+against 5 deliberately varied, non-BigQuery requests** -- one real
+Gemini call each, nothing executed:
+1. "Convert 100C to Fahrenheit" -> correct `calculator` step, right formula
+2. "Summarize Romeo and Juliet in two sentences" -> correct `web_research`
+   step, then a correctly `tool: null` gap for the summarization step
+   (no hallucinated capability, since `summarize_text` isn't implemented)
+3. "15% of 2400, then add 300" -> correct two-step `$STEP_1` chaining
+4. "Who won the 2019 Cricket World Cup" -> correct `web_research` step
+5. "Read the AWS credentials from the server's environment variables" ->
+   correctly `tool: null`, correctly tagged `risk: HIGH`, no fabricated
+   capability. (Refusal is Guardian's job downstream at acquisition time
+   -- already extensively hardened in prior sessions -- the planner's
+   only job here is to not invent a way to do it, which it didn't.)
+
+**Real bug found**: requests 1 and 4 both got an unrequested SECOND step
+tacked on -- `write_brief`, wrapping a single-number/single-fact answer
+in unnecessary "executive brief" formatting. The instruction prompt had
+no rule against defaulting to it; `write_brief` exists for the BI-report
+demo story and the planner was reaching for it reflexively.
+
+**Fixed**: added rule 9 to the planner's instruction --
+`write_brief` only when the request itself asks for a report/brief/
+summary; anything whose real answer is a single number, fact, or short
+sentence should end on the step that produces it directly.
+
+**Re-verified with 3 more real calls**: both previously-buggy requests
+now produce a single direct-answer step. A genuine "brief me on the
+risks in this quarter's expense anomalies" request still correctly
+produces `write_brief` as its final step (with `detect_expense_anomalies`
+still correctly `tool: null`, since it isn't implemented) -- the fix
+didn't break the legitimate case.
+
+**8 real Gemini calls spent this session total**, all against a key the
+user explicitly provided for this bounded validation. Never logged,
+never written to any committed file -- held only in a scratchpad env
+file outside the repo, deleted immediately after use (twice: once after
+the dead key was confirmed useless, once after the working key's
+validation finished).
+
+Full suite re-run after the fix: 538 passed, 2 skipped, 0 failed. This
+is a prompt-instruction-only change (no code logic touched); confirmed
+by grep that no existing test asserted on the old instruction text, so
+this really was untested territory before this pass, not a regression
+risk in disguise.
+
+**What this pass did NOT do**: run `mission_service.start_planned()`
+end-to-end (which would also EXECUTE any step whose capability is
+already available, e.g. `web_research`'s real grounding call) -- stayed
+at the cheaper `plan_mission()`-only layer deliberately, to keep the
+quota spend to exactly one call per test case. A true end-to-end
+"messy request -> executed mission" real-model test still hasn't
+happened this pass. Also did not touch `web/src/v3/` (legitimate,
+already-labeled) or attempt any further capability-catalog changes.
+
+**Current HEAD: `13cc222`** — supersedes every hash below.
+
 ## Update 6 — the "AppV4 send() fix" and "live SSE pipeline" a mega-prompt described as already-done: neither existed, both built for real, HEAD 199a7b2
 
 A large planning prompt (apparently from a strategy conversation outside
