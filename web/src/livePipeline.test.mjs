@@ -3,7 +3,7 @@
 //   node web/src/livePipeline.test.mjs
 import assert from "node:assert/strict";
 
-import { describeStage, toneForRecord } from "./livePipeline.js";
+import { actionsFromMissionSteps, describeStage, toneForRecord } from "./livePipeline.js";
 
 let passed = 0;
 function test(name, fn) {
@@ -132,6 +132,44 @@ test("describeStage never throws on a record missing its optional fields", () =>
   assert.doesNotThrow(() => describeStage({ stage: "GENERATE", status: "FAILED" }));
   assert.doesNotThrow(() => describeStage({}));
   assert.doesNotThrow(() => describeStage(null));
+});
+
+// --- Mission steps that reused existing capabilities, no acquisition ----
+
+test("a mission that reused an existing capability shows a real completed step", () => {
+  const actions = actionsFromMissionSteps([
+    { step: 1, tool: "calculator", description: "calculate the total",
+      status: "EXECUTED" },
+  ]);
+  assert.equal(actions.length, 1);
+  assert.ok(actions[0].label.includes("calculator"));
+  assert.equal(actions[0].tone, "ok");
+});
+
+test("two different missions produce two different real step traces", () => {
+  const a = actionsFromMissionSteps([
+    { step: 1, tool: "calculator", description: "15% of 2400", status: "EXECUTED" },
+  ]);
+  const b = actionsFromMissionSteps([
+    { step: 1, tool: "web_research", description: "2019 Cricket World Cup winner",
+      status: "EXECUTED" },
+  ]);
+  assert.notEqual(a[0].label, b[0].label);
+});
+
+test("a failed step is tagged danger with its real reason, not hidden", () => {
+  const actions = actionsFromMissionSteps([
+    { step: 1, tool: "calculator", description: "x", status: "FAILED",
+      reason: "division by zero" },
+  ]);
+  assert.equal(actions[0].tone, "danger");
+  assert.equal(actions[0].detail, "division by zero");
+});
+
+test("actionsFromMissionSteps never throws on missing/empty input", () => {
+  assert.doesNotThrow(() => actionsFromMissionSteps(undefined));
+  assert.doesNotThrow(() => actionsFromMissionSteps([]));
+  assert.deepEqual(actionsFromMissionSteps(undefined), []);
 });
 
 console.log(`\n${passed} passed`);

@@ -7,7 +7,9 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 
-import { parseSseFrame, proposeStream, setOwnerToken } from "./api.js";
+import {
+  acquireForMissionStream, parseSseFrame, proposeStream, setOwnerToken,
+} from "./api.js";
 
 let passed = 0;
 function test(name, fn) {
@@ -171,9 +173,43 @@ await asyncTest(
   }
 );
 
-test("setOwnerToken/proposeStream import cleanly and export the expected symbols", () => {
+await asyncTest(
+  "acquireForMissionStream shares the exact same stream-consuming logic as proposeStream",
+  async () => {
+    const records = [
+      { stage: "GUARDIAN_PRESCREEN", status: "IN_PROGRESS" },
+      { stage: "RESEARCH", status: "IN_PROGRESS" },
+      {
+        stage: "AWAITING_APPROVAL", status: "AWAITING_APPROVAL",
+        candidate: { name: "write_brief" }, mission_id: "mission-under-test",
+      },
+    ];
+    const server = await startSseServer(records.map(sseFrame));
+    const { port } = server.address();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (url, opts) =>
+      origFetch(url.replace(/^https?:\/\/[^/]+/, `http://127.0.0.1:${port}`), opts);
+
+    try {
+      const seen = [];
+      const final = await acquireForMissionStream("mission-under-test", {
+        onStage: (record) => seen.push(record),
+      });
+      assert.deepEqual(seen.map((r) => r.stage), [
+        "GUARDIAN_PRESCREEN", "RESEARCH", "AWAITING_APPROVAL",
+      ]);
+      assert.equal(final.mission_id, "mission-under-test");
+    } finally {
+      globalThis.fetch = origFetch;
+      server.close();
+    }
+  }
+);
+
+test("setOwnerToken/proposeStream/acquireForMissionStream import cleanly and export the expected symbols", () => {
   assert.equal(typeof setOwnerToken, "function");
   assert.equal(typeof proposeStream, "function");
+  assert.equal(typeof acquireForMissionStream, "function");
   assert.equal(typeof parseSseFrame, "function");
 });
 

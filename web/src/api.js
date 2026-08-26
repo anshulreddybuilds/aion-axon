@@ -94,36 +94,27 @@ export function parseSseFrame(frame) {
 }
 
 /**
- * Consume GET /synapse/propose/stream. Deliberately NOT the browser's
- * native EventSource: EventSource cannot send a custom header, and this
- * route is gated on X-Axon-Token the same as every other write — putting
- * the owner token in the URL instead (the only way EventSource could
- * authenticate) would leak it into server logs and browser history,
- * which is exactly what setOwnerToken()'s own module-variable-only
- * design exists to avoid. fetch() + a manual stream reader keeps the
- * token where every other call already keeps it: a header, never a URL.
+ * Consume any of this API's text/event-stream routes. Deliberately NOT
+ * the browser's native EventSource: EventSource cannot send a custom
+ * header, and every one of these routes is gated on X-Axon-Token the
+ * same as every other write — putting the owner token in the URL
+ * instead (the only way EventSource could authenticate) would leak it
+ * into server logs and browser history, exactly what setOwnerToken()'s
+ * module-variable-only design exists to avoid. fetch() + a manual
+ * stream reader keeps the token where every other call already keeps
+ * it: a header, never a URL.
  *
  * `onStage(record)` fires once per real stage the backend pipeline just
- * completed — record is the exact AcquisitionRecord.to_dict() shape
- * POST /synapse/propose already returns, just delivered incrementally.
- * Resolves with the LAST record delivered (the terminal outcome), same
- * value proposeCapability() would have returned for the same need.
+ * completed — record is the exact AcquisitionRecord.to_dict() shape the
+ * matching non-streaming POST route already returns, just delivered
+ * incrementally. Resolves with the LAST record delivered (the terminal
+ * outcome).
  */
-export async function proposeStream(
-  need,
-  { missionId, allowRetry = false, onStage, signal } = {}
-) {
-  const params = new URLSearchParams({ need });
-  if (missionId) params.set("mission_id", missionId);
-  if (allowRetry) params.set("allow_retry", "true");
-
+async function consumeStageStream(url, { onStage, signal } = {}) {
   const headers = {};
   if (ownerToken) headers["X-Axon-Token"] = ownerToken;
 
-  const response = await fetch(
-    `${CORE}/synapse/propose/stream?${params.toString()}`,
-    { headers, signal }
-  );
+  const response = await fetch(url, { headers, signal });
 
   if (!response.ok) {
     if (response.status === 401) {
@@ -133,7 +124,7 @@ export async function proposeStream(
     }
     // A rejected request (422 blank need, 429 rate limit) never opens
     // as a stream at all — its body is a normal JSON error, not SSE.
-    let detail = `GET /synapse/propose/stream → ${response.status}`;
+    let detail = `GET ${url} → ${response.status}`;
     try {
       const body = await response.json();
       if (body?.detail) detail = String(body.detail);
@@ -172,6 +163,37 @@ export async function proposeStream(
   }
 
   return last;
+}
+
+/** GET /synapse/propose/stream — see consumeStageStream() above. */
+export function proposeStream(
+  need,
+  { missionId, allowRetry = false, onStage, signal } = {}
+) {
+  const params = new URLSearchParams({ need });
+  if (missionId) params.set("mission_id", missionId);
+  if (allowRetry) params.set("allow_retry", "true");
+
+  return consumeStageStream(
+    `${CORE}/synapse/propose/stream?${params.toString()}`,
+    { onStage, signal }
+  );
+}
+
+/**
+ * GET /missions/{id}/acquire/stream — the same acquisition as
+ * api.acquire(), streamed. For a mission that BLOCKED on a real
+ * capability gap: shows SYNAPSE researching/generating/screening/
+ * testing/evaluating/approving the missing capability live, instead of
+ * only the terminal AWAITING_APPROVAL result. Once approved and
+ * installed (api.install()), the ORIGINAL mission resumes automatically
+ * — this only covers the acquisition half.
+ */
+export function acquireForMissionStream(missionId, { onStage, signal } = {}) {
+  return consumeStageStream(
+    `${CORE}/missions/${missionId}/acquire/stream`,
+    { onStage, signal }
+  );
 }
 
 export const api = {
@@ -237,6 +259,7 @@ export const api = {
   // not part of the `request()`-based table above because it isn't a
   // single JSON response, it's a stream.
   proposeStream,
+  acquireForMissionStream,
 
   // Cloud Run returns HTTP 411 on a POST with no body, so every POST
   // sends one even when the endpoint ignores it.

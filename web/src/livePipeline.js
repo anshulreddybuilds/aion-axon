@@ -108,3 +108,27 @@ export function describeStage(record) {
     tone: toneForRecord(record),
   };
 }
+
+/**
+ * Turns a mission's real step_results (from POST /missions/planned or
+ * GET /missions/{id}) into the same { label, detail, tone } action-list
+ * shape describeStage() above produces -- so a mission that completes
+ * entirely by REUSING existing capabilities (no acquisition needed) still
+ * shows a real execution trace, not an empty panel. Every field here is
+ * read off the step the backend actually ran; nothing is invented for a
+ * step that didn't execute.
+ */
+export function actionsFromMissionSteps(steps) {
+  return (steps || []).map((s) => {
+    const executed = s.status === "EXECUTED";
+    return {
+      label: s.tool
+        ? `${s.tool} — ${s.description || s.action || ""}`.trim()
+        : s.description || s.action || `step ${s.step ?? ""}`.trim(),
+      detail: executed
+        ? "completed"
+        : s.reason || s.status || "not executed",
+      tone: executed ? "ok" : "danger",
+    };
+  });
+}

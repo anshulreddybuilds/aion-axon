@@ -9,10 +9,14 @@ import {
   Plus,
   RotateCcw,
   Search,
+  Volume2,
+  VolumeX,
   Zap,
 } from "lucide-react";
 import { api, hasOwnerToken, setOwnerToken } from "../api.js";
-import { describeStage } from "../livePipeline.js";
+import { actionsFromMissionSteps, describeStage } from "../livePipeline.js";
+import { speak, speechSynthesisSupported, stopSpeaking } from "../speechOutput.js";
+import { useSpeechInput } from "../useSpeechInput.js";
 import { extractAnswer, humanMs, loadArtifact, prettyValue, VIEWS } from "./artifact.js";
 
 /**
@@ -208,6 +212,24 @@ export default function AppV4() {
   const [sendingLive, setSendingLive] = useState(false);
   const stageStartRef = useRef(Date.now());
 
+  // Voice is only an interface onto the same send() below -- it sets
+  // `prompt`, nothing else, and never submits by itself (see the mic
+  // button's onText handler). Off by default: unexpected audio on page
+  // load is a real accessibility/UX problem this project won't ship.
+  const [speakEnabled, setSpeakEnabled] = useState(false);
+  const speech = useSpeechInput({
+    onText: (transcript) => setPrompt(transcript),
+    // setExpanded(true) here matters: sendOutcome only renders in the
+    // dual-pane canvas (STATE 2). A mic error on first use, before the
+    // canvas has ever opened, would otherwise set a real error message
+    // nothing on screen shows -- the same silent-failure shape the
+    // unlock-gate branch in send() already avoids for the same reason.
+    onError: (message) => {
+      setExpanded(true);
+      setSendOutcome({ kind: "error", text: message });
+    },
+  });
+
   // Follow-up dispatches a REAL mission. An earlier pass shipped this as a
   // glowing send button with no handler at all, which is the exact thing
   // docs/upgrade-plan.md warns about: "judges clicking a dead Approve
@@ -399,22 +421,41 @@ export default function AppV4() {
     [actions]
   );
 
-  // Dispatches the REAL typed need to the REAL governed pipeline via
-  // GET /synapse/propose/stream, and renders each stage as it actually
-  // happens -- see livePipeline.js's describeStage(). This used to only
-  // reveal whatever `selected` already was (hardcoded to
-  // calculate_birth_cagr); every need produced the same evidence
-  // regardless of what was typed. Now the need actually typed is the
-  // need that runs.
+  // Dispatches the REAL typed (or spoken -- see the mic button below)
+  // need to the REAL governed pipeline. This used to call
+  // api.proposeStream() directly, which always tried to research and
+  // generate a BRAND NEW capability for whatever was typed -- even
+  // "calculate 17% of 8450", which should just reuse the existing
+  // calculator capability. That skipped the mission planner's own job
+  // (decide reuse vs. acquire) entirely.
+  //
+  // Now: plannedMission() first, always -- the real planner decides
+  // per-step whether an existing capability applies. A mission that can
+  // be answered entirely from what's already installed COMPLETES right
+  // here, no acquisition spent. Only a mission that genuinely BLOCKS on
+  // a missing capability moves on to live-streamed acquisition
+  // (GET /missions/{id}/acquire/stream), which is the SAME
+  // synapse.propose_stream() generator the standalone flow already used
+  // -- one pipeline, reached two different ways depending on whether a
+  // mission context exists.
+  // Speaks only a TERMINAL outcome (mission completed, blocked on
+  // approval, refused, or failed) -- never the transient "Planning…" /
+  // "Acquiring it now…" busy text, which would talk over itself on a
+  // fast mission and add nothing a listener needs to act on.
+  const announceResult = (outcome) => {
+    setSendOutcome(outcome);
+    if (speakEnabled) speak(outcome.text);
+  };
+
   const send = async () => {
     const need = prompt.trim();
     if (!need || sendingLive) return;
 
     if (!unlocked) {
       setExpanded(true);
-      setSendOutcome({
+      announceResult({
         kind: "blocked",
-        text: "Unlock with the owner token below, then send again — acquiring a capability is a real, governed write.",
+        text: "Unlock with the owner token below, then send again — running a mission is a real, governed write.",
       });
       return;
     }
@@ -425,43 +466,76 @@ export default function AppV4() {
     setLiveRecord(null);
     setLiveMode(true);
     setAnswer(null);
-    setSendOutcome(null);
+    setSendOutcome({ kind: "blocked", text: "Planning…" });
     setSendingLive(true);
-    stageStartRef.current = Date.now();
 
     try {
-      const final = await api.proposeStream(need, {
-        onStage: (record) => {
-          const now = Date.now();
-          const ms = now - stageStartRef.current;
-          stageStartRef.current = now;
-          const { label, detail, tone } = describeStage(record);
-          setLiveActions((prev) => [...prev, { label, detail, tone, ms }]);
-          setRevealed((prev) => prev + 1);
-          setLiveRecord(record);
-        },
-      });
+      const missionResult = await api.plannedMission(need);
+      setAnswer(extractAnswer(missionResult));
 
-      if (final?.status === "AWAITING_APPROVAL") {
+      const missionActions = actionsFromMissionSteps(missionResult?.step_results);
+      setLiveActions(missionActions);
+      setRevealed(missionActions.length);
+
+      if (missionResult?.status === "COMPLETED") {
+        announceResult({
+          kind: "ok",
+          text: `COMPLETED · ${missionActions.length} step${
+            missionActions.length === 1 ? "" : "s"
+          }, all from the existing registry.`,
+        });
+      } else if (missionResult?.status === "BLOCKED") {
+        const missionId = missionResult.mission_id;
         setSendOutcome({
           kind: "blocked",
-          text: `Proposed ${final.candidate?.name || "a new capability"} — stopped for your approval below.`,
+          text: "BLOCKED — missing a capability. Acquiring it now…",
         });
-      } else if (final?.status === "REFUSED") {
-        setSendOutcome({ kind: "blocked", text: `REFUSED — ${final.reason || "policy"}` });
-      } else if (final?.status === "BLOCKED") {
-        setSendOutcome({ kind: "blocked", text: final.reason || "Blocked." });
-      } else if (final?.status) {
-        setSendOutcome({ kind: "error", text: `${final.status} — ${final.reason || ""}`.trim() });
+
+        stageStartRef.current = Date.now();
+        const acquired = await api.acquireForMissionStream(missionId, {
+          onStage: (record) => {
+            const now = Date.now();
+            const ms = now - stageStartRef.current;
+            stageStartRef.current = now;
+            const { label, detail, tone } = describeStage(record);
+            setLiveActions((prev) => [...prev, { label, detail, tone, ms }]);
+            setRevealed((prev) => prev + 1);
+            setLiveRecord(record);
+          },
+        });
+
+        if (acquired?.status === "AWAITING_APPROVAL") {
+          announceResult({
+            kind: "blocked",
+            text: `Proposed ${
+              acquired.candidate?.name || "a new capability"
+            } — stopped for your approval below. Approving it finishes this mission automatically.`,
+          });
+        } else if (acquired?.status === "REFUSED") {
+          announceResult({ kind: "blocked", text: `REFUSED — ${acquired.reason || "policy"}` });
+        } else if (acquired?.status) {
+          announceResult({
+            kind: "error",
+            text: `${acquired.status} — ${acquired.reason || ""}`.trim(),
+          });
+        }
+      } else if (missionResult?.status) {
+        announceResult({
+          kind: "error",
+          text: `${missionResult.status} — ${
+            missionResult.error || missionResult.reason || ""
+          }`.trim(),
+        });
       }
     } catch (err) {
-      setSendOutcome({ kind: "error", text: String(err.message || err) });
+      announceResult({ kind: "error", text: String(err.message || err) });
     } finally {
       setSendingLive(false);
     }
   };
 
   const reset = () => {
+    stopSpeaking(); // never let a stale result keep talking over a new mission
     setExpanded(false);
     setRevealed(0);
     setLiveActions([]);
@@ -532,6 +606,23 @@ export default function AppV4() {
           >
             <Plus size={13} />
           </button>
+          {/* Speaks only the real terminal result text already shown on
+              screen -- see announceResult() above. Hidden, not disabled,
+              when the browser has no SpeechSynthesis, same reasoning as
+              the mic button. Off by default: audio nobody asked for on
+              page load is a real problem, not a feature. */}
+          {speechSynthesisSupported() && (
+            <button
+              onClick={() => setSpeakEnabled((v) => !v)}
+              title={speakEnabled ? "Voice output on — click to mute" : "Voice output off — click to enable"}
+              aria-label={speakEnabled ? "Mute voice output" : "Enable voice output"}
+              className={`h-6 w-6 grid place-items-center rounded-full transition-colors ${
+                speakEnabled ? "text-cyan-300" : "text-slate-400 hover:bg-white/[0.05]"
+              }`}
+            >
+              {speakEnabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
+            </button>
+          )}
         </div>
       </div>
 
@@ -561,6 +652,29 @@ export default function AppV4() {
               </span>
 
               <div className="flex items-center gap-1.5">
+                {/* Voice is only an interface onto send() above -- speaking
+                    fills this same box, it never submits by itself (see
+                    useSpeechInput's onText handler). Hidden entirely, not
+                    disabled, when the browser has no SpeechRecognition:
+                    typing must never look broken because a capability the
+                    page never promised is missing. */}
+                {speech.supported && (
+                  <button
+                    type="button"
+                    data-testid="voice-input-button"
+                    onClick={speech.toggle}
+                    aria-label={speech.listening ? "Stop listening" : "Speak your request"}
+                    title={speech.listening ? "Listening — click to stop" : "Speak your request"}
+                    disabled={sendingLive}
+                    className={`h-8 w-8 grid place-items-center rounded-full transition-colors disabled:opacity-40 ${
+                      speech.listening
+                        ? "text-red-400 animate-pulse bg-red-400/10"
+                        : "framer-pill text-slate-400 hover:text-cyan-300"
+                    }`}
+                  >
+                    <Mic size={14} />
+                  </button>
+                )}
                 <button
                   onClick={send}
                   aria-label="Send"

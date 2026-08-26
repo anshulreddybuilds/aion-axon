@@ -285,31 +285,29 @@ def create_planned_mission(body: PlannedMissionRequest) -> dict[str, Any]:
     return mission_service.start_planned(body.request)
 
 
-@app.post("/missions/{mission_id}/acquire", dependencies=[Depends(require_owner)])
-def acquire_for_mission(mission_id: str) -> dict[str, Any]:
-    """Propose the capability a BLOCKED mission is missing.
+def _need_for_blocked_mission(mission_id: str) -> tuple[Optional[str], Optional[dict[str, Any]]]:
+    """Shared by the sync and streaming acquire routes below: derive the
+    real acquisition need from a BLOCKED mission's own gap, so neither
+    route has to re-implement (or drift from) the other's logic.
 
-    Reads the gap off the mission itself rather than making the caller
-    restate it, and ties the acquisition back to the mission so that
-    installing it finishes the original job.
+    Returns (need, error_response). Exactly one is non-None.
     """
     mission = mission_service.get(mission_id)
 
     if mission is None:
-        return {"status": "NOT_FOUND", "mission_id": mission_id}
+        return None, {"status": "NOT_FOUND", "mission_id": mission_id}
 
     if mission.get("status") != "BLOCKED":
-        return {
+        return None, {
             "status": "FAILED",
             "error": f"Mission is {mission.get('status')}, not BLOCKED.",
         }
 
     gap = mission.get("blocked_on") or {}
-
     need = gap.get("capability_description") or gap.get("description")
 
     if not need:
-        return {"status": "FAILED", "error": "Mission records no gap."}
+        return None, {"status": "FAILED", "error": "Mission records no gap."}
 
     # Show SYNAPSE the ACTUAL input the new capability will receive, not
     # just a description of the job. Without this it guesses the shape and
@@ -328,7 +326,56 @@ def acquire_for_mission(mission_id: str) -> dict[str, Any]:
             "Parse THIS shape. Do not invent different field names."
         )
 
+    return need, None
+
+
+@app.post("/missions/{mission_id}/acquire", dependencies=[Depends(require_owner)])
+def acquire_for_mission(mission_id: str) -> dict[str, Any]:
+    """Propose the capability a BLOCKED mission is missing.
+
+    Reads the gap off the mission itself rather than making the caller
+    restate it, and ties the acquisition back to the mission so that
+    installing it finishes the original job.
+    """
+    need, error = _need_for_blocked_mission(mission_id)
+    if error is not None:
+        return error
+
     return synapse.propose(need, mission_id).to_dict()
+
+
+@app.get(
+    "/missions/{mission_id}/acquire/stream",
+    dependencies=[Depends(require_owner), Depends(rate_limit_propose)],
+)
+def acquire_for_mission_stream(mission_id: str) -> StreamingResponse:
+    """The same acquisition as POST /missions/{mission_id}/acquire, streamed
+    stage-by-stage exactly like GET /synapse/propose/stream -- same
+    derivation of the need from the mission's own gap, same
+    synapse.propose_stream() generator, just observed live instead of
+    only at the end. No second pipeline: this route and the sync one
+    above call the identical propose_stream()/propose() pair engine.py
+    already exposes.
+    """
+    need, error = _need_for_blocked_mission(mission_id)
+
+    if error is not None:
+        def error_event():
+            yield _sse_event("error", error)
+        return StreamingResponse(error_event(), media_type="text/event-stream")
+
+    def events():
+        try:
+            for record in synapse.propose_stream(need, mission_id):
+                yield _sse_event("stage", record.to_dict())
+        except Exception as exc:  # noqa: BLE001 -- see synapse_propose_stream's comment
+            yield _sse_event("error", {"error": str(exc)})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/missions/{mission_id}/resume-blocked", dependencies=[Depends(require_owner)])
