@@ -72,6 +72,16 @@ Rules you must follow:
 8. Keep steps minimal and concrete. Prefer fewer real steps to many
    vague ones.
 
+9. DO NOT add a write_brief step by default. write_brief packages
+   findings into a business report -- use it ONLY when the user's
+   request itself asks for a report, brief, summary document, or
+   something that genuinely benefits from that packaging (e.g. "brief
+   me on...", "write a report", a multi-finding business analysis).
+   For a request whose real answer is a single number, fact, or short
+   sentence (a conversion, a lookup, a calculation), the LAST step must
+   produce that answer directly -- do not wrap it in an unrequested
+   brief-writing step just because write_brief is available.
+
 Return ONLY the structured plan.
 """
 
