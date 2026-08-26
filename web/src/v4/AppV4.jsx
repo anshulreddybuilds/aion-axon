@@ -180,9 +180,17 @@ function RegistryTable({ autonomy, capabilities }) {
 
 export default function AppV4() {
   const [expanded, setExpanded] = useState(false);
-  const [prompt, setPrompt] = useState(
-    "Pull the US birth totals from 2005 and brief me"
-  );
+  // Empty, not a hardcoded example. A non-empty default here is real
+  // production-visible history: prior to this fix it was
+  // "Pull the US birth totals from 2005 and brief me", pre-filled and
+  // editable (bound via value={prompt} below, not a placeholder) --
+  // meaning a user who opened this page and clicked Send without typing
+  // or speaking anything submitted that exact historical demo phrase as
+  // if it were their own request. Found in an adversarial audit; never
+  // caught by testing because every test that exercised send() first
+  // explicitly filled the input, which never exercises real page-load
+  // state.
+  const [prompt, setPrompt] = useState("");
   const [view, setView] = useState("source");
   const [thoughtOpen, setThoughtOpen] = useState(true);
   const [data, setData] = useState(null);
