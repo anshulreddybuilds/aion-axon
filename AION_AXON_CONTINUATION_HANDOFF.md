@@ -10,6 +10,110 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 6 — the "AppV4 send() fix" and "live SSE pipeline" a mega-prompt described as already-done: neither existed, both built for real, HEAD 199a7b2
+
+A large planning prompt (apparently from a strategy conversation outside
+this repo) arrived describing specific completed work: a commit
+`f94e931` fixing AppV4's primary send button (previously hardcoded to
+`calculate_birth_cagr`, not actually dispatching the typed prompt), and
+a commit `0af9740` adding a live `GET /synapse/propose/stream` SSE
+pipeline with a `LivePipelineView` frontend component. It also cited a
+production Cloud Run revision (`aion-core-00039-sfq`).
+
+**None of it existed.** Checked before touching anything: `git cat-file -t`
+on both hashes failed on every branch (`main`, `feat/beastmode-core`,
+`feat/beastmode-core-oagiwb`, `feat/core-intelligence`,
+`feat/end-to-end-workflow`); `grep` for `propose/stream` or
+`LivePipelineView` found nothing anywhere in the repo; the Notion Source
+of Truth (last updated 2026-08-25, HEAD `9343d27`) told the same story.
+`web/src/v4/AppV4.jsx` on every branch had the exact bug described as
+already fixed: `send = () => { setExpanded(true); setRevealed(0) }`
+never called the backend, and `selected` defaulted to
+`useState("calculate_birth_cagr")`. Reported this plainly rather than
+building on a fiction; the user confirmed to build it for real.
+
+**Built, not assumed:**
+
+1. `app/synapse/engine.py`: `propose()`'s entire body became
+   `propose_stream()`, a generator yielding the same mutated
+   `AcquisitionRecord` at every real stage boundary already marked by
+   `record.stage = "..."` in the old code. `propose()` is now a 5-line
+   wrapper that drains it and returns the last value -- same pipeline,
+   same code path, not a second implementation that could drift.
+   Verified byte-identical: 531 passed before and after this refactor,
+   same count.
+2. `app/api.py`: `GET /synapse/propose/stream`, owner-gated
+   (`require_owner`) and rate-limited (`rate_limit_propose`) exactly
+   like the existing `POST /synapse/propose`, streaming one real SSE
+   event per stage. Query params, not a body (GET). Blank/whitespace
+   `need` gets a real 422 (the manual `_reject_blank_after_stripping`
+   call is wrapped in try/except -> `HTTPException`, since there's no
+   Pydantic body to attach a field_validator to on a GET route).
+3. `web/src/api.js`: `proposeStream()` -- `fetch()` + a manual
+   `ReadableStream` reader parsing SSE frames, deliberately NOT the
+   browser's native `EventSource` (which cannot send the `X-Axon-Token`
+   header this route needs, and putting the token in the URL instead
+   would leak it into logs/history -- exactly what `setOwnerToken()`'s
+   module-variable-only design already exists to avoid). Exported
+   `parseSseFrame()` separately, pure and unit-tested.
+4. `web/src/livePipeline.js` (new): `describeStage(record)` maps one
+   real streamed record to `{label, detail, tone}` for the UI. Every
+   field in `detail` is read directly off the record the backend sent --
+   this file adds no numbers, scores, or outcomes of its own.
+5. `web/src/v4/AppV4.jsx`: `send()` now calls `api.proposeStream()` with
+   the actual typed `prompt`, rendering each real stage as it streams in
+   via the existing "execution stream" UI (already fed real per-stage
+   entries; the reveal timer already only paced reading, not simulated
+   work -- see the file's own pre-existing comment on that). `selected`
+   now starts `null`; no fallback capability name anywhere. Fixed a bug
+   introduced while wiring this up: `decide()` was repointing `selected`
+   to the just-decided capability on REJECT too, which leaked a
+   rejected capability's name into a later, unrelated mission's evidence
+   panel -- only a real approve+install repoints it now, and `reset()`
+   ("New mission") clears `selected` so a fresh mission starts from an
+   empty canvas.
+
+**Verified, in this order, nothing skipped:**
+
+- Backend: 538 passed, 2 skipped (both new tests skip honestly outside
+  their env-var/auth gates), 0 failed.
+- Frontend: 42 passed across 5 `*.test.mjs` files (18 new). Build clean.
+  `api.stream.test.mjs` runs `proposeStream()` against a REAL local
+  `http.createServer` emitting real SSE frames deliberately split across
+  chunk boundaries, not a mocked `Response` -- proves the buffering
+  logic, not just the parser.
+- **Real browser smoke test** (Playwright + the pre-installed Chromium,
+  against a running FastAPI backend with only the network-calling
+  pipeline stages mocked -- same shape as the existing pytest mocks, no
+  real Gemini/sandbox quota spent): typed "Convert Celsius temperatures
+  to Fahrenheit" through the actual hero input, clicked send, watched
+  real stage labels stream in, reached AWAITING_APPROVAL showing the
+  real generated `convert_celsius_to_fahrenheit` source and a real
+  approval queue entry. Rejected it, then typed "Detect invalid values
+  in a CSV column" and got `detect_csv_anomalies` -- a genuinely
+  different capability for a genuinely different need, the exact
+  regression this task existed to prevent. Zero console errors. 6/6
+  checks passed on the final clean run.
+
+**What this session could NOT do:** deploy, or smoke-test against real
+production. This environment (a fresh Linux container, distinct from
+both the earlier Windows sandbox and whatever environment produced the
+mega-prompt's claims) has no `gcloud`, no GCP credentials, and its
+outbound network proxy blocks `*.run.app`/`*.web.app` outright (403 on
+CONNECT). Every verification above is local-only. The production
+revision cited in the mega-prompt (`aion-core-00039-sfq`) was never
+checked against reality here -- it may or may not be current; treat it
+as unverified, not confirmed.
+
+**Not done, deliberately out of scope this pass:** the mega-prompt's
+remaining tasks (7-15: research/grounding investigation, model-strategy
+review, reliability/observability hardening, a full "artificial
+limitations" grep sweep beyond this one confirmed bug, the actual
+production deploy + smoke test, the hackathon demo script). Flagged for
+the next session/owner decision, not silently skipped.
+
+**Current HEAD: `199a7b2`** — supersedes every hash below.
+
 ## Update 5 — P1 actually closed: real emulator run found and fixed a real race
 
 A new session (Linux container, not the earlier Windows sandbox) checked
