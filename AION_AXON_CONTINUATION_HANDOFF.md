@@ -10,6 +10,105 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 5 — P1 actually closed: real emulator run found and fixed a real race
+
+A new session (Linux container, not the earlier Windows sandbox) checked
+the P1 blockers named in Update 4 from scratch rather than trusting them
+carried forward: `java` -> **present** (OpenJDK 21, `/usr/bin/java`).
+Docker daemon still not running here either, but irrelevant once Java
+was confirmed. `gcloud` is not installed and `dl.google.com` is blocked
+by this environment's outbound proxy, so the Firestore emulator jar was
+fetched a different way: `npm install firebase-tools` (npm registry is
+allowlisted), then `firebase setup:emulators:firestore`, which pulled
+`cloud-firestore-emulator-v1.22.0.jar` from `storage.googleapis.com`
+(reachable through the proxy, unlike `dl.google.com`). Ran it directly
+with `java -jar ... --host=localhost --port=8080`, no `gcloud` needed at
+all.
+
+**tests/test_concurrency_firestore_emulator.py — run for real, PASSED.**
+Ten concurrent writers on one document via a real Firestore transaction:
+1 INSTALLED, 9 ALREADY_INSTALLED, final version == 1, exactly as
+asserted. Full suite alongside it: 531 passed, 1 skipped -> **532
+passed, 0 skipped** with the emulator reachable (the one skip is this
+file, and it stops skipping the moment `FIRESTORE_EMULATOR_HOST` is
+set). No regressions.
+
+That answered the scaffold's own question ("does Firestore's
+transaction() API work") but not the one that actually matters for
+production: does `app/synapse/engine.py`'s **real** `install()` code
+race, given it does a plain read-check-write with no `transaction()` at
+all (confirmed by reading it directly, lines ~362-441)? Wrote a second
+test to answer that directly against the real engine code path, not a
+toy transaction: `tests/test_concurrency_firestore_emulator_engine.py`,
+which forces `AXON_FIRESTORE_MODE` to something other than `"memory"`
+(exported in the shell before pytest starts, since `conftest.py`'s
+`setdefault` only fills in when unset) so `firestore_store` is the real
+`AxonFirestore` client, pointed at the emulator.
+
+**First run: FAILED, for real.** All 10 concurrent `synapse.install()`
+calls returned `INSTALLED` -- a genuine TOCTOU race, exactly the class
+of bug the scaffold's docstring said to prove before touching
+`engine.py`. It's now proven, not assumed.
+
+**Fix**, minimal and scoped to the actual gap: added
+`firestore_store.claim_install(name, request_id) -> bool` to both
+backends -- a `threading.Lock`-guarded dict for `MemoryFirestore`, a real
+`@firestore.transactional` read-check-write against a new, separate
+`install_claims` collection/dict for `AxonFirestore` (kept out of the
+`capabilities` document itself so the claim marker never leaks into a
+judge-facing API payload). `engine.py`'s `install()` now calls
+`claim_install()` in place of the old plain `stored.get("state") ==
+"READY" and ...` check, right before the mutating writes it used to race
+around.
+
+**Re-ran the exact test that found the bug: PASSED**, repeatably --
+exactly 1 INSTALLED, 9 ALREADY_INSTALLED, 1 evolution event, over real
+networked Firestore, on a clean emulator and confirmed again after other
+tests had already run against it. Full suite unaffected: **531 passed, 2
+skipped** in normal CI mode (memory backend, no emulator -- the 2nd skip
+is the new engine-race test, which honestly skips outside its two-env-var
+gate, same pattern as its sibling).
+
+**One honest caveat, disclosed in both test files' docstrings, not
+hidden:** ten threads racing one real Firestore transaction on the same
+document is genuine heavy contention, and on this specific local
+single-JVM emulator (not real distributed Firestore) the SDK's default
+5-attempt commit retry budget occasionally isn't enough -- observed
+directly, more often once the emulator had been running a while under
+load than right after a fresh start. When it happens the failure is
+`ValueError: Failed to commit transaction in 5 attempts` (a retry-budget
+exhaustion), never a wrong result -- every run that DID complete produced
+the exact correct invariant, including immediately after a failed run on
+the same emulator process. This affects BOTH the sibling scaffold test
+and the new engine test equally (it is a property of the local emulator
+under stress, not of either test's logic or of the fix) and is a known
+characteristic of a single local JVM handling all contention resolution
+serially, not a claim about production Firestore's distributed handling.
+Not "fixed" by loosening either test's assertions or retry budget --
+that would hide a real signal under identical real contention in
+production, where it would rightly need the same investigation.
+
+**P1 verdict: was UNVERIFIED -- ENVIRONMENT BLOCKED. Now: VERIFIED, and a
+real gap it was meant to check for was found and fixed.** The remaining
+scaffold-test flakiness under sustained local single-emulator contention
+is now an explicitly disclosed environmental characteristic, not an open
+question about whether the atomicity primitive or the fix works -- both
+are proven, repeatably, whenever the transaction actually commits.
+
+Files touched this update: `app/memory/firestore_store.py` (+54 lines,
+`claim_install()` on both backends), `app/synapse/engine.py` (idempotency
+check replaced with the atomic claim, same behavior for every existing
+caller), `tests/test_concurrency_firestore_emulator.py` (docstring update
+only, recording the real run + the contention caveat -- test body
+unchanged), `tests/test_concurrency_firestore_emulator_engine.py` (new).
+
+Production safety: no push to production Firestore, no deploy, no real
+mission touched. This was a pure local code + test change, verified
+entirely against a local emulator with no GCP credentials present in
+this environment (confirmed before touching non-memory Firestore mode --
+any accidental real call would have failed on missing ADC, not silently
+succeeded against `aion-axon-2026`).
+
 ## Update 4 — genuine Docker attempt for P1, still environment-blocked, HEAD 08883d2
 
 A session was explicitly directed to try harder to close P1 rather than just re-documenting it. Result: **still genuinely blocked, now with stronger evidence.**

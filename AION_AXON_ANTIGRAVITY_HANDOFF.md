@@ -1,15 +1,15 @@
 # AION AXON — ANTIGRAVITY HANDOFF
 
-Claude Code is nearing its usage limit. This file exists so the project continues with zero loss of context in Antigravity or any other coding agent. Read this AND `AION_AXON_CONTINUATION_HANDOFF.md` first — they agree; this file is the short migration summary, the other is the detailed history.
+This file exists so the project continues with zero loss of context in Antigravity or any other coding agent. Read this AND `AION_AXON_CONTINUATION_HANDOFF.md` first — they agree; this file is the short migration summary, the other is the detailed history. (Note: the "nearing its usage limit" framing from an earlier pass turned out not to block continuing — a later session picked this straight back up.)
 
 ## Current HEAD
-`efbe6cadcf9cb24642f3b3f499179e746ccd77a0`
+Superseded — see `AION_AXON_CONTINUATION_HANDOFF.md`'s Update 5 and `git log`. This file's own P1 section below is now stale in the same way the rest of this paragraph is; read Update 5, not this file, for the current P1 state.
 
 ## Repository state
-Clean. Branch `feat/beastmode-core`, 12 commits ahead of `origin/feat/beastmode-core`, nothing pushed.
+Clean, pushed to `origin/feat/beastmode-core-oagiwb` (this branch superseded `feat/beastmode-core` as the active development branch — see `git branch -a`).
 
 ## Project status
-Technical completion reached, except distributed Firestore concurrency verification.
+Technical completion reached. Distributed Firestore concurrency is now VERIFIED (see the "ONE remaining technical gap" section below — it is no longer open, kept here with a correction rather than deleted so the history stays honest).
 
 ## Completed systems
 - Evaluator (structured JSON output, fail-closed validation)
@@ -35,19 +35,25 @@ Build: PASS
 
 **No known test flakes.**
 
-## ONE remaining technical gap
-Distributed Firestore concurrency.
+## ONE remaining technical gap — CLOSED (see AION_AXON_CONTINUATION_HANDOFF.md Update 5)
+Was: distributed Firestore concurrency, unverified. Now: verified for real
+against a real Firestore emulator, and a real race was found and fixed in
+`app/synapse/engine.py`'s `install()` (a genuine TOCTOU gap — 10/10
+concurrent installs succeeded before the fix, over real networked
+Firestore, not a toy in-process test). Do not re-open this as "still
+blocked" — a later session (different environment, Java present) closed
+it. Full detail, including an honestly-disclosed local-emulator
+contention caveat that does not change the verdict, is in
+`AION_AXON_CONTINUATION_HANDOFF.md`'s Update 5.
 
-## Why it remains open
-No Java on PATH (confirmed repeatedly across sessions). Docker is installed but its Desktop backend crashes on launch in this environment (confirmed via its own log, no container ever created) — likely restricted virtualization (WSL2/Hyper-V) in this sandbox. Neither was assumed; both were genuinely attempted and failed with concrete evidence. Fixing the Docker path would need host-level virtualization/BIOS changes — a real system change, correctly out of scope for a "safe and cheap" fix.
+## Why it was previously blocked, and how that changed
+No Java on PATH in the earlier Windows sandbox (confirmed repeatedly across sessions). Docker Desktop's backend crashed on launch there too. Neither was assumed; both were genuinely attempted and failed with concrete evidence. A later session ran in a **different, Linux container environment** where Java (OpenJDK 21) was already present — the blocker was environment-specific, not a property of the project itself.
 
 ## Existing scaffold
-`tests/test_concurrency_firestore_emulator.py` — uses the real `google-cloud-firestore` `Client.transaction()` API, correctly skips (not fakes) when no emulator is reachable. Exact run commands (native JDK or Docker) are in its own docstring.
+`tests/test_concurrency_firestore_emulator.py` — uses the real `google-cloud-firestore` `Client.transaction()` API. Now run for real and passing. `tests/test_concurrency_firestore_emulator_engine.py` (new) exercises the actual `engine.py` code path the same way. Both skip cleanly (not fake) when their env-var gates aren't met. Exact run commands are in each file's own docstring, including how the emulator jar was fetched without `gcloud` (via `firebase-tools`'s `setup:emulators:firestore`, since `dl.google.com` was blocked by that environment's proxy but `storage.googleapis.com` was not).
 
 ## Next real action
-Run that test in an environment with working Java or Docker virtualization.
-
-Recommended cheap path: a GitHub Actions runner (free tier, Java preinstalled) or any other CI/local environment with a functional JDK or Docker — not further attempts in this specific sandboxed environment.
+None required for P1 — closed. See `AION_AXON_CONTINUATION_HANDOFF.md` for what else is open.
 
 ## Rate limiting limitation
 Per-process, in-memory. Not a globally distributed Cloud Run rate limiter. Never describe it as distributed.
@@ -56,7 +62,7 @@ Per-process, in-memory. Not a globally distributed Cloud Run rate limiter. Never
 Tamper-evident, not tamper-proof. Local seal file, not an immutable remote trust anchor. Never upgrade this claim.
 
 ## Production safety
-No push. No deploy. No production Firestore touched. No production ledger changes. No ledger reseal. No Mission #2. No production approval clicked.
+No push to production Firestore, no deploy, no production ledger changes, no ledger reseal, no Mission #2, no production approval clicked. (The P1 fix above touched real code, pushed to the git branch, but every test run that verified it ran against a local emulator with no GCP credentials present in that environment — confirmed before running, not assumed.)
 
 ## Notion Source of Truth
 https://app.notion.com/p/3c782243366881aea778e04c35afceba — "🧭 AION AXON — Source of Truth", nested under the existing "AION Axon — Hackathon Master Plan" page. Repository + verified tests + this handoff take precedence over Notion if they ever disagree; update Notion to match, never the reverse.
@@ -65,4 +71,4 @@ https://app.notion.com/p/3c782243366881aea778e04c35afceba — "🧭 AION AXON �
 Approximately $150 available. Not spent this pass. Treat as a project resource requiring an architecture/ROI decision before any spend — candidate future uses: CI/CD, Cloud Run, Firestore, Gemini/API workloads, observability, demo infrastructure. No spending decision has been made.
 
 ## Antigravity instructions
-Continue from current HEAD. Read this file and `AION_AXON_CONTINUATION_HANDOFF.md` first. Do not repeat completed audits. Do not rewrite working systems. Do not assume the distributed concurrency test passed — it has not been run. Do not deploy until explicitly authorized by the owner.
+Continue from current HEAD. Read this file and `AION_AXON_CONTINUATION_HANDOFF.md` first (Update 5 there has the full P1 story). Do not repeat completed audits. Do not rewrite working systems. The distributed concurrency test HAS now been run and passed, and a real gap it found in `engine.py` has been fixed and verified — do not treat P1 as open again without new evidence. Do not deploy until explicitly authorized by the owner.

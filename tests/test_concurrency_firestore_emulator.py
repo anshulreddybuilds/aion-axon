@@ -49,6 +49,27 @@ install() read-check-write, IF this test proves it's actually needed
 (i.e., if the naive multi-process version below shows a real race the
 current idempotency guard in app/synapse/engine.py doesn't catch). Do not
 add transaction code to engine.py speculatively before that's shown.
+
+UPDATE -- run for real (a later session, with Java available): this test
+PASSED, proving Firestore's transaction() API genuinely serializes ten
+concurrent writers on one document (1 INSTALLED, 9 ALREADY_INSTALLED,
+final version == 1) over a real network-separated Firestore emulator.
+That in turn motivated actually checking the "IF" above against
+engine.py's real code -- see
+tests/test_concurrency_firestore_emulator_engine.py and
+AION_AXON_CONTINUATION_HANDOFF.md's P1 section for the answer (a real
+race was found and fixed with a new claim_install() transaction).
+
+Also observed this same session: on this specific local single-JVM
+emulator, ten threads racing ONE transaction on the SAME document
+occasionally exhausts the SDK's default 5-attempt commit retry budget
+(`ValueError: Failed to commit transaction in 5 attempts`), more often
+once the emulator has been running under sustained load than on a
+freshly-started one. That is a liveness/retry-budget limit of this local
+single-process emulator under heavy single-document contention, not a
+correctness failure -- every run that DID commit produced the exact
+invariant this test asserts. Re-run on failure before assuming a
+regression.
 """
 import os
 

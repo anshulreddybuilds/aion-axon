@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 import os
+import threading
 
 from google.cloud import firestore
 
@@ -14,6 +15,8 @@ class MemoryFirestore:
         self.evolution_events: dict[str, dict[str, Any]] = {}
         self.monitors: dict[str, dict[str, Any]] = {}
         self.ground_truth: dict[str, dict[str, Any]] = {}
+        self.install_claims: dict[str, str] = {}
+        self._claim_lock = threading.Lock()
 
     def create_approval(self, request_id: str, data: dict[str, Any]) -> None:
         self.approvals[request_id] = {
@@ -93,6 +96,23 @@ class MemoryFirestore:
 
     def list_capabilities(self) -> list[dict[str, Any]]:
         return list(self.capabilities.values())
+
+    def claim_install(self, name: str, request_id: str) -> bool:
+        """Atomically claim the right to install `name` under
+        `request_id`. Returns True for exactly one caller; every other
+        concurrent or replayed caller for the same (name, request_id)
+        gets False. Kept in a separate dict from `capabilities` so the
+        claim marker never leaks into a capability document that API
+        routes return verbatim.
+
+        A `threading.Lock` is enough here (CPython's GIL already
+        serializes this dict), but the explicit lock makes the atomicity
+        a property of the code, not an accident of the interpreter."""
+        with self._claim_lock:
+            if self.install_claims.get(name) == request_id:
+                return False
+            self.install_claims[name] = request_id
+            return True
 
     def write_evolution_event(self, data: dict[str, Any]) -> str:
         event_id = f"evolution-{len(self.evolution_events) + 1}"
@@ -239,6 +259,40 @@ class AxonFirestore:
             doc.to_dict()
             for doc in self.db.collection("capabilities").stream()
         ]
+
+    def claim_install(self, name: str, request_id: str) -> bool:
+        """Atomically claim the right to install `name` under
+        `request_id`, using a real Firestore transaction so this holds
+        across network-separated callers (multiple Cloud Run instances),
+        not just within one process.
+
+        Kept in its own `install_claims` collection, never merged into
+        the capability document that API routes return verbatim -- an
+        internal claim marker has no business in a judge-facing payload.
+
+        Proven necessary, not speculative: the plain read-check-write
+        this replaces was shown to race for real (10/10 concurrent
+        callers over the actual emulator all got INSTALLED) in
+        tests/test_concurrency_firestore_emulator_engine.py before this
+        method existed. See AION_AXON_CONTINUATION_HANDOFF.md's P1
+        section for the full account."""
+        doc_ref = self.db.collection("install_claims").document(name)
+
+        @firestore.transactional
+        def _claim(transaction):
+            snapshot = doc_ref.get(transaction=transaction)
+            data = snapshot.to_dict() or {}
+
+            if data.get("request_id") == request_id:
+                return False
+
+            transaction.set(doc_ref, {
+                "request_id": request_id,
+                "claimed_at": datetime.now(timezone.utc).isoformat(),
+            })
+            return True
+
+        return _claim(self.db.transaction())
 
     def write_evolution_event(self, data: dict[str, Any]) -> str:
         reference = self.db.collection("evolution_events").document()

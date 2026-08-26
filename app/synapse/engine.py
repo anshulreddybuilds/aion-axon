@@ -394,26 +394,30 @@ class SynapseEngine:
                 "reason": "Human approval has not been granted.",
             }
 
-        # Idempotency guard (Batch 2 / state integrity): an approval stays
-        # APPROVED forever once decided -- it is never consumed -- so
-        # nothing above stops this SAME request_id from reaching install()
-        # a second time (a retried client call, two racing requests, a
-        # replayed request). Without this check each call unconditionally
-        # re-registers the capability, bumps `version` again, and writes
-        # ANOTHER evolution event for the exact same real-world action --
-        # confirmed live: two calls in a row moved version 1->2 and
-        # evolution events 1->2 with zero new approval in between. This
-        # only short-circuits a replay of the SAME already-installed
-        # passport; a genuinely NEW propose() cycle for this capability
-        # name gets its own request_id and is not affected.
-        if (
-            stored.get("state") == "READY"
-            and passport.get("approval_request_id") == request_id
-        ):
+        # Idempotency guard (Batch 2 / state integrity), made atomic (P1
+        # fix): an approval stays APPROVED forever once decided -- it is
+        # never consumed -- so nothing above stops this SAME request_id
+        # from reaching install() a second time (a retried client call,
+        # two racing requests, a replayed request). The original guard
+        # compared `stored`/`passport` -- both read ABOVE, before any
+        # writes -- against request_id: a plain read-check-write with a
+        # real gap between that read and the save_capability() write
+        # below. Proven to actually race over real network-separated
+        # Firestore -- 10/10 concurrent callers against the emulator all
+        # got INSTALLED, each re-registering the capability and writing
+        # its own evolution event -- in
+        # tests/test_concurrency_firestore_emulator_engine.py before this
+        # fix existed (see AION_AXON_CONTINUATION_HANDOFF.md's P1
+        # section). claim_install() closes the gap with one atomic
+        # operation (a real Firestore transaction for AxonFirestore, a
+        # lock for MemoryFirestore) instead of two separate calls with a
+        # window in between.
+        if not firestore_store.claim_install(capability_name, request_id):
+            refreshed = firestore_store.get_capability(capability_name) or stored
             return {
                 "status": "ALREADY_INSTALLED",
                 "capability": capability_name,
-                "version": stored.get("version"),
+                "version": refreshed.get("version"),
                 "request_id": request_id,
             }
 
