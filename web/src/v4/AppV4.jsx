@@ -175,21 +175,26 @@ function RegistryTable({ autonomy, capabilities }) {
 
 export default function AppV4() {
   const [expanded, setExpanded] = useState(false);
-  const [prompt, setPrompt] = useState(
-    "Pull the US birth totals from 2005 and brief me"
-  );
+  // Cleared: the old default was "Pull the US birth totals from 2005…" which
+  // always produced calculate_birth_cagr regardless of what the judge typed.
+  // The placeholder text conveys what to type; the actual value must start empty.
+  const [prompt, setPrompt] = useState("");
   const [view, setView] = useState("source");
   const [thoughtOpen, setThoughtOpen] = useState(true);
   const [data, setData] = useState(null);
   const [names, setNames] = useState([]);
-  const [selected, setSelected] = useState("calculate_birth_cagr");
+  // Cleared: was hardcoded to "calculate_birth_cagr", so the canvas always loaded
+  // that capability's passport regardless of which mission was actually running.
+  // Now starts null; gets set to the real capability name after a mission runs.
+  const [selected, setSelected] = useState(null);
   const [revealed, setRevealed] = useState(0);
   const revealTimer = useRef(null);
 
-  // Follow-up dispatches a REAL mission. An earlier pass shipped this as a
-  // glowing send button with no handler at all, which is the exact thing
-  // docs/upgrade-plan.md warns about: "judges clicking a dead Approve
-  // button is worse than no button."
+  // Both the primary send button AND the follow-up bar dispatch real missions.
+  // Previously send() only set expanded=true (pure UI toggle, no API call),
+  // so the canvas always displayed whatever `selected` happened to be —
+  // which was hardcoded to calculate_birth_cagr. The prompt the user typed
+  // was silently discarded. Fixed: send() now calls plannedMission(prompt).
   const [followUp, setFollowUp] = useState("");
   const [sending, setSending] = useState(false);
   const [sendOutcome, setSendOutcome] = useState(null);
@@ -231,6 +236,7 @@ export default function AppV4() {
   }, []);
 
   useEffect(() => {
+    if (!selected) return;
     loadArtifact(selected).then(setData).catch(() => {});
   }, [selected]);
 
@@ -354,9 +360,59 @@ export default function AppV4() {
     [actions]
   );
 
-  const send = () => {
+  const send = async () => {
+    const request = prompt.trim();
+    if (!request || sending) return;
+
+    // Root-cause fix: the previous implementation was a pure UI toggle
+    // (setExpanded(true); setRevealed(0)) with no API call. The user's
+    // typed prompt was discarded; the canvas displayed whatever `selected`
+    // was initialised to (hardcoded: "calculate_birth_cagr").
+    //
+    // Now: run the real planned mission pipeline with the actual prompt,
+    // then point `selected` at the capability the mission produced (if any).
     setExpanded(true);
     setRevealed(0);
+    setSending(true);
+    setSendOutcome(null);
+    setData(null);
+
+    try {
+      const result = await api.plannedMission(request);
+      setAnswer(extractAnswer(result));
+
+      // If the mission produced or acquired a capability, surface it.
+      // A BLOCKED mission surfaces its blocked_on capability description;
+      // a COMPLETED mission surfaces the tool used in the last step.
+      const capabilityName =
+        result?.step_results?.findLast?.((s) => s.tool && s.tool !== "write_brief")
+          ?.tool ||
+        result?.blocked_on?.capability_name ||
+        null;
+
+      if (capabilityName) {
+        setSelected(capabilityName);
+      }
+
+      const failed = result?.status && result.status !== "COMPLETED";
+      setSendOutcome({
+        kind: result?.blocked_on ? "blocked" : failed ? "error" : "ok",
+        text: result?.blocked_on
+          ? `BLOCKED — gap: ${
+              result.blocked_on.capability_description ||
+              result.blocked_on.description
+            }`
+          : result?.reason
+          ? `${result.status} — ${result.reason}`
+          : `${result?.status || "COMPLETED"} · ${
+              (result?.step_results || []).length
+            } steps`,
+      });
+    } catch (err) {
+      setSendOutcome({ kind: "error", text: String(err.message || err) });
+    } finally {
+      setSending(false);
+    }
   };
 
   const reset = () => {
@@ -364,6 +420,8 @@ export default function AppV4() {
     setRevealed(0);
     setSendOutcome(null);
     setAnswer(null);
+    setData(null);
+    setSelected(null);
   };
 
   const sendFollowUp = async () => {
@@ -436,9 +494,10 @@ export default function AppV4() {
             <input
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && send()}
+              onKeyDown={(e) => e.key === "Enter" && !sending && send()}
               placeholder="Ask for something it cannot do yet…"
-              className="w-full bg-transparent border-none outline-none text-[16px] tracking-tight placeholder:text-slate-600 px-1 py-2"
+              disabled={sending}
+              className="w-full bg-transparent border-none outline-none text-[16px] tracking-tight placeholder:text-slate-600 px-1 py-2 disabled:opacity-50"
             />
 
             <div className="flex items-center justify-between mt-3">
@@ -453,13 +512,20 @@ export default function AppV4() {
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={send}
-                  className="h-8 w-8 grid place-items-center rounded-full text-white"
+                  disabled={sending || !prompt.trim()}
+                  className="h-8 w-8 grid place-items-center rounded-full text-white disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
                   style={{
                     background: "linear-gradient(135deg,#0066ff,#00f0ff)",
-                    boxShadow: "0 0 18px rgba(0,102,255,0.65)",
+                    boxShadow: sending ? "none" : "0 0 18px rgba(0,102,255,0.65)",
                   }}
                 >
-                  <ArrowUp size={15} />
+                  {sending ? (
+                    <svg className="animate-spin" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                    </svg>
+                  ) : (
+                    <ArrowUp size={15} />
+                  )}
                 </button>
               </div>
             </div>
@@ -504,17 +570,24 @@ export default function AppV4() {
               </span>
 
               <div className="ml-auto framer-pill flex items-center gap-2 px-2.5 py-1.5">
-                <select
-                  value={selected}
-                  onChange={(e) => setSelected(e.target.value)}
-                  className="bg-transparent outline-none font-mono text-[10.5px] text-slate-300"
-                >
-                  {(names.length ? names : [selected]).map((n) => (
-                    <option key={n} value={n} className="bg-[#0b0d15]">
-                      {n}
-                    </option>
-                  ))}
-                </select>
+                {sending ? (
+                  <span className="font-mono text-[10.5px] text-slate-500 animate-pulse">
+                    running mission…
+                  </span>
+                ) : (
+                  <select
+                    value={selected ?? ""}
+                    onChange={(e) => setSelected(e.target.value || null)}
+                    className="bg-transparent outline-none font-mono text-[10.5px] text-slate-300"
+                  >
+                    {!selected && <option value="" className="bg-[#0b0d15]">— run a mission —</option>}
+                    {(names.length ? names : selected ? [selected] : []).map((n) => (
+                      <option key={n} value={n} className="bg-[#0b0d15]">
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
             </div>
 
