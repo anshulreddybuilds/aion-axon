@@ -9,9 +9,9 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
 
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -561,6 +561,80 @@ def synapse_propose(body: AcquisitionRequest) -> dict[str, Any]:
     return synapse.propose(
         body.need, body.mission_id, allow_retry=body.allow_retry,
     ).to_dict()
+
+
+def _sse_event(event: str, data: dict[str, Any]) -> str:
+    """Format one Server-Sent Event. `data` is JSON-encoded on a single
+    line -- an SSE payload cannot contain a bare newline, and json.dumps
+    never emits one by default."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@app.get(
+    "/synapse/propose/stream",
+    dependencies=[Depends(require_owner), Depends(rate_limit_propose)],
+)
+def synapse_propose_stream(
+    need: str = Query(..., min_length=3, max_length=4000),
+    mission_id: Optional[str] = Query(None, max_length=200),
+    allow_retry: bool = Query(False),
+) -> StreamingResponse:
+    """The same acquisition pipeline as POST /synapse/propose, streamed:
+    one real Server-Sent Event per pipeline stage as it actually
+    completes (GUARDIAN_PRESCREEN -> RESEARCH -> GENERATE ->
+    SAFETY_SCREEN -> SANDBOX_TEST -> EVALUATE -> GUARDIAN_SCREEN ->
+    AWAITING_APPROVAL, or an earlier terminal stage on a real
+    refusal/rejection/block/failure).
+
+    Backed directly by synapse.propose_stream() -- the exact generator
+    synapse.propose() above also drains. There is one pipeline
+    implementation; this route cannot show a stage the governed pipeline
+    did not actually just execute, because it never re-derives or mocks
+    any stage -- it only observes the real one as it runs.
+
+    A GET route with the need in the query string, not a POST body: the
+    frontend consumes this with `fetch()` + a stream reader (not the
+    browser's native EventSource, which cannot send the `X-Axon-Token`
+    header this route is gated on) -- see web/src/api.js. GET matches
+    what every browser streaming primitive expects, and keeping auth on
+    a header rather than a query string keeps the owner token out of
+    server logs and browser history, same as every other route.
+    """
+    # A manual call, not a Pydantic field_validator (there is no request
+    # body on a GET route to attach one to) -- so the ValueError it raises
+    # is caught and turned into the same clean 422 the POST route gets
+    # for free, instead of an unhandled 500 for a whitespace-only need.
+    try:
+        stripped = _reject_blank_after_stripping(need)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def events():
+        try:
+            for record in synapse.propose_stream(
+                stripped, mission_id, allow_retry=allow_retry,
+            ):
+                yield _sse_event("stage", record.to_dict())
+        except Exception as exc:  # noqa: BLE001 -- see comment below
+            # A stage that raises (a genuine bug, or a real model/network
+            # failure not already caught and degraded inside the
+            # pipeline itself) must still close the stream with an
+            # honest error event. An SSE connection that just drops looks,
+            # to the UI, identical to "still working" -- silently worse
+            # than a visible failure.
+            yield _sse_event("error", {"error": str(exc)})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            # Disables buffering on Cloud Run's/nginx-style fronting
+            # proxies, which otherwise hold the whole response until it
+            # closes -- turning a live stream back into a delayed batch.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/synapse/install/{capability}", dependencies=[Depends(require_owner)])

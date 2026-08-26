@@ -13,7 +13,11 @@
  */
 
 export const CORE =
-  import.meta.env.VITE_CORE_URL ||
+  // `import.meta.env` only exists under Vite. Guarded, not assumed, so
+  // this file can also be imported directly by plain-Node tests
+  // (api.stream.test.mjs) without needing a Vite runtime just to test a
+  // pure function that lives in the same module.
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_CORE_URL) ||
   "https://aion-core-638298765129.asia-south1.run.app";
 
 /**
@@ -58,6 +62,116 @@ async function request(path, options = {}) {
   }
 
   return response.json();
+}
+
+/**
+ * Parse one Server-Sent Event frame (everything between two "\n\n"
+ * separators) into { event, data }. Pure and framework-free so it can be
+ * unit tested without a real fetch/stream — see api.stream.test.mjs.
+ *
+ * Returns null for an empty/keepalive frame rather than throwing, since
+ * a stray blank frame is not malformed input, just nothing to report.
+ */
+export function parseSseFrame(frame) {
+  let event = null;
+  let data = null;
+
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event: ")) {
+      event = line.slice("event: ".length);
+    } else if (line.startsWith("data: ")) {
+      const raw = line.slice("data: ".length);
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = null;
+      }
+    }
+  }
+
+  if (event === null && data === null) return null;
+  return { event, data };
+}
+
+/**
+ * Consume GET /synapse/propose/stream. Deliberately NOT the browser's
+ * native EventSource: EventSource cannot send a custom header, and this
+ * route is gated on X-Axon-Token the same as every other write — putting
+ * the owner token in the URL instead (the only way EventSource could
+ * authenticate) would leak it into server logs and browser history,
+ * which is exactly what setOwnerToken()'s own module-variable-only
+ * design exists to avoid. fetch() + a manual stream reader keeps the
+ * token where every other call already keeps it: a header, never a URL.
+ *
+ * `onStage(record)` fires once per real stage the backend pipeline just
+ * completed — record is the exact AcquisitionRecord.to_dict() shape
+ * POST /synapse/propose already returns, just delivered incrementally.
+ * Resolves with the LAST record delivered (the terminal outcome), same
+ * value proposeCapability() would have returned for the same need.
+ */
+export async function proposeStream(
+  need,
+  { missionId, allowRetry = false, onStage, signal } = {}
+) {
+  const params = new URLSearchParams({ need });
+  if (missionId) params.set("mission_id", missionId);
+  if (allowRetry) params.set("allow_retry", "true");
+
+  const headers = {};
+  if (ownerToken) headers["X-Axon-Token"] = ownerToken;
+
+  const response = await fetch(
+    `${CORE}/synapse/propose/stream?${params.toString()}`,
+    { headers, signal }
+  );
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error(
+        "401 — this action needs the owner token. Paste it above."
+      );
+    }
+    // A rejected request (422 blank need, 429 rate limit) never opens
+    // as a stream at all — its body is a normal JSON error, not SSE.
+    let detail = `GET /synapse/propose/stream → ${response.status}`;
+    try {
+      const body = await response.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* body wasn't JSON; the generic detail above stands */
+    }
+    throw new Error(detail);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let last = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    let boundary;
+    while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+
+      const parsed = parseSseFrame(frame);
+      if (!parsed) continue;
+
+      if (parsed.event === "error") {
+        throw new Error(parsed.data?.error || "The live pipeline stream failed.");
+      }
+
+      last = parsed.data;
+      onStage?.(parsed.data);
+    }
+  }
+
+  return last;
 }
 
 export const api = {
@@ -116,6 +230,13 @@ export const api = {
         allow_retry: allowRetry,
       }),
     }),
+
+  // The SAME pipeline as proposeCapability, streamed: one real event per
+  // stage as GET /synapse/propose/stream's generator (app/synapse/engine.py's
+  // propose_stream()) actually completes it. See proposeStream() below —
+  // not part of the `request()`-based table above because it isn't a
+  // single JSON response, it's a stream.
+  proposeStream,
 
   // Cloud Run returns HTTP 411 on a POST with no body, so every POST
   // sends one even when the endpoint ignores it.

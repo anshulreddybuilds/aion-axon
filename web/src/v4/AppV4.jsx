@@ -12,6 +12,7 @@ import {
   Zap,
 } from "lucide-react";
 import { api, hasOwnerToken, setOwnerToken } from "../api.js";
+import { describeStage } from "../livePipeline.js";
 import { extractAnswer, humanMs, loadArtifact, prettyValue, VIEWS } from "./artifact.js";
 
 /**
@@ -182,9 +183,30 @@ export default function AppV4() {
   const [thoughtOpen, setThoughtOpen] = useState(true);
   const [data, setData] = useState(null);
   const [names, setNames] = useState([]);
-  const [selected, setSelected] = useState("calculate_birth_cagr");
+  // No default capability. A fixed starting value here is exactly the
+  // regression this file exists to prevent: the primary send button
+  // reveals whatever `selected` was pinned to, so a hardcoded name here
+  // makes every typed need look like it produced the same capability,
+  // whether or not it actually ran. Empty means "nothing chosen yet" —
+  // shown as an empty/initial state, not silently backfilled.
+  const [selected, setSelected] = useState(null);
   const [revealed, setRevealed] = useState(0);
   const revealTimer = useRef(null);
+
+  // The live pipeline: what the primary send button now actually drives.
+  // `liveActions`/`liveRecord` hold REAL data streamed from
+  // GET /synapse/propose/stream as it runs -- one entry per real stage
+  // the backend just completed, via describeStage() in livePipeline.js.
+  // `liveMode` is true from the moment send() dispatches a real need
+  // until (if ever) the resulting capability is installed, at which
+  // point decide()'s existing loadArtifact() call takes back over and
+  // shows the fuller, post-install telemetry view for the same
+  // capability -- watch it happen, then see the recorded evidence.
+  const [liveActions, setLiveActions] = useState([]);
+  const [liveRecord, setLiveRecord] = useState(null);
+  const [liveMode, setLiveMode] = useState(false);
+  const [sendingLive, setSendingLive] = useState(false);
+  const stageStartRef = useRef(Date.now());
 
   // Follow-up dispatches a REAL mission. An earlier pass shipped this as a
   // glowing send button with no handler at all, which is the exact thing
@@ -231,6 +253,10 @@ export default function AppV4() {
   }, []);
 
   useEffect(() => {
+    if (!selected) {
+      setData(null);
+      return;
+    }
     loadArtifact(selected).then(setData).catch(() => {});
   }, [selected]);
 
@@ -326,7 +352,22 @@ export default function AppV4() {
       setReview(null);
       const p = await api.pending();
       setPending(p?.pending || []);
-      loadArtifact(selected).then(setData).catch(() => {});
+
+      // Point the canvas at whatever was just INSTALLED, not whatever
+      // `selected` happened to be before this decision -- otherwise a
+      // live acquisition that gets approved leaves the dropdown pinned
+      // to the old value while the evidence panel silently shows a
+      // different capability's data. A rejection installs nothing, so
+      // it must NOT repoint `selected` -- a rejected candidate has no
+      // real telemetry/passport worth switching the canvas to, and
+      // doing so here previously leaked a rejected capability's name
+      // into a later, unrelated mission's view.
+      if (approved && capability) {
+        setLiveMode(false);
+        setSelected(capability);
+      } else {
+        loadArtifact(selected).then(setData).catch(() => {});
+      }
     } catch (err) {
       setSendOutcome({ kind: "error", text: String(err.message || err) });
     } finally {
@@ -334,7 +375,7 @@ export default function AppV4() {
     }
   };
 
-  const actions = data?.actions || [];
+  const actions = liveMode ? liveActions : data?.actions || [];
 
   // The action stream reveals one item at a time after send. Each item is
   // a real completed stage with its real measured cost; the reveal is
@@ -346,24 +387,93 @@ export default function AppV4() {
     return () => clearTimeout(revealTimer.current);
   }, [expanded, revealed, actions.length]);
 
-  const candidate = data?.passport?.passport?.candidate || null;
-  const thought = data?.thought || {};
+  const candidate = liveMode
+    ? liveRecord?.candidate || null
+    : data?.passport?.passport?.candidate || null;
+  const thought = liveMode
+    ? { need: liveRecord?.need || null, evaluatorReason: liveRecord?.evaluation?.reason || null }
+    : data?.thought || {};
 
   const totalMs = useMemo(
     () => actions.reduce((sum, a) => sum + (a.ms || 0), 0),
     [actions]
   );
 
-  const send = () => {
+  // Dispatches the REAL typed need to the REAL governed pipeline via
+  // GET /synapse/propose/stream, and renders each stage as it actually
+  // happens -- see livePipeline.js's describeStage(). This used to only
+  // reveal whatever `selected` already was (hardcoded to
+  // calculate_birth_cagr); every need produced the same evidence
+  // regardless of what was typed. Now the need actually typed is the
+  // need that runs.
+  const send = async () => {
+    const need = prompt.trim();
+    if (!need || sendingLive) return;
+
+    if (!unlocked) {
+      setExpanded(true);
+      setSendOutcome({
+        kind: "blocked",
+        text: "Unlock with the owner token below, then send again — acquiring a capability is a real, governed write.",
+      });
+      return;
+    }
+
     setExpanded(true);
     setRevealed(0);
+    setLiveActions([]);
+    setLiveRecord(null);
+    setLiveMode(true);
+    setAnswer(null);
+    setSendOutcome(null);
+    setSendingLive(true);
+    stageStartRef.current = Date.now();
+
+    try {
+      const final = await api.proposeStream(need, {
+        onStage: (record) => {
+          const now = Date.now();
+          const ms = now - stageStartRef.current;
+          stageStartRef.current = now;
+          const { label, detail, tone } = describeStage(record);
+          setLiveActions((prev) => [...prev, { label, detail, tone, ms }]);
+          setRevealed((prev) => prev + 1);
+          setLiveRecord(record);
+        },
+      });
+
+      if (final?.status === "AWAITING_APPROVAL") {
+        setSendOutcome({
+          kind: "blocked",
+          text: `Proposed ${final.candidate?.name || "a new capability"} — stopped for your approval below.`,
+        });
+      } else if (final?.status === "REFUSED") {
+        setSendOutcome({ kind: "blocked", text: `REFUSED — ${final.reason || "policy"}` });
+      } else if (final?.status === "BLOCKED") {
+        setSendOutcome({ kind: "blocked", text: final.reason || "Blocked." });
+      } else if (final?.status) {
+        setSendOutcome({ kind: "error", text: `${final.status} — ${final.reason || ""}`.trim() });
+      }
+    } catch (err) {
+      setSendOutcome({ kind: "error", text: String(err.message || err) });
+    } finally {
+      setSendingLive(false);
+    }
   };
 
   const reset = () => {
     setExpanded(false);
     setRevealed(0);
+    setLiveActions([]);
+    setLiveRecord(null);
+    setLiveMode(false);
     setSendOutcome(null);
     setAnswer(null);
+    // A genuinely new mission starts from an empty canvas, not whatever
+    // capability a previous mission (or a rejected one) happened to
+    // leave selected -- see decide()'s own comment on why a rejection
+    // must never repoint `selected` either.
+    setSelected(null);
   };
 
   const sendFollowUp = async () => {
@@ -453,7 +563,9 @@ export default function AppV4() {
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={send}
-                  className="h-8 w-8 grid place-items-center rounded-full text-white"
+                  aria-label="Send"
+                  disabled={sendingLive}
+                  className="h-8 w-8 grid place-items-center rounded-full text-white disabled:opacity-50"
                   style={{
                     background: "linear-gradient(135deg,#0066ff,#00f0ff)",
                     boxShadow: "0 0 18px rgba(0,102,255,0.65)",
@@ -505,11 +617,20 @@ export default function AppV4() {
 
               <div className="ml-auto framer-pill flex items-center gap-2 px-2.5 py-1.5">
                 <select
-                  value={selected}
-                  onChange={(e) => setSelected(e.target.value)}
+                  value={selected || ""}
+                  onChange={(e) => setSelected(e.target.value || null)}
                   className="bg-transparent outline-none font-mono text-[10.5px] text-slate-300"
                 >
-                  {(names.length ? names : [selected]).map((n) => (
+                  {/* No default capability is pinned here (see `selected`'s
+                      own comment above) -- an empty registry with nothing
+                      selected shows one honest placeholder option instead
+                      of silently falling back to an example name. */}
+                  {!names.length && !selected && (
+                    <option value="" className="bg-[#0b0d15]">
+                      no capability selected
+                    </option>
+                  )}
+                  {(names.length ? names : selected ? [selected] : []).map((n) => (
                     <option key={n} value={n} className="bg-[#0b0d15]">
                       {n}
                     </option>
