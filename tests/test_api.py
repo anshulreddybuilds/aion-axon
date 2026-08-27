@@ -292,6 +292,41 @@ def test_unknown_origin_is_not_granted_access():
     assert "access-control-allow-origin" not in response.headers
 
 
+def test_vite_fallback_port_is_allowed():
+    """Found live: Vite falls back to 5174, 5175, ... whenever a lower
+    port is already in use (e.g. a second dev server running), and the
+    frontend's fetch() calls failed with the browser's generic,
+    JS-unreadable "Failed to fetch" -- CORS rejections never surface a
+    specific reason to catch code, so this looked like a network/backend
+    outage with zero diagnostic value. ALLOWED_ORIGINS only ever
+    hardcoded 5173/4173; any other localhost port must work too, since a
+    developer cannot control which port Vite happens to land on."""
+    for port in (5174, 5175, 3000, 8080):
+        response = client.get(
+            "/health", headers={"Origin": f"http://localhost:{port}"},
+        )
+        assert response.headers.get("access-control-allow-origin") == (
+            f"http://localhost:{port}"
+        ), f"port {port} was not allowed"
+
+
+def test_localhost_pattern_does_not_grant_a_remote_lookalike_origin():
+    """Negative control: the regex must match ONLY localhost/127.0.0.1,
+    never a domain that merely contains the word "localhost" or a
+    same-shaped remote host -- the browser's real Origin header cannot
+    be spoofed cross-origin, but the server-side regex itself must still
+    be precise, not merely "usually right"."""
+    for origin in (
+        "http://localhost.evil.example.com:5174",
+        "http://evil-localhost:5174",
+        "http://192.168.1.5:5174",
+    ):
+        response = client.get("/health", headers={"Origin": origin})
+        assert "access-control-allow-origin" not in response.headers, (
+            f"{origin} was wrongly allowed"
+        )
+
+
 def test_firebase_preview_channel_origin_is_allowed():
     """Preview channels get a generated subdomain that cannot be listed.
 

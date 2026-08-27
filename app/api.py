@@ -85,7 +85,25 @@ ALLOWED_ORIGINS = [
 # internet the right to drive this API from a visitor's browser, which is
 # the exact thing the explicit allowlist above exists to prevent. Writes
 # still require the owner token regardless of origin.
-PREVIEW_CHANNEL_ORIGIN = r"^https://aion-axon-2026--[a-z0-9-]+\.web\.app$"
+#
+# Local-dev ports beyond the hardcoded 5173/4173 in ALLOWED_ORIGINS are
+# matched here too, for ANY port on localhost/127.0.0.1 -- found live:
+# Vite falls back to 5174, 5175, ... whenever a lower port is already in
+# use (e.g. two dev servers running at once), and the frontend's own
+# fetch() calls failed with the browser's generic, JS-unreadable "Failed
+# to fetch" (CORS rejections never surface a specific reason to catch
+# code) with no code change on the frontend side at all. This is safe to
+# open broadly for localhost specifically, unlike a broad web origin:
+# the browser's Origin header cannot be spoofed cross-origin, so only a
+# page ACTUALLY served from localhost can ever present
+# `Origin: http://localhost:<port>` -- which already means the caller is
+# running on the same machine as this dev server, a fundamentally
+# different trust boundary than a remote page on the public internet.
+# Mutations still require the owner token regardless of origin either way.
+CORS_ORIGIN_PATTERN = (
+    r"^(https://aion-axon-2026--[a-z0-9-]+\.web\.app"
+    r"|https?://(localhost|127\.0\.0\.1):\d+)$"
+)
 
 # The owner token header MUST be listed here, not just Content-Type.
 #
@@ -181,7 +199,7 @@ app.add_middleware(BodySizeLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=PREVIEW_CHANNEL_ORIGIN,
+    allow_origin_regex=CORS_ORIGIN_PATTERN,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", OWNER_TOKEN_HEADER],
