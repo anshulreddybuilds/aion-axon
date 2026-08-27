@@ -92,6 +92,24 @@ class MissionService:
                 "error": error,
             }
 
+        return self.start_from_plan(plan, request)
+
+    def start_from_plan(self, plan: MissionPlan, request: str) -> dict[str, Any]:
+        """Execute an already-built MissionPlan through the real gate.
+
+        The second entry point into the same engine `start_planned()`
+        uses -- not a second engine. `start_planned()` gets its plan from
+        the Gemini-backed planner reasoning over free text;
+        `create_mission_from_graph()` (app/api.py) gets an equally real
+        `MissionPlan` compiled directly from a user-authored graph
+        (real capability names, real risk levels, real `$STEP_N`
+        dependency edges). From this point on -- governance, sandbox,
+        approval, persistence, resume -- the two are indistinguishable to
+        the engine, because they produce the identical validated schema.
+        """
+        workflow = WorkflowState(user_request=request)
+        mission_id = str(uuid4())
+
         workflow.plan = [step.model_dump() for step in plan.steps]
         workflow.update_status("EXECUTING")
 

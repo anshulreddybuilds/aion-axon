@@ -623,3 +623,99 @@ def test_installing_one_capability_does_not_leak_approval_to_a_sibling(monkeypat
         f"unrelated approval: {install_b}"
     )
     assert install_b["status"] == "APPROVAL_REQUIRED"
+
+
+# --- Graphical mission builder: POST /missions/from-graph -----------------
+# Not a second execution engine -- the same MissionPlan/MissionStep schema
+# and the same mission_engine.run() the planner-driven path uses, just
+# authored directly (by a user wiring nodes on a canvas) instead of by
+# Gemini reasoning over free text.
+
+def test_graph_mission_executes_dependent_steps_through_the_real_engine():
+    """The exact property the visual builder depends on: a node's real
+    output must flow into a dependent node via $STEP_N, through the real
+    engine, with no graph-specific execution shortcut.
+    """
+    graph = {
+        "goal": "Graph: two calculations combined",
+        "steps": [
+            {"step": 1, "description": "First number", "kind": "READ_ANALYZE",
+             "tool": "calculator", "args": ["10 * 4"], "risk": "LOW", "action": "n1"},
+            {"step": 2, "description": "Second number", "kind": "READ_ANALYZE",
+             "tool": "calculator", "args": ["5 + 5"], "risk": "LOW", "action": "n2"},
+            {"step": 3, "description": "Combine", "kind": "READ_ANALYZE",
+             "tool": "calculator",
+             "args": ["$STEP_1.result + $STEP_2.result"],
+             "risk": "LOW", "action": "combine"},
+        ],
+    }
+
+    resp = client.post("/missions/from-graph", json=graph)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "COMPLETED"
+    assert body["steps_completed"] == 3
+    assert body["step_results"][2]["result"]["result"] == 50.0
+
+
+def test_graph_mission_with_a_real_gap_blocks_honestly():
+    """A graph node with no capability wired to it is a genuine gap --
+    same BLOCKED path a planner-authored mission takes, not silently
+    skipped or fabricated.
+    """
+    graph = {
+        "goal": "Graph with a real gap",
+        "steps": [{
+            "step": 1, "description": "unwired node", "kind": "READ_ANALYZE",
+            "tool": None, "args": ["x"], "risk": "LOW", "action": "gap",
+        }],
+    }
+
+    resp = client.post("/missions/from-graph", json=graph)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "BLOCKED"
+    assert body["blocked_on"] is not None
+
+
+def test_graph_mission_requiring_approval_uses_the_real_governance_gate():
+    """A MEDIUM-risk graph node must suspend for real human approval,
+    exactly like a planner-authored mission -- the graph cannot be used
+    to route around governance.
+    """
+    graph = {
+        "goal": "Graph with an approval-gated node",
+        "steps": [{
+            "step": 1, "description": "gated action", "kind": "EXTERNAL_EFFECT",
+            "tool": "calculator", "args": ["1 + 1"], "risk": "MEDIUM",
+            "action": "gated",
+        }],
+    }
+
+    resp = client.post("/missions/from-graph", json=graph)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "AWAITING_APPROVAL"
+    assert body["approval_request_id"]
+
+
+def test_empty_graph_is_rejected_honestly_not_silently_accepted():
+    resp = client.post("/missions/from-graph", json={"goal": "empty", "steps": []})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "FAILED"
+    assert "at least one node" in body["error"]
+
+
+def test_graph_mission_route_requires_owner_auth():
+    anon = TestClient(app)
+    resp = anon.post("/missions/from-graph", json={
+        "goal": "x",
+        "steps": [{"step": 1, "description": "x", "kind": "READ_ANALYZE",
+                   "tool": "calculator", "args": ["1+1"], "risk": "LOW", "action": "x"}],
+    })
+    assert resp.status_code in (401, 403)

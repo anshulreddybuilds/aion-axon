@@ -29,6 +29,7 @@ from app.governance.owner_auth import HEADER as OWNER_TOKEN_HEADER, require_owne
 from app.governance.rate_limit import rate_limit_planned_mission, rate_limit_propose
 from app.governance.review import review_package
 from app.memory.firestore_store import firestore_store
+from app.agents.plan_schema import MissionPlan
 from app.missions.service import mission_service
 from app.observability.telemetry import summarise
 from app.monitors.service import monitor_service
@@ -283,6 +284,30 @@ class PlannedMissionRequest(BaseModel):
 def create_planned_mission(body: PlannedMissionRequest) -> dict[str, Any]:
     """Plan a messy request with Gemini, then run it through the gate."""
     return mission_service.start_planned(body.request)
+
+
+@app.post(
+    "/missions/from-graph",
+    dependencies=[Depends(require_owner), Depends(rate_limit_planned_mission)],
+)
+def create_mission_from_graph(plan: MissionPlan) -> dict[str, Any]:
+    """The graphical mission builder's entry point -- NOT a second
+    execution engine. `plan` is the exact same `MissionPlan`/
+    `MissionStep` schema the Gemini-backed planner produces for
+    /missions/planned; the only difference is who authored the steps
+    (a user, wiring real capabilities and `$STEP_N` dependencies on a
+    canvas, instead of Gemini reasoning over free text). From here on --
+    Guardian, safety screen, sandbox, approval, persistence, resume --
+    it is indistinguishable from any other mission, because it is the
+    identical validated object handed to the identical
+    `mission_engine.run()`. Rate-limited the same as /missions/planned:
+    a graph can request a real capability acquisition, which is exactly
+    as expensive and exactly as governed as one requested through text.
+    """
+    if not plan.steps:
+        return {"status": "FAILED", "error": "A mission graph needs at least one node."}
+
+    return mission_service.start_from_plan(plan, plan.goal or "Graph-authored mission")
 
 
 def _need_for_blocked_mission(mission_id: str) -> tuple[Optional[str], Optional[dict[str, Any]]]:
