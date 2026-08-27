@@ -10,6 +10,49 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 18 — BUG-010: ALREADY_INSTALLED (a real, safe status) was shown as an error everywhere, HEAD 47890e1
+
+Directive: continue the state-machine idempotency audit ("install
+twice… any unexpected behavior must become a bug-register entry").
+
+Checked every `installed?.status === "INSTALLED"` (or `!==`) comparison
+in the frontend against every real status `synapse.install()` can
+return. Found the same defect independently written in three of the
+four UI surfaces (`App.jsx`, `AppV2.jsx`, `AppV4.jsx`): anything other
+than the literal string `"INSTALLED"` was classified as an error,
+including `"ALREADY_INSTALLED"` — a real, legitimate, safe status that
+IS the concurrency-safe idempotency guarantee BUG-003's `claim_install()`
+fix exists to provide. A double-click before a button's disabled state
+took effect, a client-side retry after a request that actually
+succeeded server-side, or reprocessing a stale `pending` row would all
+correctly no-op on the backend and then show a scary red error banner
+on the frontend for an outcome that was completely fine.
+
+`MissionTheater.jsx` (already touched for BUG-009) was re-checked and
+found NOT to have this problem — it never applies an error
+classification to an install status at all, so `ALREADY_INSTALLED`
+already displayed as an honest, neutral line there.
+
+Fixed: `App.jsx`/`AppV2.jsx` now treat both `INSTALLED` and
+`ALREADY_INSTALLED` as success. `AppV4.jsx` gets a distinct, honest
+message for `ALREADY_INSTALLED` specifically, since that response
+carries no `implemented_count`/`mission_resumed` fields to reuse
+`INSTALLED`'s message text. Verified against all four real backend
+statuses (`INSTALLED`, `ALREADY_INSTALLED`, `FAILED`,
+`APPROVAL_REQUIRED`) with a standalone Node check. `npm run build`
+clean. Backend suite unaffected: 555 passed, 2 skipped.
+
+**Ten bugs now, ten fixed, zero open.** The pattern across BUG-008
+through BUG-010 has been consistent: pick one specific, concrete
+contract property (a field name, then a status-value classification),
+check it against every real backend response shape it touches, across
+every consumer — not just the one file where it was first found.
+
+**Notion**: attempted again this pass; see the in-conversation report.
+**NotebookLM**: still unavailable.
+
+Current HEAD: `47890e1` — supersedes every hash below.
+
 ## Update 17 — BUG-009: the reason/error class was live in every UI surface, not just AppV4, HEAD c1c2b89
 
 Directive: a master completion audit explicitly named the lesson from
