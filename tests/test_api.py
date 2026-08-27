@@ -554,3 +554,72 @@ def test_resume_blocked_route_still_works_with_no_body(monkeypatch):
     assert resp.json()["status"] == "COMPLETED"
 
     registry.unregister("route_coverage_declared_cap")
+
+
+def test_installing_one_capability_does_not_leak_approval_to_a_sibling(monkeypatch):
+    """Batch B (deep completion audit) governance-bypass check: approving
+    capability A's acquisition must never let capability B install on
+    the strength of it, even though both went through the exact same
+    pipeline in the same session and both real approval records exist
+    in Firestore. install() must look up ITS OWN capability's own stored
+    approval_request_id, never any other real, valid, decided one.
+    """
+    from app.synapse import engine as engine_module
+    from app.synapse.generator import Candidate
+
+    monkeypatch.setattr(
+        engine_module, "search_web",
+        lambda q: {"status": "DEGRADED", "grounded": False, "sources": [],
+                   "findings": "x", "source_count": 0},
+    )
+    monkeypatch.setattr(
+        engine_module, "execute_in_sandbox",
+        lambda code, test="", timeout_seconds=10: {
+            "status": "COMPLETED", "passed": True, "stdout": "OK",
+            "stderr": "", "exit_code": 0,
+        },
+    )
+    monkeypatch.setattr(
+        engine_module, "evaluate",
+        lambda *a, **k: {"status": "SCORED", "score": 90, "verdict": "PASS",
+                         "reason": "x", "model": "gemma-4-26b-a4b-it"},
+    )
+
+    def candidate_for(name):
+        return Candidate(
+            name=name, description="x", risk="LOW",
+            code=f"def {name}(x):\n    return {{'status':'SUCCESS'}}\n",
+            test="print('OK')", entrypoint=name,
+        )
+
+    monkeypatch.setattr(
+        engine_module, "generate_candidate",
+        lambda need, notes=None, prior_failure=None: (
+            candidate_for("sibling_cap_a"), None,
+        ),
+    )
+    proposal_a = client.post(
+        "/synapse/propose", json={"need": "sibling capability A"},
+    ).json()
+
+    monkeypatch.setattr(
+        engine_module, "generate_candidate",
+        lambda need, notes=None, prior_failure=None: (
+            candidate_for("sibling_cap_b"), None,
+        ),
+    )
+    client.post("/synapse/propose", json={"need": "sibling capability B"})
+
+    # Approve A's real, distinct approval record. B's own is left PENDING.
+    client.post(
+        f"/approvals/{proposal_a['approval_request_id']}/decide",
+        json={"approved": True, "decided_by": "anshul"},
+    )
+
+    install_b = client.post("/synapse/install/sibling_cap_b").json()
+
+    assert install_b["status"] != "INSTALLED", (
+        f"capability B installed on the strength of capability A's "
+        f"unrelated approval: {install_b}"
+    )
+    assert install_b["status"] == "APPROVAL_REQUIRED"
