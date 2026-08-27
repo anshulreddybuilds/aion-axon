@@ -10,6 +10,62 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 16 — BUG-008: the reason/error mismatch class found live in the frontend, HEAD 8a7ecad
+
+Directive: continue the frontend/backend contract audit explicitly
+flagged as incomplete in the last two reports, and keep searching for
+the same bug classes already found (reason/error mismatches especially)
+rather than treating the last two clean passes as "done."
+
+First checked `app/beastmode/memory.py` (the "memory/evolution"
+subsystem a mega-prompt asked not to overlook) — genuinely complete and
+honestly scoped as documented (lexical-similarity advisory only, never
+authorization), with real HTTP-level and pure-logic test coverage
+already in place. No gap, no overclaim in README. Then checked whether
+BUG-006's `resume-blocked` fix is even reachable from the real frontend
+— it isn't, by design: `web/src/` has zero references to that route,
+because the real product path uses `synapse.install()`'s internal
+auto-resume (confirmed `AppV4.jsx` correctly consumes
+`installed.mission_resumed`), exactly as BUG-006's own writeup already
+said. Not a gap.
+
+**BUG-008 (P2, fixed) — the actual find.** Grepped `AppV4.jsx` for every
+`.reason` read and cross-checked each against the real backend response
+shape it consumes. Found one real, live instance of the exact
+`"reason"`/`"error"` mismatch class behind BUG-005 and BUG-007: after
+approving an acquisition and calling `api.install()`, the failure-
+display fallback read only `installed?.reason`, but every FAILED-status
+response `synapse.install()` actually returns (unknown capability, no
+approval on record, and BUG-003's own real Firestore-contention case)
+carries its message under `"error"`. Every one of these real failures
+showed the bare word `"FAILED"` in the live demo UI, with the backend's
+actual diagnostic silently discarded. Fixed by adding `installed?.error`
+to the fallback chain — minimal, purely additive. Verified directly
+against the three real backend FAILED shapes with a standalone Node
+check (each now shows its real message instead of `"FAILED"`); `npm run
+build` clean. Audited every other `.reason` read in the same file while
+there: three were already correct against their real backend shapes,
+one (line 583) is dead code but harmless (mission summaries never carry
+a top-level `reason` field), left alone rather than speculatively
+rewritten.
+
+Backend suite unaffected (this is a frontend-only fix): 555 passed, 2
+skipped.
+
+**On the "diminishing returns" pattern named in Update 15**: this pass
+shows it wasn't a plateau — it means the highest-density area shifts
+once the backend's own instances of a bug class are exhausted; the SAME
+class (reason vs error) was still live one layer up, in the frontend,
+where nothing had looked yet. Worth remembering for whoever continues:
+when a focused pass on one layer stops finding anything, check whether
+the same defect shape exists in an adjacent layer before concluding the
+class itself is exhausted.
+
+**Notion**: attempted again this pass; see the in-conversation report.
+**NotebookLM**: still unavailable.
+
+Current HEAD: `8a7ecad` — supersedes every hash below.
+
 ## Update 15 — defense-in-depth confirmed (Guardian + AST screen independent), no new bug found this pass, HEAD 8b3dc29
 
 Directive: a "final completion" master prompt asked to keep sweeping for
