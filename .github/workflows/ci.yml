@@ -53,8 +53,21 @@ jobs:
         with:
           node-version: "22"
 
+      # Firestore emulator's own JAR (not firebase-tools itself) is fetched
+      # by the CLI on first use, separately from npm install, and can be
+      # tens of MB -- caching THIS specific directory (not node_modules,
+      # which installs fast anyway) is what actually removes the cold-start
+      # risk the readiness check below exists to catch honestly if it ever
+      # recurs (a cache miss, a CLI version bump that changes the jar).
+      - name: Cache the Firestore emulator JAR
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firestore-emulator-jar-${{ runner.os }}
+
       - name: Start Firestore emulator
         run: |
+          set -euo pipefail
           npm install --no-save firebase-tools
           mkdir -p /tmp/emulator-cfg
           cat > /tmp/emulator-cfg/firebase.json <<'EOF'
@@ -71,12 +84,41 @@ jobs:
             }
           }
           EOF
-          (cd /tmp/emulator-cfg && npx firebase emulators:start --only firestore --project aion-axon-ci > /tmp/emulator.log 2>&1 &)
-          for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:8080 >/dev/null 2>&1; then break; fi
-            sleep 1
+          (cd /tmp/emulator-cfg && nohup npx firebase emulators:start --only firestore --project aion-axon-ci > /tmp/emulator.log 2>&1 &)
+
+          # BUG-012 (AION_AXON_BUG_AND_PROBLEM_REGISTER.md): this loop
+          # previously had NO check after it exited -- a cold run (no
+          # cache hit above, or the emulator jar download simply outlasting
+          # 30s on a loaded runner) let the loop exhaust silently and this
+          # step still exit 0, reporting success for an emulator that never
+          # actually started. The concurrency tests then spent the next
+          # 6+ minutes retrying a connection that was never going to
+          # succeed, before finally failing with an opaque gRPC
+          # "connection refused" stack trace that points nowhere near the
+          # real cause. Never again: poll for up to two minutes (the cache
+          # step above should make this fast on every run after the first;
+          # this ceiling is the honest worst case, not the expectation),
+          # and if it's not up, fail HERE, loud, with the real emulator
+          # log -- not several minutes later inside an unrelated test.
+          ready=""
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8080 >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 2
           done
+
+          echo "----- Firestore emulator log -----"
           cat /tmp/emulator.log || true
+          echo "-----------------------------------"
+
+          if [ -z "$ready" ]; then
+            echo "::error::Firestore emulator never came up on 127.0.0.1:8080 after 120s -- see the emulator log above for the real cause. Failing here on purpose, instead of letting the concurrency tests hang for minutes retrying a connection that was never going to succeed."
+            exit 1
+          fi
+
+          echo "Firestore emulator is alive on 127.0.0.1:8080."
 
       - name: Run Firestore-emulator concurrency tests
         env:

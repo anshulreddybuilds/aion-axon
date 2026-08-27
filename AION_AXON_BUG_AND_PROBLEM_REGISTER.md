@@ -7,6 +7,86 @@ P2 = reliability/usability/engineering issue, P3 = minor/polish.
 
 ---
 
+## BUG-012
+
+**SEVERITY:** P1
+**AREA:** CI — Firestore emulator readiness check (`.github/workflows/ci.yml`)
+**FILE(S):** `.github/workflows/ci.yml`
+**PROBLEM:** The "Start Firestore emulator" step's readiness poll loop had
+no check of its own outcome after the loop exited:
+```bash
+for i in $(seq 1 30); do
+  if curl -sf http://127.0.0.1:8080 >/dev/null 2>&1; then break; fi
+  sleep 1
+done
+cat /tmp/emulator.log || true
+```
+If the emulator never came up within the 30-second window (a cold JVM +
+emulator-jar download on a fresh runner with no cache, easily longer
+than 30s), the loop simply ran out and fell through to `cat` (which
+always exits 0), so the step reported **success** for an emulator that
+never actually started. The next step — the real Firestore-emulator
+concurrency tests — then spent 6+ minutes retrying a connection that
+was never going to succeed (the gRPC client's own internal retry/
+timeout logic), before finally failing with an opaque
+`grpc._channel._InactiveRpcError` / `ServiceUnavailable` stack trace
+that points nowhere near the actual root cause.
+**HOW DISCOVERED:** Inspected the latest GitHub Actions run on this
+branch (run #182, commit `5c9c687`) via the GitHub Actions API per this
+pass's directive to check CI status before anything else. The `test`
+job's steps showed "Start Firestore emulator" as `success` but the very
+next step, "Run Firestore-emulator concurrency tests," as `failure`
+after running for 376.76s (6m16s) — a duration consistent with the
+gRPC client's own 60s/300s internal retry deadlines being exhausted
+against a server that was never listening, not with a genuine test
+failure. Pulled the job's failed-step logs directly and confirmed:
+`Failed to connect to remote host: Connection refused` on
+`127.0.0.1:8080`, the exact port the emulator step was supposed to have
+already verified was live.
+**IMPACT:** Every CI run on every branch was burning ~6.5 minutes on a
+guaranteed-to-fail step whenever the emulator didn't come up in time
+(which, on an uncached runner, appears to be close to always), while
+still reporting the emulator-start step itself as green — actively
+misleading about where the real problem was. This is also the reason
+this session had never observed a genuinely green CI run for any of
+this branch's recent commits despite every local run being clean.
+**STATUS:** FIXED
+**FIX:** Two changes to `.github/workflows/ci.yml`: (1) the readiness
+loop now sets an explicit `ready=""`/`ready=1` flag, checks it after the
+loop, prints the real emulator log either way, and `exit 1`s with a
+clear `::error::` message if the emulator never came up — failing loud,
+at the actual point of failure, instead of several minutes later inside
+an unrelated test; increased the ceiling from 30s to 120s (60 attempts
+× 2s) to give a cold JVM+jar startup a realistic chance. (2) Added an
+`actions/cache@v4` step caching `~/.cache/firebase/emulators` (the
+directory the Firebase CLI itself downloads the emulator JAR into,
+separate from `npm install`/node_modules), so the slow first-time
+download only happens once across all future CI runs, not on every
+single one — addressing why it was slow to begin with, not just
+covering for it with a bigger number.
+**REGRESSION TEST:** The regression test IS the CI workflow itself,
+run on every future push — a real emulator that fails to start will now
+fail this step immediately and visibly rather than masking as a
+downstream test failure. Verified the readiness-check LOGIC directly in
+this sandbox before pushing: (a) success path — a real local Firestore
+emulator (Java 21, firebase-tools, already-cached JAR) started and was
+detected alive by the exact loop in 16s; (b) failure path — pointed the
+same loop logic at a port nothing listens on and confirmed it correctly
+printed the log and exited 1 rather than falling through silently.
+**VERIFICATION:** LOCAL VERIFIED (both loop paths reproduced directly;
+YAML syntax validated with `yaml.safe_load`). Live-CI verification
+(a genuinely green GitHub Actions run on the fixed workflow) pending —
+see the continuation handoff for the observed outcome after push.
+**COMMIT:** (recorded at push time below)
+**REMAINING WORK:** None if the live CI run comes back green; if the
+120s ceiling is still insufficient on a truly cold runner even with the
+cache miss on its very first run, the fix will now say so explicitly
+via the `::error::` message and the real emulator log, rather than
+requiring another multi-day investigation to find the same root cause
+again.
+
+---
+
 ## BUG-011
 
 **SEVERITY:** P2
