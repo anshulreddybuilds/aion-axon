@@ -72,7 +72,7 @@ files.
 logic verified against the real backend response shape it consumes).
 Not yet PRODUCTION VERIFIED (environment egress blocked, as with every
 frontend fix this session).
-**COMMIT:** (pending, this pass)
+**COMMIT:** `caa9384`
 **REMAINING WORK:** None. A note on process: an earlier draft of this
 entry claimed "v2/v3 were not found to contain an install-failure
 display at all" before that claim had actually been checked — caught
