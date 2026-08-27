@@ -2,7 +2,7 @@
 
 **Autonomous Governed Capability Spine for Enterprise AI Agents**
 
-[![Tests](https://img.shields.io/badge/tests-545%20passing-brightgreen)](#verify-it-yourself--no-api-key-needed)
+[![Tests](https://img.shields.io/badge/tests-560%20passing-brightgreen)](#verify-it-yourself--no-api-key-needed)
 [![Assertions](https://img.shields.io/badge/assertions-990%2B-blue)](#verify-it-yourself--no-api-key-needed)
 [![Deployment](https://img.shields.io/badge/deployment-Google%20Cloud%20Run-4285F4)](https://aion-core-638298765129.asia-south1.run.app)
 [![Sandbox](https://img.shields.io/badge/sandbox-zero%20credentials-critical)](#threat-model)
@@ -103,7 +103,7 @@ pip install -r requirements.txt
 pytest -q
 ```
 
-**Expected: `545 passed, 2 skipped`, in roughly 10 seconds, with zero network calls.**
+**Expected: `560 passed, 2 skipped`, in roughly 10 seconds, with zero network calls.**
 The 2 skips are the distributed-Firestore-concurrency tests, which only run
 against a real Firestore emulator (`FIRESTORE_EMULATOR_HOST` set) — CI runs
 them for real; a plain local clone correctly skips rather than fakes it.
@@ -113,7 +113,7 @@ model calls whenever an API key happened to be exported, turning a green run
 into an accident of which terminal you used. Fixed, and opt-in behind
 `AXON_LIVE_MODEL_TESTS=1`.
 
-**47 of the 545 are adversarial, plus 18 more testing the additive beastmode layer** — they attack the governance rather than
+**47 of the 560 are adversarial, plus 18 more testing the additive beastmode layer** — they attack the governance rather than
 confirm it: exfiltration payloads, persuasion phrasings, a planted secret in
 the sandbox scan, and kill-switch coverage on every path.
 
@@ -205,6 +205,19 @@ API as actually supported, degrading honestly rather than pretending
 otherwise. ADK planner token usage is reported `UNMEASURED` rather than
 estimated; and the evaluator occasionally returns no score at all, in which
 case SYNAPSE refuses rather than guessing.
+
+A visual graph mission builder exists at `/v5` (local dev surface, not yet
+deployed to the production Dashboard URL above): drag-and-drop nodes/edges
+compile client-side into the identical `MissionPlan` the Gemini planner
+already produces from typed or spoken text, executed through
+`POST /missions/from-graph` — the same governed engine, not a second one.
+Verified end-to-end with real headless-browser runs against a live local
+backend (dependency-chain execution, honest gap/acquisition, and both the
+approve and reject paths of a real approval gate). The one leg **not**
+verified here: turning a typed or spoken request into a populated graph of
+real capability nodes needs a real `GOOGLE_API_KEY` for the planner's Gemini
+call, which this sandbox does not have — that specific leg is
+environment-blocked rather than claimed.
 
 ---
 
