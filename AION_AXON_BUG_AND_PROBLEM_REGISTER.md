@@ -55,7 +55,7 @@ in a callback with no dedicated component-test harness in this repo;
 **VERIFICATION:** LOCAL VERIFIED (build clean, exact logic verified
 against real backend shapes). Not yet PRODUCTION VERIFIED (environment
 egress blocked, as with every frontend fix this session).
-**COMMIT:** (pending, this pass)
+**COMMIT:** `29e8854`
 **REMAINING WORK:** None functionally. A future session could add a
 proper component-level test harness for `AppV4.jsx` if that becomes a
 priority — none exists today for any of its logic, not just this fix.
