@@ -10,6 +10,77 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 22 — Final release audit: clean confirmation pass, zero new bugs, full scenario matrix A–H, HEAD 34929b1
+
+Directive: switch from engineering-audit mode to final release/demo
+mode — verify everything named, fix only what's actually wrong, and
+explicitly do NOT invent new work to inflate the bug count.
+
+**Phase 1 (local release check):** re-verified `git status` clean,
+correct branch, HEAD `34929b1`, zero unpushed commits, zero secrets
+(full tracked-tree scan, not just recent diffs), zero `localhost`/
+`127.0.0.1` leaks in committed JS, zero hardcoded demo prompts (every
+prompt/goal `useState` across all 5 surfaces defaults to `""`),
+backend 560 passed/2 skipped, frontend all green, production build
+clean. Everything was already correct — nothing needed fixing.
+
+**Phase 2 (single execution engine, verified by direct code
+inspection, not assertion):** `mission_engine.run()` has exactly three
+call sites in the entire codebase — `MissionService.start_from_plan()`
+(shared by both `/missions/planned` and `/missions/from-graph`),
+`resume_blocked()`, and `resume_planned()`. No second engine exists
+anywhere.
+
+**Phase 3 (scenario matrix A–H), all re-run live against this exact
+HEAD, not reused from a prior commit:**
+- **A** (voice/text → graph, partial): VERIFIED for transcript→real
+  API call→honest-either-way rendering (`graph_e2e_voice.mjs`, 8/8);
+  ENVIRONMENT BLOCKED for real-plan graph population (no Gemini key).
+- **B/C** (3-node dependency graph; independent nodes feeding a later
+  node — the same graph structure satisfies both): VERIFIED
+  (`graph_e2e.mjs`, 7/7 — reaches COMPLETED with the real computed
+  answer 50).
+- **D** (unavailable capability → BLOCKED → real SYNAPSE acquisition):
+  VERIFIED (`graph_e2e_gap.mjs`, 4/4 — real live Guardian pre-screen +
+  research trace).
+- **E/F** (approval-required → approve → install → resume; reject →
+  safely rejected): VERIFIED (`graph_e2e_approval.mjs`, 9/9 — approve
+  path reaches COMPLETED with the real answer 2; reject path shows the
+  honest rejection sentence, never fabricates COMPLETED).
+- **G** (real capability execution failure → useful diagnostic in the
+  UI): **new this pass** (`graph_e2e_failure.mjs`, 3/3) — a
+  `calculator` node given `1 / 0` genuinely raises `ZeroDivisionError`
+  inside the real tool, `mission_engine.run()`'s `_tool_error()` check
+  correctly turns it into a FAILED step, and the run panel shows the
+  real message "FAILED — division by zero." (not a bare status word) —
+  BUG-011's fix, now proven against a genuine tool failure rather than
+  a governance outcome.
+- **H** (duplicate install → `ALREADY_INSTALLED` as idempotent success,
+  not an error): **new this pass**, verified at the real API contract
+  level — seeded a real approved-capability record via the same
+  `firestore_store` calls the existing test suite already uses, then
+  called the real `POST /synapse/install/{name}` route twice via an
+  in-process `TestClient` (same pattern as `tests/test_api.py`, not a
+  mock): first call returned `INSTALLED` with a real evolution event
+  and autonomy-metric change; the replayed call returned
+  `ALREADY_INSTALLED`, not an error. The frontend's classification of
+  this (never treating `ALREADY_INSTALLED` as an error) was already
+  fixed and unit-tested in BUG-010/BUG-011; full live-UI trigger
+  through `/v5`'s own acquisition flow remains ENVIRONMENT BLOCKED
+  (reaching the install button at all requires a real Gemini-generated
+  candidate).
+
+**Zero new bugs found.** Every real defect this branch has ever had
+(BUG-001 through BUG-013) was already fixed and regression-tested
+before this pass began; this pass exists to confirm that, not to
+manufacture new findings. No code changes in this pass — documentation
+only.
+
+**Notion**: not attempted (unchanged, long-standing block).
+**NotebookLM**: still unavailable.
+
+Current HEAD: `34929b1` — supersedes every hash below.
+
 ## Update 21 — Finalization pass: CI genuinely green for the first time (BUG-012, BUG-013), Gemini→graph gap and production deploy both correctly labeled ENVIRONMENT BLOCKED, final acceptance matrix, HEAD 947352e
 
 Directive: a five-phase finalization command (CI first; close the
