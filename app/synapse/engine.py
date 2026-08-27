@@ -508,50 +508,83 @@ class SynapseEngine:
 
         candidate = passport.get("candidate") or {}
 
-        registry.register(
-            candidate["name"],
-            candidate["description"],
-            candidate.get("risk", "LOW"),
-            self._sandbox_proxy(candidate),
-        )
+        # registry.register(), save_capability(), and write_evolution_event()
+        # must all succeed together for a capability to be genuinely
+        # READY -- claim_install() above only guarantees exactly one
+        # caller reaches this point, not that this point finishes
+        # cleanly. Proven necessary, not speculative: a real failure here
+        # (a malformed passport, a transient Firestore write error) used
+        # to leave the capability permanently stuck at
+        # state="VALIDATING", because every LATER install() call for the
+        # same request_id would see claimed=False and report the
+        # fabricated terminal state ALREADY_INSTALLED for a capability
+        # that was never actually installed -- see
+        # firestore_store.release_install_claim()'s docstring for the
+        # full account.
+        try:
+            registry.register(
+                candidate["name"],
+                candidate["description"],
+                candidate.get("risk", "LOW"),
+                self._sandbox_proxy(candidate),
+            )
 
-        before_count = registry.counts()["implemented"] - 1
+            before_count = registry.counts()["implemented"] - 1
 
-        firestore_store.save_capability(capability_name, {
-            "state": "READY",
-            "implemented": True,
-            "version": int(stored.get("version", 0)) + 1,
-            "installed_at": datetime.now(timezone.utc).isoformat(),
-            "approved_by": approval.get("decided_by"),
-            # Kept so the NEXT version can be diffed against what is
-            # actually running, rather than against the last thing that
-            # happened to be proposed.
-            "installed_code": candidate.get("code"),
-        })
+            firestore_store.save_capability(capability_name, {
+                "state": "READY",
+                "implemented": True,
+                "version": int(stored.get("version", 0)) + 1,
+                "installed_at": datetime.now(timezone.utc).isoformat(),
+                "approved_by": approval.get("decided_by"),
+                # Kept so the NEXT version can be diffed against what is
+                # actually running, rather than against the last thing that
+                # happened to be proposed.
+                "installed_code": candidate.get("code"),
+            })
 
-        event_id = firestore_store.write_evolution_event({
-            "capability_id": candidate["name"],
-            "before": (
-                f"AION Axon could not: {passport.get('need')}. "
-                f"Registry had {before_count} implemented capabilities."
-            ),
-            "change": f"Acquired capability '{candidate['name']}'.",
-            "reason": passport.get("need"),
-            "after": (
-                f"AION Axon can now: {candidate['description']} "
-                f"Registry has {registry.counts()['implemented']} "
-                f"implemented capabilities."
-            ),
-            "research_citations": (
-                passport.get("research", {}).get("sources") or []
-            ),
-            "grounded": passport.get("research", {}).get("grounded", False),
-            "test_results": passport.get("tests"),
-            "evaluation": passport.get("evaluation"),
-            "safety_screen": passport.get("safety"),
-            "approver": approval.get("decided_by"),
-            "approved_at": approval.get("decided_at"),
-        })
+            event_id = firestore_store.write_evolution_event({
+                "capability_id": candidate["name"],
+                "before": (
+                    f"AION Axon could not: {passport.get('need')}. "
+                    f"Registry had {before_count} implemented capabilities."
+                ),
+                "change": f"Acquired capability '{candidate['name']}'.",
+                "reason": passport.get("need"),
+                "after": (
+                    f"AION Axon can now: {candidate['description']} "
+                    f"Registry has {registry.counts()['implemented']} "
+                    f"implemented capabilities."
+                ),
+                "research_citations": (
+                    passport.get("research", {}).get("sources") or []
+                ),
+                "grounded": passport.get("research", {}).get("grounded", False),
+                "test_results": passport.get("tests"),
+                "evaluation": passport.get("evaluation"),
+                "safety_screen": passport.get("safety"),
+                "approver": approval.get("decided_by"),
+                "approved_at": approval.get("decided_at"),
+            })
+        except Exception as exc:  # noqa: BLE001 -- must report honestly, not crash or fabricate
+            # Un-registers even if registry.register() itself succeeded
+            # before a LATER step in this same block failed -- restores
+            # the in-process registry to match Firestore's still-
+            # VALIDATING state, so is_implemented() doesn't disagree with
+            # the capability document about whether this actually
+            # installed.
+            registry.unregister(capability_name)
+            firestore_store.release_install_claim(capability_name, request_id)
+            firestore_store.write_audit_event("INSTALL_FAILED_AFTER_CLAIM", {
+                "capability": capability_name,
+                "request_id": request_id,
+                "error": str(exc),
+            })
+            return {
+                "status": "FAILED",
+                "capability": capability_name,
+                "error": f"Install failed after claiming: {exc}. Safe to retry.",
+            }
 
         # A human read the Skill Passport -- tests, evaluation, safety
         # screen -- and approved. That IS a verification event, and the

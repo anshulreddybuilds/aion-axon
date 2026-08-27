@@ -237,6 +237,63 @@ def test_install_after_approval_emits_an_evolution_event(monkeypatch):
         assert event[key]
 
 
+def test_install_failure_after_the_claim_releases_it_instead_of_sticking_forever(monkeypatch):
+    """Before this fix: if save_capability() (or write_evolution_event())
+    raised AFTER claim_install() had already succeeded -- a transient
+    Firestore write error, say -- the capability was left permanently
+    stuck at state="VALIDATING", and every LATER install() call for the
+    same request_id saw claimed=False and reported the fabricated
+    terminal state ALREADY_INSTALLED for a capability that was never
+    actually installed. Proven by forcing exactly that failure, then
+    retrying for real."""
+    patch_pipeline(monkeypatch)
+    record = synapse.propose("normalize currency")
+
+    firestore_store.update_approval(
+        record.approval_request_id, approved=True, decided_by="anshul",
+    )
+
+    # Targeted by content, not call order: propose() and
+    # autonomy_ledger.record_outcome() (called by install() AFTER the
+    # critical section this test means to fail) both call
+    # save_capability() too, with a different payload shape each time --
+    # only install()'s own state="READY" write should fail here.
+    real_save_capability = firestore_store.save_capability
+
+    def flaky_save_capability(name, data):
+        if data.get("state") == "READY":
+            raise RuntimeError("simulated transient Firestore write failure")
+        return real_save_capability(name, data)
+
+    monkeypatch.setattr(firestore_store, "save_capability", flaky_save_capability)
+
+    failed = synapse.install("fx_normalize")
+
+    assert failed["status"] == "FAILED"
+    assert "simulated transient Firestore write failure" in failed["error"]
+    assert registry.is_implemented("fx_normalize") is False
+    assert firestore_store.get_capability("fx_normalize")["state"] == "VALIDATING"
+    assert firestore_store.list_evolution_events() == []
+
+    audit = [
+        e for e in firestore_store.list_audit_events()
+        if e.get("event_type") == "INSTALL_FAILED_AFTER_CLAIM"
+    ]
+    assert len(audit) == 1
+    assert audit[0]["capability"] == "fx_normalize"
+
+    # The real proof: retrying for real (transient failure resolved,
+    # save_capability restored) must actually succeed, not report a
+    # fabricated ALREADY_INSTALLED for a capability that never installed.
+    monkeypatch.setattr(firestore_store, "save_capability", real_save_capability)
+
+    retried = synapse.install("fx_normalize")
+
+    assert retried["status"] == "INSTALLED"
+    assert registry.is_implemented("fx_normalize") is True
+    assert len(firestore_store.list_evolution_events()) == 1
+
+
 def test_rejected_approval_does_not_install(monkeypatch):
     patch_pipeline(monkeypatch)
     record = synapse.propose("normalize currency")

@@ -186,6 +186,24 @@ class MemoryFirestore:
             self.install_claims[name] = request_id
             return True
 
+    def release_install_claim(self, name: str, request_id: str) -> None:
+        """Undo a claim this exact request_id holds. Exists for one
+        reason: registry.register()/save_capability()/
+        write_evolution_event() -- the real work claim_install() exists
+        to gate -- can still fail AFTER a successful claim (a transient
+        Firestore write error, a malformed passport). Without a release,
+        that leaves the capability stuck at state="VALIDATING" forever
+        while every future install() call for the same request_id sees
+        `claimed=False` and reports ALREADY_INSTALLED -- a fabricated
+        terminal state for a capability that was never actually
+        installed. Only releases a claim that still matches
+        `request_id`, so this can never clobber a different claim (not
+        reachable under normal operation anyway, since claim_install()
+        is atomic, but checked rather than assumed)."""
+        with self._claim_lock:
+            if self.install_claims.get(name) == request_id:
+                del self.install_claims[name]
+
     def write_evolution_event(self, data: dict[str, Any]) -> str:
         event_id = f"evolution-{len(self.evolution_events) + 1}"
         self.evolution_events[event_id] = {
@@ -581,6 +599,43 @@ class AxonFirestore:
             f"Could not resolve an install claim for '{name}' after "
             f"{attempts} attempts under real lock contention."
         ) from last_error
+
+    def release_install_claim(self, name: str, request_id: str) -> None:
+        """Undo a claim this exact request_id holds, via a real Firestore
+        transaction. See MemoryFirestore.release_install_claim's
+        docstring for why this exists -- a real, reproducible gap, not a
+        speculative one: registry.register()/save_capability()/
+        write_evolution_event() can still fail after a successful claim,
+        which otherwise leaves the capability stuck at
+        state="VALIDATING" forever while every future install() call for
+        the same request_id sees `claimed=False` and reports the
+        fabricated terminal state ALREADY_INSTALLED."""
+        doc_ref = self.db.collection("install_claims").document(name)
+
+        @firestore.transactional
+        def _release(transaction):
+            snapshot = doc_ref.get(transaction=transaction)
+
+            if not snapshot.exists:
+                return
+
+            data = snapshot.to_dict() or {}
+
+            if data.get("request_id") == request_id:
+                transaction.delete(doc_ref)
+
+        try:
+            _release(self.db.transaction())
+        except (ValueError, gcloud_exceptions.Aborted):
+            # Best-effort: this only runs on the already-unhappy path
+            # (install() failed after claiming). If releasing the claim
+            # ALSO hits contention, the capability stays claimed and
+            # correctly reports ALREADY_INSTALLED rather than allowing a
+            # second install attempt to race the (possibly still
+            # in-flight, on some other caller) first one. Not silently
+            # swallowed -- the caller logs this via INSTALL_FAILED_AFTER_CLAIM
+            # either way.
+            pass
 
     def write_evolution_event(self, data: dict[str, Any]) -> str:
         reference = self.db.collection("evolution_events").document()
