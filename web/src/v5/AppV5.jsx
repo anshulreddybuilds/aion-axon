@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Mic, Plus, Trash2, Unlock, Zap } from "lucide-react";
+import { Mic, Plus, Trash2, Unlock, Volume2, VolumeX, Zap } from "lucide-react";
 import { api, hasOwnerToken, setOwnerToken } from "../api.js";
 import { compileGraphToPlan, planToGraph, topoOrder } from "../graphCompiler.js";
-import { nodeStatuses } from "../graphExecutionState.js";
+import { nodeStatuses, runOutcomeText, toneForMissionStatus } from "../graphExecutionState.js";
 import { describeStage } from "../livePipeline.js";
+import { speak, speechSynthesisSupported, stopSpeaking } from "../speechOutput.js";
 import { extractAnswer, prettyValue } from "../v4/artifact.js";
 import { useSpeechInput } from "../useSpeechInput.js";
 
@@ -37,6 +38,7 @@ const TONE_COLOR = {
   danger: "#f87171",
   warn: "#fbbf24",
   idle: "#475569",
+  acquiring: "#22d3ee",
 };
 
 function emptyNode(id, x, y) {
@@ -70,9 +72,22 @@ export default function AppV5() {
   const [directApproval, setDirectApproval] = useState(null); // { missionId, approvalRequestId }
   const [acquisition, setAcquisition] = useState(null); // { missionId, actions, record }
   const [deciding, setDeciding] = useState(false);
+  // BUG-011: resume-planned cannot distinguish "rejected" from "not yet
+  // decided" in its own status word (both come back as
+  // APPROVAL_REQUIRED -- see runOutcomeText()'s doc comment). The ONLY
+  // place that distinction genuinely exists is api.decide()'s own
+  // response, so it is captured here at the moment of the click, not
+  // guessed from the status word afterwards.
+  const [rejected, setRejected] = useState(false);
 
   const [unlocked, setUnlocked] = useState(hasOwnerToken());
   const [tokenInput, setTokenInput] = useState("");
+
+  // Voice output mirrors AppV4's pattern exactly: off by default (no
+  // audio a viewer did not ask for), speaks only the SAME terminal-
+  // outcome sentence already on screen (runOutcomeText()), never a
+  // separate scripted line.
+  const [speakEnabled, setSpeakEnabled] = useState(false);
 
   const idCounter = useRef(1);
   const dragRef = useRef(null); // { id, offsetX, offsetY }
@@ -80,8 +95,18 @@ export default function AppV5() {
 
   const speech = useSpeechInput({
     onText: (t) => setGoal(t),
+    // A mic error (permission denied, no mic, network) is reported via
+    // the SAME error banner a compile/run failure uses -- one honest
+    // place on screen for "something went wrong", not a second silent
+    // failure mode nothing shows.
     onError: (message) => setCompileError(message),
   });
+
+  const announce = (result, opts) => {
+    const text = runOutcomeText(result, opts);
+    if (speakEnabled) speak(text);
+    return text;
+  };
 
   useEffect(() => {
     api
@@ -165,10 +190,12 @@ export default function AppV5() {
   // ── compile + run ────────────────────────────────────────────────────
 
   const resetRunState = () => {
+    stopSpeaking(); // never let a stale result keep talking over a new run
     setMissionResult(null);
     setAnswer(null);
     setDirectApproval(null);
     setAcquisition(null);
+    setRejected(false);
   };
 
   const startAcquisition = async (missionId) => {
@@ -217,6 +244,7 @@ export default function AppV5() {
       const result = await api.missionFromGraph(plan);
       setMissionResult(result);
       setAnswer(extractAnswer(result));
+      announce(result);
 
       if (result.status === "BLOCKED") {
         startAcquisition(result.mission_id);
@@ -270,6 +298,7 @@ export default function AppV5() {
 
       setMissionResult(result);
       setAnswer(extractAnswer(result));
+      announce(result);
 
       if (result.status === "BLOCKED") {
         startAcquisition(result.mission_id);
@@ -291,20 +320,31 @@ export default function AppV5() {
   const decideDirect = async (approved) => {
     if (!directApproval || deciding) return;
     setDeciding(true);
+    setRejected(!approved);
     try {
+      // decide() itself is the ONE place a real REJECTED signal exists --
+      // resume-planned's own re-derived status word cannot tell "rejected"
+      // apart from "not yet decided" (see runOutcomeText()'s doc comment,
+      // BUG-011). Captured here, not re-guessed from what comes back below.
       await api.decide(directApproval.approvalRequestId, approved);
       const resumed = await api.resumePlanned(directApproval.missionId);
       setMissionResult(resumed);
       setAnswer(extractAnswer(resumed));
+      announce(resumed, { rejected: !approved });
 
-      if (resumed.status === "AWAITING_APPROVAL") {
+      if (approved && resumed.status === "AWAITING_APPROVAL") {
+        // Only a genuinely new approval gate further down the plan
+        // re-arms this panel -- a rejection must never loop back into
+        // "waiting for a decision" as if nothing happened.
         setDirectApproval({
           missionId: directApproval.missionId,
           approvalRequestId: resumed.approval_request_id,
         });
       } else {
         setDirectApproval(null);
-        if (resumed.status === "BLOCKED") startAcquisition(directApproval.missionId);
+        if (approved && resumed.status === "BLOCKED") {
+          startAcquisition(directApproval.missionId);
+        }
       }
     } catch (err) {
       setCompileError(String(err.message || err));
@@ -322,6 +362,18 @@ export default function AppV5() {
 
       if (approved) {
         const installed = await api.install(rec.candidate?.name);
+
+        if (installed?.status !== "INSTALLED" && installed?.status !== "ALREADY_INSTALLED") {
+          // BUG-008/BUG-010's own lesson, reapplied here: a real FAILED
+          // install response carries its message under "error", and
+          // ALREADY_INSTALLED is a safe idempotent outcome, never an
+          // error -- so only a genuine non-install status is reported as
+          // a problem, and with its real message, not a bare status word.
+          setCompileError(
+            `Install did not complete: ${installed?.reason || installed?.error || installed?.status || "unknown"}`
+          );
+        }
+
         const resumedId =
           installed?.mission_resumed?.mission_id ||
           (typeof installed?.mission_resumed === "string" ? installed.mission_resumed : null);
@@ -329,6 +381,7 @@ export default function AppV5() {
           const resumed = await api.mission(resumedId);
           setMissionResult(resumed);
           setAnswer(extractAnswer(resumed));
+          announce(resumed);
           if (resumed.status === "BLOCKED") {
             setAcquisition(null);
             startAcquisition(resumedId);
@@ -336,6 +389,8 @@ export default function AppV5() {
             return;
           }
         }
+      } else if (speakEnabled) {
+        speak("Capability rejected. The mission remains blocked.");
       }
       setAcquisition(null);
     } catch (err) {
@@ -351,7 +406,31 @@ export default function AppV5() {
     ? nodeStatuses({ nodes, stepNumberById: lastCompiled.stepNumberById, missionResult })
     : new Map();
 
+  // The ONE genuinely real-time per-node override: while acquisition is
+  // actively streaming (GET /missions/{id}/acquire/stream), the exact
+  // node that BLOCKED gets the real current stage's own label instead of
+  // the static "BLOCKED" text -- this is live because the underlying
+  // data genuinely is (see graphExecutionState.js's doc comment on the
+  // real-time boundary). Every other node's state still comes only from
+  // the last real mission result; nothing else is fabricated as "in
+  // progress".
+  if (acquisition && lastCompiled && missionResult?.blocked_on) {
+    const blockedStep = missionResult.blocked_on.step;
+    const blockedNodeId = [...lastCompiled.stepNumberById.entries()].find(
+      ([, n]) => n === blockedStep
+    )?.[0];
+    if (blockedNodeId) {
+      const stage = acquisition.record ? describeStage(acquisition.record) : null;
+      statuses.set(blockedNodeId, {
+        tone: "acquiring",
+        label: stage?.label || "Acquiring a missing capability…",
+        detail: stage?.detail || "",
+      });
+    }
+  }
+
   const selected = nodes.find((n) => n.id === selectedId) || null;
+  const isRunning = running || planning;
 
   const center = (n) => ({ x: n.x + NODE_W / 2, y: n.y + NODE_H / 2 });
 
@@ -391,6 +470,23 @@ export default function AppV5() {
             </div>
           ) : (
             <span className="text-[10px] text-emerald-400 font-mono">owner unlocked</span>
+          )}
+
+          {/* Speaks only the real terminal outcome text already on
+              screen (runOutcomeText()) -- never a scripted line. Hidden,
+              not disabled, when the browser has no SpeechSynthesis; off
+              by default, same reasoning as AppV4. */}
+          {speechSynthesisSupported() && (
+            <button
+              onClick={() => setSpeakEnabled((v) => !v)}
+              title={speakEnabled ? "Voice output on — click to mute" : "Voice output off — click to enable"}
+              aria-label={speakEnabled ? "Mute voice output" : "Enable voice output"}
+              className={`h-7 w-7 grid place-items-center rounded-full transition-colors ${
+                speakEnabled ? "text-cyan-300" : "text-slate-500 hover:bg-white/[0.06]"
+              }`}
+            >
+              {speakEnabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
+            </button>
           )}
         </div>
       </div>
@@ -476,6 +572,21 @@ export default function AppV5() {
             {nodes.length === 0 && (
               <div className="absolute inset-0 grid place-items-center text-[11px] text-slate-600 italic">
                 Add a node, or describe the mission above and click "Plan it".
+              </div>
+            )}
+
+            {/* The ONE honest global "work is happening" signal for the
+                main plan's execution. There is no per-step streaming
+                endpoint for a normal mission run (see
+                graphExecutionState.js's real-time boundary comment), so
+                this is deliberately a single banner, not per-node
+                fabricated EXECUTING states. */}
+            {isRunning && (
+              <div
+                className="absolute top-0 left-0 right-0 z-10 px-3 py-1.5 text-[10px] font-mono text-cyan-200 orb-breathe"
+                style={{ background: "rgba(0,102,255,0.14)", borderBottom: "1px solid rgba(0,136,255,0.35)" }}
+              >
+                {planning ? "Planning the mission…" : "Running the mission through the real governed engine…"}
               </div>
             )}
 
@@ -668,18 +779,17 @@ export default function AppV5() {
             <div className="border-t border-white/[0.07] pt-3 space-y-2">
               <p className="text-[10px] uppercase tracking-wider font-bold text-slate-400">
                 Mission {missionResult.mission_id?.slice(0, 8)} —{" "}
-                <span
-                  style={{
-                    color:
-                      missionResult.status === "COMPLETED"
-                        ? "#4ade80"
-                        : missionResult.status === "AWAITING_APPROVAL" || missionResult.status === "BLOCKED"
-                        ? "#fbbf24"
-                        : "#f87171",
-                  }}
-                >
+                <span style={{ color: TONE_COLOR[toneForMissionStatus(missionResult.status)] }}>
                   {missionResult.status}
                 </span>
+              </p>
+              {/* BUG-011: the real reason, not just the bare status word --
+                  see runOutcomeText()'s doc comment for the full contract
+                  this reads (step_results[last].reason/error, the
+                  summary's own reason/error, and the decide()-captured
+                  rejection signal, in that order). */}
+              <p className="text-[10.5px] text-slate-400 leading-relaxed">
+                {runOutcomeText(missionResult, { rejected })}
               </p>
 
               {answer && (

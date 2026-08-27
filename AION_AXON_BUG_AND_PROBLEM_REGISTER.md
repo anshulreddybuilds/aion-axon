@@ -7,6 +7,72 @@ P2 = reliability/usability/engineering issue, P3 = minor/polish.
 
 ---
 
+## BUG-011
+
+**SEVERITY:** P2
+**AREA:** Frontend — graphical mission builder run panel (`v5/AppV5.jsx`)
+**FILE(S):** `web/src/v5/AppV5.jsx`, `web/src/graphExecutionState.js`
+**PROBLEM:** The run panel's mission-status line showed only the bare
+status word (`FAILED`, `REFUSED`, `APPROVAL_REQUIRED`) with zero
+explanation, even when the real reason was sitting one field over in
+`step_results[last].reason`/`.error` or the summary's own top-level
+`reason`/`error` the entire time. The exact same contract-reading class
+as BUG-005/007/008/009, just not yet checked in this brand-new surface.
+Compounding it: `mission_service.resume_planned()` cannot distinguish a
+human's real REJECTION from "not yet decided" in its own status word —
+`orchestrator.approve_and_resume()` maps BOTH to `APPROVAL_REQUIRED` —
+so a rejected direct-approval step was rendered bright red with the raw
+word `APPROVAL_REQUIRED` and no indication a real decision had just been
+made, exactly the kind of "valid backend state painted as a scary false
+error" this pass's own directive named as the thing to hunt for.
+**HOW DISCOVERED:** A full contract audit of every `/v5`-related backend
+response shape (`POST /missions/from-graph`, `/resume-planned`,
+`/resume-blocked`, `/synapse/install`, `/approvals/{id}/decide`),
+checking each against what the new frontend actually read — not
+assumed. Traced the complete real status vocabulary across
+`app/missions/engine.py`, `app/missions/service.py` and
+`app/workflows/orchestrator.py` (`COMPLETED`, `BLOCKED`,
+`AWAITING_APPROVAL`, `FAILED`, `REFUSED`, and the resume-only
+`APPROVAL_REQUIRED`) and found the run panel displayed the status word
+alone for every one of them.
+**IMPACT:** The single most demo-relevant surface for the newly
+authorized graph builder would show an unexplained, alarming-looking
+status word on any real failure or rejection — undermining exactly the
+"the system explains itself" claim the whole project rests on, in the
+newest and most visible part of it.
+**STATUS:** FIXED
+**FIX:** Added `toneForMissionStatus()` (COMPLETED→ok,
+BLOCKED/AWAITING_APPROVAL/APPROVAL_REQUIRED→warn — cautionary, not a
+failure — FAILED/REFUSED/REJECTED→danger, anything unrecognized→warn
+rather than a fabricated red) and `runOutcomeText()` (reads
+`step_results[last].reason ?? .error`, then the summary's own
+`reason`/`error`, in that order) to `graphExecutionState.js`. The
+run panel now shows this real sentence under the status word.
+Separately, `decideDirect()` now captures the human's actual decision
+from `api.decide()`'s own response — the one place a genuine REJECTED
+signal exists — via a `rejected` flag passed into `runOutcomeText()`,
+so a rejection reads "Not approved — this step was rejected" instead
+of the ambiguous raw `APPROVAL_REQUIRED` word. Also applied the
+BUG-008/010 install-outcome check to `decideAcquisition()`, which
+previously did not check `api.install()`'s result at all.
+**REGRESSION TEST:** 10 new unit tests in `graphExecutionState.test.mjs`
+covering the full status matrix (`toneForMissionStatus` per status,
+`runOutcomeText` reason vs. error fallback, REFUSED/BLOCKED reason
+surfacing, rejected-vs-pending distinction, COMPLETED step count,
+empty-input safety). Verified live via a real headless-browser run
+(`graph_e2e_approval.mjs`): a real MEDIUM-risk graph node approved
+end-to-end to COMPLETED with the real computed answer, and the same
+node rejected end-to-end showing the honest rejection sentence with the
+approval panel correctly cleared (not stuck re-asking, not fabricating
+COMPLETED).
+**VERIFICATION:** LOCAL VERIFIED — 16/16 `graphExecutionState.test.mjs`
+tests pass, full backend suite unaffected (560 passed, 2 skipped), 9/9
+real-browser approve/reject checks pass. Not yet PRODUCTION VERIFIED.
+**COMMIT:** (recorded at push time below)
+**REMAINING WORK:** None.
+
+---
+
 ## BUG-010
 
 **SEVERITY:** P2
