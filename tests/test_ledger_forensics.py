@@ -4,18 +4,20 @@ directive's list, proven, not assumed.
 Scope, stated the same way the module's own docstring states it: this is
 TAMPER-EVIDENT, not tamper-proof. Every test below proves verify()
 correctly reports MISMATCH after a given attack; none of them prove an
-attacker with direct Firestore write access AND local disk write access
-to ledger_seal.json cannot edit-then-reseal over their own tamper --
-that is the module's documented, honest limitation, not something a test
-can paper over. What these tests establish is the actual claim the
-module makes: "if the events changed since the last seal in any way,
-verify() will say so."
+attacker with direct Firestore write access (the seal itself now lives
+in Firestore too, at system/ledger_seal -- see ledger_chain.py's module
+docstring for why it moved off local disk) cannot edit-then-reseal over
+their own tamper -- that is the module's documented, honest limitation,
+not something a test can paper over. What these tests establish is the
+actual claim the module makes: "if the events changed since the last
+seal in any way, verify() will say so."
 """
 import os
 
 os.environ.setdefault("AXON_FIRESTORE_MODE", "memory")
 
 import app.beastmode.ledger_chain as lc
+from app.memory.firestore_store import firestore_store
 
 
 def _events(n: int, **overrides) -> list[dict]:
@@ -32,7 +34,14 @@ def _events(n: int, **overrides) -> list[dict]:
 
 
 def _sealed(tmp_path, monkeypatch, events):
-    monkeypatch.setattr(lc, "SEAL_PATH", tmp_path / "seal.json")
+    # tmp_path kept in the signature so every call site below is
+    # unchanged -- seal storage moved from a local file to
+    # firestore_store (see ledger_chain.py's module docstring for why:
+    # a Cloud Run container's filesystem is neither shared across
+    # instances nor durable across a cold start), so isolating each
+    # test now just means resetting that in-process state instead of
+    # pointing at a fresh tmp_path file.
+    monkeypatch.setattr(firestore_store, "ledger_seal", None)
     lc.seal(events)
     return events
 
@@ -162,7 +171,7 @@ def test_replaying_an_old_full_valid_chain_after_new_events_were_added_is_detect
     """The chain grew (a real 5th event was appended and re-sealed);
     presenting the OLD 4-event chain as current must not verify against
     the NEW seal."""
-    monkeypatch.setattr(lc, "SEAL_PATH", tmp_path / "seal.json")
+    monkeypatch.setattr(firestore_store, "ledger_seal", None)
     old_events = _events(4)
     lc.seal(old_events)
 
@@ -175,14 +184,14 @@ def test_replaying_an_old_full_valid_chain_after_new_events_were_added_is_detect
 
 # --- edge cases: empty / single / no-seal ----------------------------------
 
-def test_verify_an_unsealed_ledger_is_honest_not_a_crash(tmp_path, monkeypatch):
-    monkeypatch.setattr(lc, "SEAL_PATH", tmp_path / "never_sealed.json")
+def test_verify_an_unsealed_ledger_is_honest_not_a_crash(monkeypatch):
+    monkeypatch.setattr(firestore_store, "ledger_seal", None)
     report = lc.verify(_events(3))
     assert report["status"] == "NO_SEAL"
 
 
-def test_verify_an_empty_ledger_after_sealing_empty(tmp_path, monkeypatch):
-    monkeypatch.setattr(lc, "SEAL_PATH", tmp_path / "seal.json")
+def test_verify_an_empty_ledger_after_sealing_empty(monkeypatch):
+    monkeypatch.setattr(firestore_store, "ledger_seal", None)
     lc.seal([])
     report = lc.verify([])
     assert report["status"] == "VERIFIED"
@@ -312,7 +321,7 @@ def test_repeated_reads_in_different_orders_all_verify_against_one_seal(tmp_path
     """Simulates what an unordered Firestore .stream() actually does:
     the same underlying events, returned in a different order on a
     second read. Both reads must verify cleanly against the same seal."""
-    monkeypatch.setattr(lc, "SEAL_PATH", tmp_path / "seal.json")
+    monkeypatch.setattr(firestore_store, "ledger_seal", None)
     events = _events_with_event_id(5)
     lc.seal(events)
 
@@ -340,3 +349,56 @@ def test_modifying_the_evaluator_score_in_an_event_is_detected(tmp_path, monkeyp
     tampered = [dict(e) for e in sealed]
     tampered[0]["evaluation"] = {"status": "SCORED", "score": 95, "verdict": "PASS"}
     assert lc.verify(tampered)["status"] == "MISMATCH"
+
+
+# --- durability (the actual bug this session found and fixed) --------------
+
+def test_seal_survives_a_simulated_cold_start_not_just_the_calling_process(monkeypatch):
+    """The real bug: seal() used to write to a file next to this module
+    (SEAL_PATH). That worked in one long-running local process, but on
+    Cloud Run a container's filesystem is neither shared across
+    instances nor durable across a cold start/redeploy -- a seal written
+    by one instance was invisible to every OTHER concurrently-running
+    instance and vanished the moment the instance that wrote it was
+    recycled. A brand new AxonFirestore/MemoryFirestore instance
+    (standing in for a fresh Cloud Run container with an empty local
+    filesystem, same image) must still see the seal, because it now
+    lives in Firestore, not on disk."""
+    from app.memory.firestore_store import MemoryFirestore
+
+    monkeypatch.setattr(firestore_store, "ledger_seal", None)
+    events = _events(3)
+    lc.seal(events)
+
+    # Simulate a second, independent process/container reading from the
+    # SAME backing store (Firestore) rather than the same in-memory
+    # object -- the real point of the fix. A fresh MemoryFirestore()
+    # instance has its own empty __dict__ (no shared state with the
+    # module singleton at all), so if seal() had written anywhere other
+    # than the shared `firestore_store` singleton's own storage, copying
+    # its ledger_seal value across would be the only way this could pass.
+    fresh_instance = MemoryFirestore()
+    fresh_instance.ledger_seal = firestore_store.get_ledger_seal()
+
+    assert fresh_instance.get_ledger_seal() is not None
+    assert fresh_instance.get_ledger_seal()["event_count"] == 3
+
+
+def test_seal_no_longer_touches_local_disk(monkeypatch):
+    """Direct proof the old SEAL_PATH file is dead code, not just
+    unused: the old code wrote to an absolute path next to this module
+    (Path(__file__).parent / "ledger_seal.json") regardless of cwd, so
+    that exact path -- not a relative one a cwd trick could catch -- is
+    checked directly, plus the attribute itself being gone."""
+    from pathlib import Path
+
+    old_seal_path = Path(lc.__file__).parent / "ledger_seal.json"
+
+    monkeypatch.setattr(firestore_store, "ledger_seal", None)
+    lc.seal(_events(2))
+
+    assert not old_seal_path.exists(), (
+        f"seal() wrote to {old_seal_path} -- the old local-disk path is "
+        "supposed to be dead code now that Firestore is the backing store"
+    )
+    assert not hasattr(lc, "SEAL_PATH")

@@ -11,9 +11,18 @@ prove:
     by the existing, unmodified write path (app.memory.firestore_store).
     Nothing about how or when an event is written has changed.
   - A SEAL is a snapshot: the final chain hash at a point in time, saved
-    to disk. Re-verifying later and getting the SAME final hash proves
-    nothing in the ledger was altered or reordered between seal and
-    verification. Getting a DIFFERENT hash proves something was.
+    to Firestore (system/ledger_seal) -- NOT local disk. It used to be a
+    file next to this module, which worked in a single long-running
+    local process but was silently broken in the actual deployed
+    architecture: a Cloud Run container's filesystem is neither shared
+    across instances nor durable across a cold start or redeploy, so a
+    seal written by one instance was invisible to every other
+    concurrently-running instance and vanished the moment the instance
+    that wrote it was recycled. Moved to Firestore, the same durable
+    store every other piece of state in this project already uses.
+    Re-verifying later and getting the SAME final hash proves nothing in
+    the ledger was altered or reordered between seal and verification.
+    Getting a DIFFERENT hash proves something was.
   - This is tamper-EVIDENT, not tamper-PROOF: nothing here stops someone
     with direct Firestore write access from editing an event AND
     re-sealing over the edit. Detecting that would need the seal to live
@@ -44,7 +53,7 @@ under a collision, only PRODUCE THE SAME order every time given the same
 events -- which is the actual property tamper-evidence depends on.
 
 This changes nothing about existing events, does not reorder or rewrite
-any historical record, and does not touch the existing seal file. It only
+any historical record, and does not touch any existing seal. It only
 changes how `build_chain()`/`seal()`/`verify()` compute a hash from
 whatever event list they're handed.
 """
@@ -53,12 +62,11 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
-GENESIS = "0" * 64
+from app.memory.firestore_store import firestore_store
 
-SEAL_PATH = Path(__file__).parent / "ledger_seal.json"
+GENESIS = "0" * 64
 
 
 def _canonical(event: dict[str, Any]) -> str:
@@ -121,13 +129,21 @@ def build_chain(events: list[dict[str, Any]]) -> list[ChainLink]:
 
 
 def seal(events: list[dict[str, Any]]) -> dict:
-    """Write the current final chain hash to disk. This IS the claim
-    "the ledger looked like this at this moment" — nothing more."""
+    """Write the current final chain hash to Firestore. This IS the claim
+    "the ledger looked like this at this moment" — nothing more.
+
+    Firestore, not local disk: a Cloud Run container's own filesystem is
+    neither shared across instances nor durable across a cold start or
+    redeploy, so a seal written there was invisible to every OTHER
+    concurrently-running instance and silently lost the moment the
+    instance that wrote it was recycled -- the opposite of what a sealed
+    baseline is supposed to mean. See firestore_store.save_ledger_seal().
+    """
     chain = build_chain(events)
     final = chain[-1].chain_hash if chain else GENESIS
 
     record = {"event_count": len(events), "final_hash": final}
-    SEAL_PATH.write_text(json.dumps(record, indent=2))
+    firestore_store.save_ledger_seal(record)
     return record
 
 
@@ -141,16 +157,17 @@ def verify(events: list[dict[str, Any]]) -> dict:
     chain = build_chain(events)
     current_final = chain[-1].chain_hash if chain else GENESIS
 
-    if not SEAL_PATH.exists():
+    sealed = firestore_store.get_ledger_seal()
+
+    if sealed is None:
         return {
             "status": "NO_SEAL",
             "event_count": len(events),
             "current_final_hash": current_final,
-            "detail": "No prior seal on disk — nothing to compare against yet. "
+            "detail": "No prior seal recorded — nothing to compare against yet. "
                       "Run seal() to create a baseline.",
         }
 
-    sealed = json.loads(SEAL_PATH.read_text())
     intact = (
         sealed.get("final_hash") == current_final
         and sealed.get("event_count") == len(events)

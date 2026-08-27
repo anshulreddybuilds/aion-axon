@@ -962,8 +962,9 @@ def beastmode_red_team() -> dict[str, Any]:
 @app.get("/beastmode/ledger/verify")
 def beastmode_ledger_verify() -> dict[str, Any]:
     """Re-hashes the REAL live evolution ledger and compares it to the
-    last seal on disk. See app/beastmode/ledger_chain.py for exactly what
-    this can and cannot prove."""
+    last seal (Firestore, not local disk -- see app/beastmode/ledger_chain.py's
+    module docstring for why that matters on Cloud Run). See that module
+    for exactly what this can and cannot prove."""
     from app.beastmode.ledger_chain import verify
 
     events = firestore_store.list_evolution_events()

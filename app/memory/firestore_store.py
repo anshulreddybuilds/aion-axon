@@ -19,6 +19,7 @@ class MemoryFirestore:
         self.monitors: dict[str, dict[str, Any]] = {}
         self.ground_truth: dict[str, dict[str, Any]] = {}
         self.install_claims: dict[str, str] = {}
+        self.ledger_seal: Optional[dict[str, Any]] = None
         self._claim_lock = threading.Lock()
         self._approval_lock = threading.Lock()
 
@@ -184,6 +185,12 @@ class MemoryFirestore:
 
     def list_ground_truth(self) -> list[dict[str, Any]]:
         return list(self.ground_truth.values())
+
+    def save_ledger_seal(self, record: dict[str, Any]) -> None:
+        self.ledger_seal = dict(record)
+
+    def get_ledger_seal(self) -> Optional[dict[str, Any]]:
+        return dict(self.ledger_seal) if self.ledger_seal is not None else None
 
 
 class InstallClaimContention(Exception):
@@ -514,6 +521,28 @@ class AxonFirestore:
             doc.to_dict()
             for doc in self.db.collection("ground_truth").stream()
         ]
+
+    def save_ledger_seal(self, record: dict[str, Any]) -> None:
+        # Firestore, not local disk (see ledger_chain.py's module
+        # docstring for why this changed): Cloud Run containers are
+        # stateless and not shared across instances, so a seal written to
+        # this image's own filesystem was invisible to every OTHER
+        # concurrently-running instance and was silently lost on every
+        # cold start / redeploy -- the exact opposite of what a "sealed
+        # baseline" is supposed to mean. `system/ledger_seal` mirrors how
+        # KillSwitch already stores its own state in `system/control`.
+        self.db.collection("system").document("ledger_seal").set({
+            **record,
+            "sealed_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    def get_ledger_seal(self) -> Optional[dict[str, Any]]:
+        snapshot = self.db.collection("system").document("ledger_seal").get()
+
+        if not snapshot.exists:
+            return None
+
+        return snapshot.to_dict()
 
 
 if os.getenv("AXON_FIRESTORE_MODE") == "memory":
