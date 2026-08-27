@@ -372,7 +372,15 @@ export default function AppV4() {
                   ? " · blocked mission resumed"
                   : "")
               : `Install did not complete: ${
-                  installed?.reason || installed?.status || "unknown"
+                  // BUG-008: every FAILED-status response synapse.install()
+                  // actually returns (unknown capability, no approval on
+                  // record, real Firestore contention) carries its message
+                  // under "error", never "reason" -- reading only
+                  // "reason" here always fell through to the bare status
+                  // word "FAILED", hiding the real diagnostic the backend
+                  // had already produced. The same reason/error mismatch
+                  // class as BUG-005/007, this time live in the UI.
+                  installed?.reason || installed?.error || installed?.status || "unknown"
                 }`,
         });
       } else if (!approved) {

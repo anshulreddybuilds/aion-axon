@@ -7,6 +7,61 @@ P2 = reliability/usability/engineering issue, P3 = minor/polish.
 
 ---
 
+## BUG-008
+
+**SEVERITY:** P2
+**AREA:** Frontend / AppV4 / mission theater display
+**FILE(S):** `web/src/v4/AppV4.jsx`
+**PROBLEM:** After approving an acquisition and calling `api.install()`,
+the UI's failure-display fallback read `installed?.reason ||
+installed?.status || "unknown"` — but every FAILED-status response
+`synapse.install()` actually returns (unknown capability, no approval on
+record, and BUG-003's real Firestore-contention case) carries its
+message under the key `"error"`, never `"reason"`. Every one of these
+real failures displayed only the bare word `"FAILED"` in the live demo
+UI, with the actual diagnostic the backend had already produced silently
+discarded. The exact same `"reason"`/`"error"` mismatch class as
+BUG-005/007 — this time live in the frontend, not the backend.
+**HOW DISCOVERED:** Continuing the field-by-field frontend/backend
+contract audit this session's reports had flagged as incomplete.
+Grepped `AppV4.jsx` for every `.reason` read and cross-checked each
+against the real backend response shape it consumes: line 424
+(evaluator reason) and lines 523/527 (AcquisitionRecord reason) were
+both genuinely correct; line 534 already defensively checks
+`missionResult.error || missionResult.reason` (correct); line 375 (this
+bug) checked only `reason`; line 583 turned out to be dead code (mission
+summaries never carry a top-level `reason` field at all — harmless,
+since it falls through to an honest generic message, left alone rather
+than speculatively rewritten).
+**IMPACT:** A real, user-facing UX defect in the actual hackathon demo
+UI: an owner who tried to install a capability and hit any real failure
+(most plausibly BUG-003's contention case under load, or a stale/replayed
+approval) would see nothing more informative than "FAILED" — no
+actionable next step, despite the backend having already produced one.
+**STATUS:** FIXED
+**FIX:** Added `installed?.error` to the fallback chain:
+`installed?.reason || installed?.error || installed?.status ||
+"unknown"`. Minimal, purely additive — cannot regress any case that
+already worked, since `reason` is still checked first.
+**REGRESSION TEST:** Verified directly against the three real backend
+FAILED-status shapes (confirmed from `app/synapse/engine.py` this
+session) with a standalone Node check: before the fix all three
+produced `"FAILED"`; after, each produces its real message
+("Unknown capability.", "No approval on record.", the contention
+retry message). Not added as a browser-level Playwright test this pass
+— the change is a one-line, mechanically-verified `||`-chain addition
+in a callback with no dedicated component-test harness in this repo;
+`npm run build` confirmed clean.
+**VERIFICATION:** LOCAL VERIFIED (build clean, exact logic verified
+against real backend shapes). Not yet PRODUCTION VERIFIED (environment
+egress blocked, as with every frontend fix this session).
+**COMMIT:** (pending, this pass)
+**REMAINING WORK:** None functionally. A future session could add a
+proper component-level test harness for `AppV4.jsx` if that becomes a
+priority — none exists today for any of its logic, not just this fix.
+
+---
+
 ## BUG-007
 
 **SEVERITY:** P2
