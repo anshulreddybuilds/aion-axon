@@ -34,7 +34,22 @@ function ApprovalGate({ record, onDecided }) {
   const decide = async (approved) => {
     setBusy(true);
     try {
-      await api.decide(record.approval_request_id, approved);
+      // app/api.py's /approvals/{id}/decide returns HTTP 200 even when
+      // the decision didn't apply -- ALREADY_DECIDED, NOT_FOUND, and
+      // BLOCKED (kill switch active) are all normal 200 bodies, not
+      // thrown errors, so api.js's request() won't throw for them. Check
+      // the actual status instead of assuming the call succeeded, or a
+      // stale double-click / a kill switch tripped mid-decision would
+      // silently install nothing while the UI still claims APPROVED.
+      const decision = await api.decide(record.approval_request_id, approved);
+      const expected = approved ? "APPROVED" : "REJECTED";
+      if (decision.status !== expected) {
+        setResult({
+          approved,
+          error: `Decision not recorded: ${decision.status}${decision.reason ? ` — ${decision.reason}` : ""}`,
+        });
+        return;
+      }
       let installResult = null;
       if (approved) {
         installResult = await api.install(record.candidate.name);
