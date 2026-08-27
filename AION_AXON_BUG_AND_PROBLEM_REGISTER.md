@@ -50,33 +50,59 @@ still reporting the emulator-start step itself as green — actively
 misleading about where the real problem was. This is also the reason
 this session had never observed a genuinely green CI run for any of
 this branch's recent commits despite every local run being clean.
-**STATUS:** FIXED
-**FIX:** Two changes to `.github/workflows/ci.yml`: (1) the readiness
-loop now sets an explicit `ready=""`/`ready=1` flag, checks it after the
-loop, prints the real emulator log either way, and `exit 1`s with a
-clear `::error::` message if the emulator never came up — failing loud,
-at the actual point of failure, instead of several minutes later inside
-an unrelated test; increased the ceiling from 30s to 120s (60 attempts
-× 2s) to give a cold JVM+jar startup a realistic chance. (2) Added an
-`actions/cache@v4` step caching `~/.cache/firebase/emulators` (the
-directory the Firebase CLI itself downloads the emulator JAR into,
-separate from `npm install`/node_modules), so the slow first-time
-download only happens once across all future CI runs, not on every
-single one — addressing why it was slow to begin with, not just
-covering for it with a bigger number.
-**REGRESSION TEST:** The regression test IS the CI workflow itself,
-run on every future push — a real emulator that fails to start will now
-fail this step immediately and visibly rather than masking as a
-downstream test failure. Verified the readiness-check LOGIC directly in
-this sandbox before pushing: (a) success path — a real local Firestore
-emulator (Java 21, firebase-tools, already-cached JAR) started and was
-detected alive by the exact loop in 16s; (b) failure path — pointed the
-same loop logic at a port nothing listens on and confirmed it correctly
-printed the log and exited 1 rather than falling through silently.
-**VERIFICATION:** LOCAL VERIFIED (both loop paths reproduced directly;
-YAML syntax validated with `yaml.safe_load`). Live-CI verification
-(a genuinely green GitHub Actions run on the fixed workflow) pending —
-see the continuation handoff for the observed outcome after push.
+**STATUS:** FIXED (two rounds — see below)
+
+**Round 1 fix:** the readiness loop now sets an explicit
+`ready=""`/`ready=1` flag, checks it after the loop, prints the real
+emulator log either way, and `exit 1`s with a clear `::error::` message
+if the emulator never came up — failing loud, at the actual point of
+failure, instead of several minutes later inside an unrelated test;
+increased the ceiling from 30s to 120s. Added an `actions/cache@v4`
+step for `~/.cache/firebase/emulators` (the Firebase CLI's own emulator
+JAR download cache) so a slow first-time download only happens once.
+Pushed as commit `55681dc`.
+
+**Round 1 result — the fix worked exactly as designed, and immediately
+surfaced a second, DEEPER pre-existing bug that Round 1 could not have
+caused (it was there in the original script too, just always masked by
+the missing readiness check):** run #183 (commit `55681dc`) failed fast
+this time (2m15s instead of 6m16s) with a clean, specific error instead
+of a downstream gRPC stack trace — proving the readiness check itself
+now works — but the real emulator log it printed showed
+`npm error could not determine executable to run`, not a timing
+problem at all. Root cause: `(cd /tmp/emulator-cfg && npx firebase
+emulators:start ...)` runs `npx` from `/tmp/emulator-cfg`, a completely
+different directory than where `npm install --no-save firebase-tools`
+had just installed it (the job's default working directory,
+`$GITHUB_WORKSPACE`). `npx` resolves a locally-installed package by
+walking up from the CURRENT directory, not from wherever the install
+happened to run, and this runner has no global `firebase` to fall back
+to — so `npx` could never find the binary, regardless of how long the
+readiness loop waited. **Reproduced byte-for-byte in this sandbox**:
+installing `firebase-tools` in one directory and running `npx firebase
+--version` from an unrelated directory reproduces the identical
+`npm error could not determine executable to run`; invoking
+`<install-dir>/node_modules/.bin/firebase --version` directly from that
+same unrelated directory works.
+
+**Round 2 fix:** invoke the installed binary by its real, absolute path
+(`$GITHUB_WORKSPACE/node_modules/.bin/firebase`) instead of going
+through `npx`'s directory-sensitive resolution at all — the same
+direct-path pattern already used successfully in this session's local
+rehearsals. Pushed as commit (recorded below).
+**REGRESSION TEST:** The regression test IS the CI workflow itself, run
+on every future push — a real emulator that fails to start now fails
+this step immediately and visibly rather than masking as a downstream
+test failure or (Round 1's own residual gap) a confusing unresolved-
+binary error with no obvious cause. Verified end-to-end in this sandbox
+before pushing Round 2: installed `firebase-tools` in one directory,
+started the emulator from a different directory using the exact fixed
+script's logic (absolute binary path + firebase.json + firestore.rules
++ the readiness loop), and confirmed it was detected alive in 4s.
+**VERIFICATION:** LOCAL VERIFIED (both bugs reproduced directly, both
+fixes verified directly, YAML syntax validated). Live-CI verification
+(a genuinely green GitHub Actions run) pending on Round 2's push — see
+the continuation handoff for the observed outcome.
 **COMMIT:** (recorded at push time below)
 **REMAINING WORK:** None if the live CI run comes back green; if the
 120s ceiling is still insufficient on a truly cold runner even with the

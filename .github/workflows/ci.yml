@@ -84,22 +84,36 @@ jobs:
             }
           }
           EOF
-          (cd /tmp/emulator-cfg && nohup npx firebase emulators:start --only firestore --project aion-axon-ci > /tmp/emulator.log 2>&1 &)
+          # BUG-012's real root cause, found by this very fix: `npx
+          # firebase` run from /tmp/emulator-cfg cannot resolve the binary
+          # `npm install` just placed in this job's own node_modules --
+          # npx resolves a locally-installed package by walking up from
+          # the CURRENT directory, not from wherever the install happened
+          # to run, and this runner has no global `firebase` to fall back
+          # to. The observed failure was the blunt "npm error could not
+          # determine executable to run", not a timing issue at all --
+          # confirmed live via the GitHub Actions API on the very first
+          # run of this pass's earlier (readiness-check-only) fix, which
+          # correctly failed fast instead of hiding this behind another
+          # 6-minute downstream hang. Invoking the installed binary by its
+          # real, absolute path sidesteps npx's resolution entirely -- the
+          # same direct-path pattern already verified locally in this
+          # session (a real emulator start, detected alive in 16s).
+          FIREBASE_BIN="$GITHUB_WORKSPACE/node_modules/.bin/firebase"
+          (cd /tmp/emulator-cfg && nohup "$FIREBASE_BIN" emulators:start --only firestore --project aion-axon-ci > /tmp/emulator.log 2>&1 &)
 
-          # BUG-012 (AION_AXON_BUG_AND_PROBLEM_REGISTER.md): this loop
-          # previously had NO check after it exited -- a cold run (no
-          # cache hit above, or the emulator jar download simply outlasting
-          # 30s on a loaded runner) let the loop exhaust silently and this
-          # step still exit 0, reporting success for an emulator that never
-          # actually started. The concurrency tests then spent the next
-          # 6+ minutes retrying a connection that was never going to
-          # succeed, before finally failing with an opaque gRPC
-          # "connection refused" stack trace that points nowhere near the
-          # real cause. Never again: poll for up to two minutes (the cache
-          # step above should make this fast on every run after the first;
-          # this ceiling is the honest worst case, not the expectation),
-          # and if it's not up, fail HERE, loud, with the real emulator
-          # log -- not several minutes later inside an unrelated test.
+          # This loop's own outcome used to go unchecked -- a cold run
+          # let it exhaust silently and the step still exit 0, reporting
+          # success for an emulator that never actually started. The
+          # concurrency tests then spent 6+ minutes retrying a connection
+          # that was never going to succeed, before finally failing with
+          # an opaque gRPC "connection refused" stack trace nowhere near
+          # the real cause. Never again: poll for up to two minutes (the
+          # cache step above should make this fast on every run after the
+          # first; this ceiling is the honest worst case, not the
+          # expectation), and if it's not up, fail HERE, loud, with the
+          # real emulator log -- not several minutes later inside an
+          # unrelated test.
           ready=""
           for i in $(seq 1 60); do
             if curl -sf http://127.0.0.1:8080 >/dev/null 2>&1; then
