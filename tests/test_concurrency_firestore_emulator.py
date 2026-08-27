@@ -65,15 +65,33 @@ emulator, ten threads racing ONE transaction on the SAME document
 occasionally exhausts the SDK's default 5-attempt commit retry budget
 (`ValueError: Failed to commit transaction in 5 attempts`), more often
 once the emulator has been running under sustained load than on a
-freshly-started one. That is a liveness/retry-budget limit of this local
-single-process emulator under heavy single-document contention, not a
-correctness failure -- every run that DID commit produced the exact
-invariant this test asserts. Re-run on failure before assuming a
-regression.
+freshly-started one. That was originally dismissed as a liveness/retry
+quirk of this one local emulator ("re-run on failure"), not fixed.
+
+UPDATE -- a later session found that dismissal was premature: the SAME
+exhausted-retries failure reproduced against `tests/
+test_concurrency_firestore_emulator_engine.py` (the test exercising the
+REAL production `claim_install()` code, not this reference test) on 2 of
+5 runs -- not a one-off, and not exclusive to this hand-written test.
+Raising `max_attempts` alone (tried up to 20) did not fix it, because the
+client library's retry loop fires attempts back-to-back with no delay
+(by its own design comment). What DID fix it, confirmed reliable across
+5+ repeated runs: a real wall-clock sleep with jitter BETWEEN outer
+attempts (each a fresh single-attempt transaction), giving the emulator's
+lock queue actual time to drain. That fix now lives in both places: for
+real in `app/memory/firestore_store.py`'s `AxonFirestore.claim_install()`
+(with a new `InstallClaimContention` exception so `install()` fails
+honestly instead of raising an unhandled 500 if even that's exhausted),
+and mirrored in this reference test's `worker()` so it reflects the
+production fix instead of drifting from it. See
+`AION_AXON_BUG_AND_PROBLEM_REGISTER.md` BUG-003 for the full account.
 """
 import os
+import random
+import time
 
 import pytest
+from google.api_core import exceptions
 
 EMULATOR_HOST = os.environ.get("FIRESTORE_EMULATOR_HOST")
 
@@ -131,8 +149,30 @@ def test_concurrent_install_against_real_firestore_transaction_semantics(emulato
     import concurrent.futures
 
     def worker():
-        transaction = emulator_db.transaction()
-        return install_if_not_installed(transaction, doc_ref)
+        # Real behavior discovered running this against an actual
+        # emulator (not assumed): under ~10 truly simultaneous
+        # transactions on ONE document, the client's own built-in retry
+        # (no delay between attempts, by the library's own design) can
+        # exhaust its budget while every attempt hits
+        # `Aborted: Transaction lock timeout`, even with max_attempts
+        # raised as high as 20. What actually resolves it is a real
+        # wall-clock sleep with jitter BETWEEN attempts, giving the lock
+        # queue time to drain -- the same fix applied for real in
+        # app/memory/firestore_store.py's AxonFirestore.claim_install()
+        # after this exact test caught the gap. Mirrored here rather than
+        # left on the library's bare default, so this reference test
+        # reflects the production fix instead of drifting from it.
+        last_error: Exception | None = None
+
+        for _ in range(8):
+            try:
+                transaction = emulator_db.transaction(max_attempts=1)
+                return install_if_not_installed(transaction, doc_ref)
+            except (ValueError, exceptions.Aborted) as exc:
+                last_error = exc
+                time.sleep(0.05 + random.random() * 0.15)
+
+        raise last_error
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
         results = list(pool.map(lambda _: worker(), range(10)))

@@ -1,8 +1,11 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 import os
+import random
 import threading
+import time
 
+from google.api_core import exceptions as gcloud_exceptions
 from google.cloud import firestore
 
 
@@ -148,6 +151,15 @@ class MemoryFirestore:
         return list(self.ground_truth.values())
 
 
+class InstallClaimContention(Exception):
+    """claim_install() could not determine a winner because every attempt
+    hit real lock contention on the install-claim document -- not because
+    any caller definitively lost. Distinct from a normal `False` return
+    (which means someone else's claim was actually observed), so a caller
+    never mistakes "still contended" for "someone else already has it."
+    """
+
+
 class AxonFirestore:
     def __init__(self):
         self.db = firestore.Client(project="aion-axon-2026")
@@ -275,7 +287,22 @@ class AxonFirestore:
         callers over the actual emulator all got INSTALLED) in
         tests/test_concurrency_firestore_emulator_engine.py before this
         method existed. See AION_AXON_CONTINUATION_HANDOFF.md's P1
-        section for the full account."""
+        section for the full account.
+
+        A second real gap surfaced later, against the same emulator test:
+        under ~10 truly simultaneous callers on ONE document, the
+        transaction's own built-in retry (`max_attempts`, no delay between
+        attempts -- by the client library's own design, it expects the
+        server to naturally queue retries) sometimes exhausted its budget
+        while every attempt hit `Aborted: Transaction lock timeout`, and
+        raised out of this method as an unhandled exception instead of a
+        clean True/False. Bumping `max_attempts` alone did not fix it
+        (confirmed empirically up to 20) -- the fix that reliably worked
+        was a real wall-clock sleep with jitter BETWEEN our own outer
+        attempts, giving the lock queue actual time to drain rather than
+        hammering it back-to-back. Each outer attempt uses a fresh
+        single-shot transaction (`max_attempts=1`) so the outer loop is
+        the only thing pacing retries."""
         doc_ref = self.db.collection("install_claims").document(name)
 
         @firestore.transactional
@@ -292,7 +319,22 @@ class AxonFirestore:
             })
             return True
 
-        return _claim(self.db.transaction())
+        last_error: Exception = InstallClaimContention(
+            f"Could not resolve an install claim for '{name}' -- every "
+            "attempt hit real lock contention."
+        )
+
+        for attempt in range(8):
+            try:
+                return _claim(self.db.transaction(max_attempts=1))
+            except (ValueError, gcloud_exceptions.Aborted) as exc:
+                last_error = exc
+                time.sleep(0.05 + random.random() * 0.15)
+
+        raise InstallClaimContention(
+            f"Could not resolve an install claim for '{name}' after 8 "
+            "attempts under real lock contention."
+        ) from last_error
 
     def write_evolution_event(self, data: dict[str, Any]) -> str:
         reference = self.db.collection("evolution_events").document()

@@ -27,7 +27,7 @@ from app.governance.approval import approval_manager
 from app.governance.autonomy_ledger import autonomy_ledger
 from app.governance.guardian import Decision, RiskLevel, guardian
 from app.governance.kill_switch import kill_switch
-from app.memory.firestore_store import firestore_store
+from app.memory.firestore_store import InstallClaimContention, firestore_store
 from app.synapse.evaluator import evaluate
 from app.synapse.generator import Candidate, generate_candidate
 from app.synapse.safety_screen import screen
@@ -163,6 +163,22 @@ class SynapseEngine:
             yield snap("GUARDIAN_PRESCREEN")
             return
 
+        # Found this session: nothing about a proposal is persisted to
+        # Firestore until it reaches AWAITING_APPROVAL (save_capability()
+        # below, right before that yield) -- confirmed by directly
+        # abandoning a generator mid-stream (simulating a real client
+        # disconnect, since stream_response() simply stops calling
+        # __next__ once a send() fails, it does not keep driving the
+        # generator in the background). A disconnect during RESEARCH
+        # through GUARDIAN_SCREEN previously left NO trace at all: no
+        # capability doc, no audit event, no way for the owner to even
+        # see that quota was spent on an attempt that never finished. Not
+        # a correctness bug (nothing partial could ever be mistaken for
+        # an installed or approved state), but an observability gap this
+        # one audit event closes without touching the pipeline's
+        # behavior or building actual mid-flight resumability (a much
+        # larger change, not warranted by what was actually found).
+        self._audit(record, "SYNAPSE_ACQUISITION_STARTED")
         yield snap("GUARDIAN_PRESCREEN")
 
         # --- RESEARCH --------------------------------------------------
@@ -458,7 +474,30 @@ class SynapseEngine:
         # operation (a real Firestore transaction for AxonFirestore, a
         # lock for MemoryFirestore) instead of two separate calls with a
         # window in between.
-        if not firestore_store.claim_install(capability_name, request_id):
+        try:
+            claimed = firestore_store.claim_install(capability_name, request_id)
+        except InstallClaimContention as exc:
+            # Real lock contention that never resolved to a definitive
+            # winner or loser -- NOT the same as "someone else already
+            # has it" (that's the branch below). Reporting ALREADY_INSTALLED
+            # here would fabricate a state nobody actually reached; the
+            # honest answer is that install briefly could not be
+            # confirmed and the caller should retry.
+            firestore_store.write_audit_event("INSTALL_CLAIM_CONTENDED", {
+                "capability": capability_name,
+                "request_id": request_id,
+                "error": str(exc),
+            })
+            return {
+                "status": "FAILED",
+                "capability": capability_name,
+                "error": (
+                    "Installation is under heavy contention right now and "
+                    "could not be confirmed. Please retry."
+                ),
+            }
+
+        if not claimed:
             refreshed = firestore_store.get_capability(capability_name) or stored
             return {
                 "status": "ALREADY_INSTALLED",

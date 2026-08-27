@@ -40,7 +40,10 @@ from app.governance.approval import approval_manager  # noqa: E402
 from app.governance.guardian import RiskLevel  # noqa: E402
 from app.governance.kill_switch import kill_switch  # noqa: E402
 from app.capabilities.registry import registry  # noqa: E402
-from app.memory.firestore_store import firestore_store  # noqa: E402
+from app.memory.firestore_store import (  # noqa: E402
+    InstallClaimContention,
+    firestore_store,
+)
 from app.synapse.engine import synapse  # noqa: E402
 
 
@@ -212,3 +215,45 @@ def test_killswitch_activated_mid_install_race_never_produces_a_ready_capability
         assert stored["state"] != "READY"
 
     registry.unregister("race_ks")
+
+
+def test_install_fails_honestly_when_claim_is_genuinely_contended():
+    """Found live against a real Firestore emulator (not in this
+    MemoryFirestore-backed file): under heavy real lock contention,
+    claim_install() can exhaust its own internal retry budget without
+    ever determining a winner or loser, and now raises
+    InstallClaimContention rather than letting an unhandled exception
+    escape. install() must turn that into an honest FAILED status --
+    never ALREADY_INSTALLED (that would fabricate a state nobody
+    actually reached) and never a crash. This test cannot reproduce the
+    real contention itself (MemoryFirestore's claim_install() cannot
+    raise it), so it verifies the contract directly: patch claim_install
+    to raise, and check install()'s response.
+    """
+    name = "contended_capability"
+    approval_id = "contended-approval"
+    _install_and_approve(name, approval_id)
+
+    original_claim_install = firestore_store.claim_install
+
+    def raise_contention(_name, _request_id):
+        raise InstallClaimContention("simulated real lock contention")
+
+    firestore_store.claim_install = raise_contention
+    try:
+        result = synapse.install(name)
+    finally:
+        firestore_store.claim_install = original_claim_install
+
+    assert result["status"] == "FAILED"
+    assert result["capability"] == name
+    assert "retry" in result["error"].lower()
+
+    audit = firestore_store.audit_events
+    contended = [
+        e for e in audit.values() if e.get("event_type") == "INSTALL_CLAIM_CONTENDED"
+    ]
+    assert len(contended) == 1
+    assert contended[0]["capability"] == name
+
+    registry.unregister(name)

@@ -264,3 +264,54 @@ def test_propose_still_returns_the_same_final_record_after_the_stream_refactor(
     assert record.candidate["name"] == "summarize_legal_document"
 
     registry.unregister("summarize_legal_document")
+
+
+# --- Client disconnect mid-acquisition (Section 13/19 hardening) --------
+
+def test_abandoning_the_stream_before_awaiting_approval_leaves_no_capability_trace(
+    monkeypatch,
+):
+    """A real client disconnect stops Starlette from driving the
+    generator any further (confirmed directly against the generator,
+    not assumed): stream_response() simply stops calling __next__ once a
+    send() to the broken socket fails. Nothing resumes it in the
+    background. Firestore only gets a capability document once
+    AWAITING_APPROVAL is reached (save_capability() runs right before
+    that yield) -- so a disconnect any earlier must leave NO capability
+    document behind (never a stuck/orphaned partial one that could be
+    mistaken for real progress), while still recording that an attempt
+    was made, via the new SYNAPSE_ACQUISITION_STARTED audit event."""
+    candidate = candidate_for("abandoned_before_approval")
+    patch_pipeline(monkeypatch, candidate)
+
+    from app.synapse.engine import synapse
+
+    gen = synapse.propose_stream("a need nobody sticks around to see acquired")
+
+    # Consume a few real stages, then simply stop -- exactly what a
+    # dropped connection looks like from the generator's point of view.
+    stages_seen = []
+    for _ in range(4):  # GUARDIAN_PRESCREEN, RESEARCH, GENERATE, SAFETY_SCREEN
+        record = next(gen)
+        stages_seen.append(record.stage)
+    gen.close()  # the real cleanup a dropped StreamingResponse performs
+
+    assert stages_seen == [
+        "GUARDIAN_PRESCREEN", "RESEARCH", "GENERATE", "SAFETY_SCREEN",
+    ]
+
+    # No trace of a half-finished capability -- never something that
+    # could look like partial or ambiguous progress to a later caller.
+    assert firestore_store.get_capability("abandoned_before_approval") is None
+
+    # But the attempt itself is now observable, closing the "silent
+    # quota spend with zero trace" gap found this session. Filtered by
+    # this test's own unique need text, not a bare count -- audit_events
+    # is never cleared between tests in this file (other tests in this
+    # module fire the same event type for their own, different needs).
+    started = [
+        e for e in firestore_store.audit_events.values()
+        if e.get("event_type") == "SYNAPSE_ACQUISITION_STARTED"
+        and e.get("need") == "a need nobody sticks around to see acquired"
+    ]
+    assert len(started) == 1
