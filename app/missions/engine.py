@@ -131,7 +131,24 @@ class MissionEngine:
 
             # Anything that is not EXECUTED stops the mission here.
             # Approval suspends it; refusal and blocking end it.
-            results.append({**record, "reason": outcome.get("reason")})
+            #
+            # BUG-007: a step whose tool raised a real exception (a bug
+            # in the capability's own code, not a `{"status": "ERROR"}`
+            # return value -- that case is handled above via
+            # _tool_error()) reaches execution_gate._execute_tool()'s
+            # exception handler, which reports the message under
+            # "error", not "reason". Reading only "reason" here silently
+            # dropped it -- a mission would report FAILED (honest, no
+            # fabricated success) but with `"reason": null`, even though
+            # the real exception text was sitting one key over the whole
+            # time. Found by actually raising a real exception inside a
+            # capability and reading the resulting step_results, the
+            # same way BUG-005's swallowed "reason"/"error" mismatch was
+            # found in the approval-resume path.
+            results.append({
+                **record,
+                "reason": outcome.get("reason") or outcome.get("error"),
+            })
 
             if status == "APPROVAL_REQUIRED":
                 return self._summary(

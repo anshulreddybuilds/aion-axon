@@ -7,6 +7,65 @@ P2 = reliability/usability/engineering issue, P3 = minor/polish.
 
 ---
 
+## BUG-007
+
+**SEVERITY:** P2
+**AREA:** Mission engine / error observability
+**FILE(S):** `app/missions/engine.py` (`MissionEngine.run`)
+**PROBLEM:** A capability whose Python function raises a REAL exception
+(a bug in its own code — e.g. an unhandled `TypeError`, as opposed to a
+capability that deliberately returns `{"status": "ERROR", "error":
+"..."}`) reaches `execution_gate._execute_tool()`'s exception handler,
+which reports the real message under the key `"error"`. But
+`mission_engine.run()`'s generic non-EXECUTED branch (the one that
+handles REFUSED/BLOCKED/FAILED/UNKNOWN statuses coming straight from the
+orchestrator, separate from the already-correct `_tool_error()` check
+for a tool's own `{"status":"ERROR"}` return value) read only
+`outcome.get("reason")` — so a real, specific exception message was
+silently replaced with `"reason": null` in the mission's own
+`step_results`, even though the exact same message was already sitting
+under `outcome["error"]` and correctly written to the `ACTION_FAILED`
+audit event in Firestore. The mission still honestly reported `FAILED`
+(never fabricated success) — only the diagnosis was invisible to anyone
+reading the mission object itself (`GET /missions/{id}`, the API's own
+summary) rather than digging through the audit log.
+**HOW DISCOVERED:** Following up on BUG-005's second half (a
+`"reason"`/`"error"` key mismatch in the approval-resume path), grepped
+every `.get("reason")` / `.get("error")` site across the whole codebase
+to look for the same class of bug elsewhere. Found this generic branch
+in the CORE mission engine, which is the first-execution path used by
+literally every mission, not just approval-gated ones — a wider blast
+radius than BUG-005's own fix. Reproduced by registering a capability
+that raises a real `TypeError` and running a one-step mission against
+it: `step_results[0]["reason"]` was `null` before the fix.
+**IMPACT:** Any capability bug that raises rather than returns an error
+dict — a real, plausible occurrence for a SYNAPSE-generated or hand-
+written capability alike — left the mission's own record of what
+happened with no diagnostic information, forcing anyone debugging it to
+separately query the audit log instead of just reading the mission.
+**STATUS:** FIXED
+**FIX:** Changed `results.append({**record, "reason":
+outcome.get("reason")})` to `outcome.get("reason") or
+outcome.get("error")` — reads whichever key the producing layer
+actually used. Safe by construction: when `"reason"` is already present
+(REFUSED, BLOCKED, and the existing APPROVAL_REQUIRED cases all already
+use it), the `or` short-circuits and nothing changes.
+**REGRESSION TEST:** `tests/test_step_honesty.py::
+test_a_step_whose_tool_raises_reports_the_real_exception_not_null`
+(registers a capability that raises a real `TypeError`, confirms the
+mission reports `FAILED` with the actual exception message present, not
+`null`).
+**VERIFICATION:** LOCAL VERIFIED — reproduced before the fix, confirmed
+fixed after, via direct `mission_engine.run()` invocation. Full backend
+suite: 552 passed (was 551), 2 skipped, no regressions.
+**COMMIT:** (pending, this pass)
+**REMAINING WORK:** None. Worth noting this fix also covers the
+`resume_planned()` continuation path for free — steps AFTER an approved
+one run through this exact same `mission_engine.run()` code, so no
+separate fix was needed there.
+
+---
+
 ## BUG-006
 
 **SEVERITY:** P2
