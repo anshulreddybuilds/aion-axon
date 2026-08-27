@@ -154,7 +154,14 @@ export default function App() {
       // was that no caller ever took the second step.
       if (approved && capability) {
         const installed = await api.install(capability);
-        if (installed?.status !== "INSTALLED") {
+        // BUG-010: ALREADY_INSTALLED is a real, safe, idempotent
+        // outcome -- exactly what the concurrency-safe install claim
+        // (BUG-003) exists to guarantee under a duplicate call (a
+        // network retry, or a second click before this button's own
+        // disabled state takes effect). Treating it the same as a real
+        // FAILED/APPROVAL_REQUIRED error would show a scary red banner
+        // for a capability that is, in fact, genuinely installed.
+        if (!["INSTALLED", "ALREADY_INSTALLED"].includes(installed?.status)) {
           // BUG-009: the same reason/error mismatch as BUG-008, found
           // here in the actual production UI -- synapse.install()'s
           // FAILED-status responses (unknown capability, no approval on

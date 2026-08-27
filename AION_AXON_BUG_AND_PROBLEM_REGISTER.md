@@ -7,6 +7,61 @@ P2 = reliability/usability/engineering issue, P3 = minor/polish.
 
 ---
 
+## BUG-010
+
+**SEVERITY:** P2
+**AREA:** Frontend — install-outcome classification (v1 `App.jsx`, v2
+`AppV2.jsx`, v4 `AppV4.jsx`)
+**FILE(S):** `web/src/App.jsx`, `web/src/v2/AppV2.jsx`,
+`web/src/v4/AppV4.jsx`
+**PROBLEM:** After approving an acquisition and calling `api.install()`,
+all three UI surfaces classified any status other than the literal
+string `"INSTALLED"` as a failure — including `"ALREADY_INSTALLED"`, a
+real, legitimate, SAFE status `synapse.install()` returns when the
+capability is genuinely already installed (the exact idempotency
+guarantee BUG-003's concurrency-safe `claim_install()` exists to
+provide). A double-click before a button's disabled state took effect,
+a client-side network retry after a request that actually succeeded
+server-side, or re-processing a stale `pending` approval row would all
+correctly and safely no-op on the backend, then show a scary red error
+banner on the frontend for an outcome that was, in fact, completely
+fine.
+**HOW DISCOVERED:** Continuing the state-machine idempotency audit this
+session's directives repeatedly called for ("install twice… any
+unexpected behavior must become a bug-register entry"). Checked every
+`installed?.status === "INSTALLED"` / `!== "INSTALLED"` comparison
+across the frontend against every real status `synapse.install()` can
+actually return (confirmed from `app/synapse/engine.py`:
+`INSTALLED`, `ALREADY_INSTALLED`, `FAILED`, `APPROVAL_REQUIRED`).
+`MissionTheater.jsx` (fixed for a related issue in BUG-009) was
+re-checked and found NOT to have this problem — it never applies an
+"error" classification to an install status, it just displays whatever
+status is literally present, so `ALREADY_INSTALLED` shows as an honest,
+neutral status line there already.
+**IMPACT:** A real, plausible demo-day UX failure: the owner (or a
+judge, if this were ever externally driven) double-clicking Approve, or
+a slow network causing a client-side retry, would see an alarming error
+for a mission that actually completed correctly.
+**STATUS:** FIXED
+**FIX:** Changed the classification from `status === "INSTALLED"` (or
+`!== "INSTALLED"`) to `["INSTALLED", "ALREADY_INSTALLED"].includes
+(status)` in `App.jsx` and `AppV2.jsx`. In `AppV4.jsx`, added a distinct
+third branch — `ALREADY_INSTALLED` gets its own honest message
+("already installed (version N) — nothing changed") rather than reusing
+`INSTALLED`'s message (which references `implemented_count`/
+`mission_resumed`, fields that don't exist on an `ALREADY_INSTALLED`
+response) or falling into the error branch.
+**REGRESSION TEST:** Verified directly against all four real backend
+statuses (`INSTALLED`, `ALREADY_INSTALLED`, `FAILED`,
+`APPROVAL_REQUIRED`) with a standalone Node check confirming the correct
+OK/error classification for each. `npm run build` confirmed clean.
+**VERIFICATION:** LOCAL VERIFIED (build clean, classification verified
+against all four real backend statuses). Not yet PRODUCTION VERIFIED.
+**COMMIT:** (pending, this pass)
+**REMAINING WORK:** None.
+
+---
+
 ## BUG-009
 
 **SEVERITY:** P2

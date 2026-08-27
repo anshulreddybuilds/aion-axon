@@ -363,15 +363,30 @@ export default function AppV4() {
           }
         }
 
-        setSendOutcome({
-          kind: installed?.status === "INSTALLED" ? "ok" : "error",
-          text:
-            installed?.status === "INSTALLED"
-              ? `INSTALLED ${capability} · registry now ${installed.implemented_count}` +
-                (installed.mission_resumed
-                  ? " · blocked mission resumed"
-                  : "")
-              : `Install did not complete: ${
+        // BUG-010: ALREADY_INSTALLED is a real, safe, idempotent outcome
+        // -- exactly what the concurrency-safe install claim (BUG-003)
+        // exists to guarantee under a duplicate call. It carries no
+        // implemented_count/mission_resumed (those only appear on a
+        // fresh INSTALLED response), so it needs its own honest message
+        // rather than reusing INSTALLED's text or falling into the
+        // error branch.
+        const outcomeStatus = installed?.status;
+        setSendOutcome(
+          outcomeStatus === "INSTALLED"
+            ? {
+                kind: "ok",
+                text:
+                  `INSTALLED ${capability} · registry now ${installed.implemented_count}` +
+                  (installed.mission_resumed ? " · blocked mission resumed" : ""),
+              }
+            : outcomeStatus === "ALREADY_INSTALLED"
+            ? {
+                kind: "ok",
+                text: `${capability} was already installed (version ${installed.version}) -- nothing changed.`,
+              }
+            : {
+                kind: "error",
+                text: `Install did not complete: ${
                   // BUG-008: every FAILED-status response synapse.install()
                   // actually returns (unknown capability, no approval on
                   // record, real Firestore contention) carries its message
@@ -382,7 +397,8 @@ export default function AppV4() {
                   // class as BUG-005/007, this time live in the UI.
                   installed?.reason || installed?.error || installed?.status || "unknown"
                 }`,
-        });
+              }
+        );
       } else if (!approved) {
         setSendOutcome({ kind: "blocked", text: `REJECTED ${capability || id}` });
       }

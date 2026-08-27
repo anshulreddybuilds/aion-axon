@@ -135,7 +135,9 @@ export default function AppV2() {
       // changed nothing. See the same fix in App.jsx and v4/AppV4.jsx.
       if (approved && capability) {
         const installed = await api.install(capability);
-        if (installed?.status !== "INSTALLED") {
+        // BUG-010: ALREADY_INSTALLED is a real, safe, idempotent
+        // outcome (see App.jsx), not an error -- do not show one for it.
+        if (!["INSTALLED", "ALREADY_INSTALLED"].includes(installed?.status)) {
           // BUG-009: same reason/error mismatch as App.jsx/AppV4.jsx --
           // synapse.install()'s FAILED responses carry their message
           // under "error", not "reason".
