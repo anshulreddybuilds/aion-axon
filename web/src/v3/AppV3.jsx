@@ -682,9 +682,9 @@ export default function AppV3() {
                     with no steps and no gap -- the shape of a quota
                     refusal -- would otherwise show a status word and
                     nothing else. */}
-                {liveResult.reason && (
+                {(liveResult.reason || liveResult.error) && (
                   <p className="text-red-300 break-all">
-                    reason · {liveResult.reason}
+                    reason · {liveResult.reason || liveResult.error}
                   </p>
                 )}
                 {(liveResult.step_results || []).map((s, i) => (

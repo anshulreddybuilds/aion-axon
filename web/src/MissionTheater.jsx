@@ -103,7 +103,18 @@ function ApprovalGate({ record, onDecided }) {
               <p className="text-muted">
                 {result.installResult?.status === "INSTALLED"
                   ? "INSTALLED → ACTIVE. Mission's original need is now satisfiable."
-                  : `Install: ${result.installResult?.status || result.installResult?.reason || "unknown"}`}
+                  : (() => {
+                      // `status` is checked first below and is always
+                      // present on a real response, so a bare
+                      // `status || reason` chain never reaches `reason`
+                      // -- and synapse.install()'s FAILED responses
+                      // carry their message under "error" anyway, not
+                      // "reason". Show both: the status, plus whatever
+                      // real diagnostic is present.
+                      const r = result.installResult;
+                      const detail = r?.reason || r?.error;
+                      return `Install: ${r?.status || "unknown"}${detail ? ` — ${detail}` : ""}`;
+                    })()}
               </p>
             </div>
           ) : (

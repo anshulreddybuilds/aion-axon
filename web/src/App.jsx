@@ -155,9 +155,15 @@ export default function App() {
       if (approved && capability) {
         const installed = await api.install(capability);
         if (installed?.status !== "INSTALLED") {
+          // BUG-009: the same reason/error mismatch as BUG-008, found
+          // here in the actual production UI -- synapse.install()'s
+          // FAILED-status responses (unknown capability, no approval on
+          // record, real Firestore contention) all carry their message
+          // under "error", never "reason". Reading only "reason" always
+          // fell through to the bare status word.
           setError(
             `Approved, but install did not complete: ${
-              installed?.reason || installed?.status || "unknown"
+              installed?.reason || installed?.error || installed?.status || "unknown"
             }`
           );
         }

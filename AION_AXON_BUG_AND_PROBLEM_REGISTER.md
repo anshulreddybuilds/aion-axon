@@ -7,6 +7,81 @@ P2 = reliability/usability/engineering issue, P3 = minor/polish.
 
 ---
 
+## BUG-009
+
+**SEVERITY:** P2
+**AREA:** Frontend — every UI surface (v1 `App.jsx`, v2 `AppV2.jsx`, v3
+`AppV3.jsx`, `MissionTheater.jsx`)
+**FILE(S):** `web/src/App.jsx`, `web/src/v2/AppV2.jsx`,
+`web/src/v3/AppV3.jsx`, `web/src/MissionTheater.jsx`
+**PROBLEM:** BUG-008 fixed one instance (`AppV4.jsx`) of the
+`"reason"`/`"error"` mismatch class in an install-failure display. A
+full sweep of every `.reason` read across the whole frontend (initially
+claimed complete for v2/v3 without actually checking — caught and
+corrected before finalizing, see below) found the IDENTICAL,
+independently-written bug in three more places, plus one differently-
+shaped variant:
+1. `App.jsx` (the actual production-deployed v1 "Holo-Deck" — more
+   consequential than `AppV4.jsx`, which is the richer dev surface):
+   `decide()`'s install-failure message read only `installed?.reason`.
+2. `AppV2.jsx`: identical `decide()` pattern, same bug.
+3. `AppV2.jsx` and `AppV3.jsx`, separately: the top-level mission-result
+   display (`result?.reason` / `liveResult.reason`) — a mission that
+   fails during PLANNING (e.g. a real Gemini quota refusal, the exact
+   scenario each file's own existing comment names) returns
+   `{"status": "FAILED", "error": ...}` from `mission_service
+   .start_planned()`, not `"reason"`. `AppV2.jsx` had a raw-JSON last-
+   resort fallback that technically surfaced the text illegibly; 
+   `AppV3.jsx` had no fallback at all and showed nothing.
+4. `MissionTheater.jsx` (used live by `App.jsx`): a differently-shaped
+   version of the same root problem — `result.installResult?.status ||
+   result.installResult?.reason` checks `status` FIRST, and `status` is
+   always present on a real response, so the `reason` branch was dead
+   code regardless of which key held the real message.
+**HOW DISCOVERED:** Systematic grep of every `.reason` read across
+`web/src/**/*.jsx`, cross-checked each against the real backend field
+name it consumes (established this session for every backend response
+shape involved: `synapse.install()`'s FAILED responses, `mission_service
+.start_planned()`'s planning-failure response, `AcquisitionRecord`,
+`ApprovalRequest`, `orchestrator.execute_tool()`'s gap dict, the memory/
+plan advisory responses). Every OTHER `.reason` read found in
+`Command.jsx`, `JudgeMode.jsx`, `missionStages.jsx`, `panels.jsx`, and
+the remaining reads in `MissionTheater.jsx` were individually checked
+and confirmed correct against their real backend shapes — not touched.
+**IMPACT:** The install-failure instances (1, 2, 4) hid the real
+diagnostic behind the bare word "FAILED" in every UI surface a user
+could actually be looking at, including the production one. The
+mission-level instances (3) hid the real reason for a planning-stage
+failure specifically — a real Gemini quota/auth error, plausible in
+production, would have shown nothing actionable in `AppV3.jsx` and an
+illegible raw JSON blob in `AppV2.jsx`.
+**STATUS:** FIXED
+**FIX:** `App.jsx`/`AppV2.jsx` (install case): added `installed?.error`
+to the fallback chain, matching BUG-008. `AppV2.jsx`/`AppV3.jsx`
+(mission case): check `result?.error` alongside `result?.reason`
+everywhere the mission-level failure is displayed, including the
+"nothing else matched" fallback condition in `AppV2.jsx`.
+`MissionTheater.jsx`: always show the real status, then append `reason`
+or `error` (whichever is present) as a suffix, instead of an
+either/or chain where `status` always wins.
+**REGRESSION TEST:** Verified directly against the real backend FAILED
+shapes with the same standalone Node check used for BUG-008 (install
+case, before/after). `npm run build` confirmed clean across all changed
+files.
+**VERIFICATION:** LOCAL VERIFIED (build clean, every changed line's
+logic verified against the real backend response shape it consumes).
+Not yet PRODUCTION VERIFIED (environment egress blocked, as with every
+frontend fix this session).
+**COMMIT:** (pending, this pass)
+**REMAINING WORK:** None. A note on process: an earlier draft of this
+entry claimed "v2/v3 were not found to contain an install-failure
+display at all" before that claim had actually been checked — caught
+via a fresh grep before finalizing, not published un-verified. Recorded
+here rather than silently corrected, per this project's own "never hide
+a near-miss" discipline.
+
+---
+
 ## BUG-008
 
 **SEVERITY:** P2
