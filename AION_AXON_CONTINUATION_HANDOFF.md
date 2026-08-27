@@ -10,6 +10,77 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 13 — deep integration audit: BUG-007 found via cross-codebase pattern search, HEAD 72ba993
+
+Directive: a "deep system integration + failure-recovery audit" asked
+for 22 phases of hunting (illegal state transitions, retry/idempotency,
+persistence/restart, prompt injection, data contracts, SSE recovery,
+resource leaks, config, test quality, dead code, performance). Rather
+than mechanically execute all 22 shallowly, this pass targeted the
+highest-signal technique the last two passes both proved out: follow
+the exact SHAPE of a bug already found to its other occurrences.
+
+**Illegal-transition spot checks (Phase 2)**, all confirmed SAFE, no
+bug: double-resume on `resume_planned()` after completion (the
+top-level persisted-status guard already catches it, independent of
+the in-memory `WorkflowState` bug BUG-005 fixed); resuming a mission
+whose approval was never actually decided (correctly stops at
+`APPROVAL_REQUIRED`, gated tool never runs); `resume_blocked()` on a
+non-BLOCKED mission (already covered by an existing test).
+
+**BUG-007 (P2, fixed) — found by generalizing BUG-005's own root
+cause.** BUG-005's second half was a `"reason"`/`"error"` key mismatch
+in the approval-resume path. Grepped every `.get("reason")`/
+`.get("error")` call site in the codebase looking for the same
+CLASS of bug elsewhere, and found it in `mission_engine.run()`'s core,
+first-execution per-step loop — used by literally every mission, not
+just approval-gated ones (a wider blast radius than BUG-005 itself). A
+capability whose Python function raises a real exception (a bug in its
+own code, distinct from a deliberate `{"status":"ERROR"}` return, which
+was already handled correctly via `_tool_error()`) is caught by
+`execution_gate._execute_tool()`'s exception handler and reported under
+`"error"` — but the mission engine's generic non-EXECUTED branch read
+only `"reason"`, silently replacing a real, specific exception message
+with `null` in the mission's own `step_results`, even though the exact
+same message was already correctly written to Firestore's
+`ACTION_FAILED` audit event. The mission still honestly reported
+`FAILED` (never fabricated success) — only the diagnosis was invisible
+to anyone reading the mission object itself rather than separately
+querying the audit log. Reproduced by registering a capability that
+raises a real `TypeError` and running a mission against it
+(`step_results[0]["reason"]` was `null` before the fix). Fixed by
+reading whichever key the producing layer actually used
+(`outcome.get("reason") or outcome.get("error")`) — safe by
+construction, since existing REFUSED/BLOCKED/APPROVAL_REQUIRED paths
+already use `"reason"` and the `or` short-circuits for them. This fix
+also covers `resume_planned()`'s post-approval continuation steps for
+free, since they run through this same `mission_engine.run()` code.
+
+Full backend suite: **552 passed** (was 551 at Update 12's HEAD), 2
+skipped, no regressions.
+
+**Phases not given a fresh, dedicated pass this round** (no new
+findings expected or produced, not because they were skipped
+carelessly): SSE reconnect/duplicate-connection behavior (already
+characterized honestly in BUG-004/Update 10 — a disconnect abandons the
+in-flight work, now observable via an audit event; nothing new to add
+without a much larger resumability redesign, which stays out of scope
+per this project's own "no unnecessary complexity" rule). Memory-leak/
+resource audit, performance profiling, and dead-code sweep (no evidence
+surfaced this pass that any of these are currently a problem; flagged
+here rather than claiming a clean audit that wasn't actually run
+end-to-end). Multi-user/owner isolation (Phase 6) — this system is
+architecturally single-owner (one bearer token = the owner; there is no
+per-user account model), so "User A vs User B" isolation doesn't apply
+as a distinct feature to test — the real analogue (an unauthenticated
+or wrong-token caller) is already covered extensively by
+`test_owner_auth.py`.
+
+**Notion**: not yet re-attempted at the point this entry was written.
+**NotebookLM**: still unavailable, unchanged.
+
+Current HEAD: `72ba993` — supersedes every hash below.
+
 ## Update 12 — full route-execution audit: all 46 API routes actually invoked, BUG-006 found and fixed, HEAD f276a95
 
 Directive: BUG-005 proved "a route exists and has a test file mention"
