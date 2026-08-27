@@ -112,3 +112,53 @@ def test_rehydration_never_raises_on_a_broken_store(monkeypatch):
 
     assert result["restored"] == []
     assert "firestore down" in result["error"]
+
+
+def test_a_rehydrated_capability_genuinely_executes_not_just_registers(
+    monkeypatch,
+):
+    """Every prior test here (and the original coverage this file
+    shipped with) only ever checked `registry.is_implemented(name)` --
+    which proves the name exists in the registry, not that CALLING it
+    actually works. That is exactly the class of gap that produced
+    BUG-005/006/007 elsewhere in this project: something that looks
+    wired up but was never actually invoked. Proven here by real-
+    executing the code the sandbox proxy would run (the technique this
+    session already established for testing acquisition end-to-end
+    without network access to the real sandbox service) and calling the
+    rehydrated function for real.
+    """
+    import contextlib
+    import io
+
+    import app.synapse.engine as engine_module
+
+    store()
+
+    def real_exec_sandbox(code, test="", timeout_seconds=10):
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                exec(code + "\n" + test, {})
+            return {
+                "status": "COMPLETED", "passed": True,
+                "stdout": buf.getvalue(), "stderr": "", "exit_code": 0,
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "status": "COMPLETED", "passed": False,
+                "stdout": buf.getvalue(), "stderr": str(exc), "exit_code": 1,
+            }
+
+    monkeypatch.setattr(engine_module, "execute_in_sandbox", real_exec_sandbox)
+
+    result = rehydrate_capabilities()
+    assert "restored_skill" in result["restored"]
+
+    tool = registry.get("restored_skill")
+    outcome = tool.function("21")
+
+    assert outcome == {"status": "SUCCESS", "value": 42.0}, (
+        f"rehydrated capability registered but did not actually execute "
+        f"correctly: {outcome}"
+    )
