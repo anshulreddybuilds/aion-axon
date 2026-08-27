@@ -32,6 +32,7 @@ BRIEF_CODE = (
 def clean():
     firestore_store.missions.clear()
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     firestore_store.approvals.clear()
     firestore_store.evolution_events.clear()
     # declare() deliberately never overwrites a real implementation, so an
@@ -42,6 +43,7 @@ def clean():
     yield
     firestore_store.missions.clear()
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     registry.unregister("write_brief")
     registry.declare("write_brief", "Writes an executive brief.", "LOW")
     registry.unregister("summarize_notes_v1")

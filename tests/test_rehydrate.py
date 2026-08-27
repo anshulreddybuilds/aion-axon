@@ -23,9 +23,11 @@ CODE = (
 @pytest.fixture(autouse=True)
 def clean():
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     registry.unregister("restored_skill")
     yield
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     registry.unregister("restored_skill")
 
 

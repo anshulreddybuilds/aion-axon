@@ -181,7 +181,24 @@ class MemoryFirestore:
         serializes this dict), but the explicit lock makes the atomicity
         a property of the code, not an accident of the interpreter."""
         with self._claim_lock:
-            if self.install_claims.get(name) == request_id:
+            # A real logic bug, not a theoretical edge case: comparing
+            # for EQUALITY with request_id only correctly rejects a
+            # replay of the SAME request_id. If `name` was already
+            # claimed under a DIFFERENT request_id -- a real, reachable
+            # scenario: propose() overwrites a capability's passport
+            # with a brand new approval_request_id on every re-propose
+            # (a retry, a double-click, a second attempt after a
+            # network timeout), so two different, both-legitimately-
+            # approved request_ids for the same capability `name` really
+            # can exist -- the old `== request_id` check fell through
+            # to the `else` branch below and re-claimed anyway, letting
+            # a SECOND real install proceed for a capability already
+            # claimed (and possibly already installed) under the first
+            # request_id. The actual invariant this method promises
+            # ("claim the right to install `name`") only holds if ANY
+            # existing claim blocks every other claimant, not just a
+            # non-matching one.
+            if name in self.install_claims:
                 return False
             self.install_claims[name] = request_id
             return True
@@ -571,9 +588,26 @@ class AxonFirestore:
         @firestore.transactional
         def _claim(transaction):
             snapshot = doc_ref.get(transaction=transaction)
-            data = snapshot.to_dict() or {}
 
-            if data.get("request_id") == request_id:
+            # A real logic bug, not a theoretical edge case: the
+            # equality check this replaced (`data.get("request_id") ==
+            # request_id`) only correctly rejected a replay of the SAME
+            # request_id -- if `name` was already claimed under a
+            # DIFFERENT request_id, that comparison is also false, so
+            # the old code fell through and re-claimed anyway. That is
+            # reachable for real: propose() overwrites a capability's
+            # passport with a brand new approval_request_id on every
+            # re-propose (a retry, a double-click, a second attempt
+            # after a network timeout), so two different, both-
+            # legitimately-approved request_ids for the same capability
+            # `name` really can exist, and each install() call re-reads
+            # whichever is CURRENT at that moment -- letting a second
+            # real install proceed for a capability already claimed
+            # (and possibly already installed) under the first. The
+            # actual invariant this method promises ("claim the right
+            # to install `name`") only holds if ANY existing claim
+            # blocks every other claimant, not just a non-matching one.
+            if snapshot.exists:
                 return False
 
             transaction.set(doc_ref, {

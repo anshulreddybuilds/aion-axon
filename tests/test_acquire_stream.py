@@ -47,6 +47,7 @@ BRIEF_CODE = (
 def clean():
     firestore_store.missions.clear()
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     firestore_store.approvals.clear()
     firestore_store.evolution_events.clear()
     # Un-implement write_brief so blocked_mission()'s step 2 is a genuine
@@ -65,6 +66,7 @@ def clean():
     yield
     firestore_store.missions.clear()
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     registry.unregister("write_brief")
     register_default_capabilities()
     propose_limiter.reset()

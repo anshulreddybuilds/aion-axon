@@ -23,9 +23,11 @@ from app.memory.firestore_store import firestore_store  # noqa: E402
 def clean():
     firestore_store.ground_truth.clear()
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     yield
     firestore_store.ground_truth.clear()
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
 
 
 def fx_fact():

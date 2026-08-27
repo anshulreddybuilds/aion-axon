@@ -32,11 +32,13 @@ def clean():
     # The registry is a module-level singleton, so an install in one test
     # leaks into the next unless it is removed.
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     firestore_store.approvals.clear()
     firestore_store.evolution_events.clear()
     registry.unregister("fx_normalize")
     yield
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     registry.unregister("fx_normalize")
 
 

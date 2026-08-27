@@ -34,11 +34,13 @@ from app.synapse.safety_screen import screen  # noqa: E402
 def clean():
     kill_switch.deactivate()
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     firestore_store.approvals.clear()
     registry.unregister("exfil")
     yield
     kill_switch.deactivate()
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     registry.unregister("exfil")
 
 

@@ -52,10 +52,12 @@ SAFE_CODE = (
 @pytest.fixture(autouse=True)
 def clean():
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     firestore_store.approvals.clear()
     firestore_store.evolution_events.clear()
     yield
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
 
 
 def candidate_for(name: str) -> Candidate:

@@ -257,3 +257,26 @@ def test_install_fails_honestly_when_claim_is_genuinely_contended():
     assert contended[0]["capability"] == name
 
     registry.unregister(name)
+
+
+def test_claim_install_rejects_a_different_request_id_even_when_the_first_claim_used_a_different_one():
+    """A real bug, not a theoretical edge case: propose() overwrites a
+    capability's passport with a brand new approval_request_id on every
+    re-propose (a retry, a double-click, a second attempt after a
+    network timeout), so two different, both-legitimately-approved
+    request_ids for the SAME capability name really can exist.
+    claim_install() must let only the FIRST one through, no matter which
+    specific request_id gets there first -- the old check compared for
+    equality with the CALLER's own request_id, which correctly rejected
+    a replay of the SAME request_id but incorrectly let a DIFFERENT one
+    fall through and re-claim (and proceed to a second real install of
+    the same capability name)."""
+    name = "claim_swap_test"
+
+    assert firestore_store.claim_install(name, "req-A") is True
+    # The exact bug this test exists to catch: a different request_id
+    # for the same capability name must also be rejected, not silently
+    # allowed to re-claim and win a second install.
+    assert firestore_store.claim_install(name, "req-B") is False
+    # The original claimant's own replay is still correctly idempotent.
+    assert firestore_store.claim_install(name, "req-A") is False
