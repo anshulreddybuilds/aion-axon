@@ -197,6 +197,41 @@ def test_stream_on_a_mission_that_is_not_blocked_is_a_real_error():
     assert "not BLOCKED" in data["error"]
 
 
+def test_stream_error_mid_pipeline_is_also_recorded_server_side(monkeypatch):
+    """Before this fix, a stage that raised mid-stream sent the client an
+    error event (the previous two tests) but left no server-side trace
+    at all -- the only way to debug it after the fact was to reproduce
+    it live. synapse.propose_stream() is replaced with a fake generator
+    that raises, matching exactly what the route's own except block is
+    designed to catch, regardless of which real internal fault would
+    normally produce it."""
+    mission_id = blocked_mission()
+
+    def raising_stream(need, mission_id=None):
+        if False:
+            yield  # pragma: no cover -- makes this a generator function
+        raise RuntimeError("simulated mid-stream failure")
+
+    from app.synapse.engine import synapse
+    monkeypatch.setattr(synapse, "propose_stream", raising_stream)
+
+    before = len(firestore_store.list_audit_events())
+    resp = owner.get(f"/missions/{mission_id}/acquire/stream")
+    events = parse_sse(resp.text)
+
+    assert len(events) == 1
+    event_type, data = events[0]
+    assert event_type == "error"
+    assert "simulated mid-stream failure" in data["error"]
+
+    audit_events = firestore_store.list_audit_events()
+    assert len(audit_events) == before + 1
+    recorded = audit_events[0]
+    assert recorded["event_type"] == "ACQUIRE_STREAM_ERROR"
+    assert recorded["mission_id"] == mission_id
+    assert "simulated mid-stream failure" in recorded["error"]
+
+
 def test_sync_and_streaming_acquire_derive_the_identical_need(monkeypatch):
     """Proves the shared _need_for_blocked_mission() helper actually
     keeps both routes in sync -- the exact regression a hand-duplicated

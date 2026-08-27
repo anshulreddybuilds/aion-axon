@@ -412,6 +412,15 @@ def acquire_for_mission_stream(mission_id: str) -> StreamingResponse:
             for record in synapse.propose_stream(need, mission_id):
                 yield _sse_event("stage", record.to_dict())
         except Exception as exc:  # noqa: BLE001 -- see synapse_propose_stream's comment
+            # The client sees this error event, but until now nothing
+            # server-side ever recorded it -- a stream failure had no
+            # audit trail to debug from afterward, unlike every other
+            # real failure in this codebase.
+            firestore_store.write_audit_event("ACQUIRE_STREAM_ERROR", {
+                "mission_id": mission_id,
+                "need": need,
+                "error": str(exc),
+            })
             yield _sse_event("error", {"error": str(exc)})
 
     return StreamingResponse(
@@ -738,6 +747,17 @@ def synapse_propose_stream(
             # honest error event. An SSE connection that just drops looks,
             # to the UI, identical to "still working" -- silently worse
             # than a visible failure.
+            #
+            # Also recorded server-side, not just sent to the client: the
+            # client-visible event was the only trace of this failure
+            # before, so debugging it after the fact meant reproducing it
+            # live -- unlike every other real failure in this codebase,
+            # which lands in the audit trail.
+            firestore_store.write_audit_event("SYNAPSE_STREAM_ERROR", {
+                "mission_id": mission_id,
+                "need": stripped,
+                "error": str(exc),
+            })
             yield _sse_event("error", {"error": str(exc)})
 
     return StreamingResponse(

@@ -249,6 +249,40 @@ def test_missing_need_rejected_with_422():
     assert resp.status_code == 422
 
 
+def test_stream_error_mid_pipeline_is_also_recorded_server_side(monkeypatch):
+    """Before this fix, a stage that raised mid-stream sent the client an
+    error event (proven by
+    test_synapse_stream's error-event coverage above) but left no
+    server-side trace at all -- the only way to debug it after the fact
+    was to reproduce it live. synapse.propose_stream() is replaced with
+    a fake generator that raises, matching exactly what the route's own
+    except block is designed to catch, regardless of which real internal
+    fault would normally produce it."""
+    def raising_stream(need, mission_id=None, allow_retry=False):
+        if False:
+            yield  # pragma: no cover -- makes this a generator function
+        raise RuntimeError("simulated mid-stream failure")
+
+    from app.synapse.engine import synapse
+    monkeypatch.setattr(synapse, "propose_stream", raising_stream)
+
+    before = len(firestore_store.list_audit_events())
+    resp = owner.get("/synapse/propose/stream", params={"need": "normalize currency"})
+    events = parse_sse(resp.text)
+
+    assert len(events) == 1
+    event_type, data = events[0]
+    assert event_type == "error"
+    assert "simulated mid-stream failure" in data["error"]
+
+    audit_events = firestore_store.list_audit_events()
+    assert len(audit_events) == before + 1
+    recorded = audit_events[0]
+    assert recorded["event_type"] == "SYNAPSE_STREAM_ERROR"
+    assert recorded["need"] == "normalize currency"
+    assert "simulated mid-stream failure" in recorded["error"]
+
+
 # --- propose() itself is unchanged by the refactor into a generator -----
 
 def test_propose_still_returns_the_same_final_record_after_the_stream_refactor(
