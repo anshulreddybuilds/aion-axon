@@ -66,7 +66,7 @@ emulator_engine.py`, which exercises the actual production code).
 VERIFIED (egress blocked from this environment; this is exactly the kind
 of fix that should be spot-checked against real Firestore once
 deployable).
-**COMMIT:** (pending, this pass)
+**COMMIT:** `b9e768b`
 **REMAINING WORK:** None functionally. Worth a note in the next
 production deploy that this path now emits an `INSTALL_CLAIM_CONTENDED`
 audit event type judges/owner may see for the first time under load.
@@ -101,7 +101,7 @@ regression test.
 Actions run from this sandbox (no push-triggered CI visibility tool here).
 Owner should confirm the next CI run on this branch shows both new jobs
 green.
-**COMMIT:** (pending, this pass)
+**COMMIT:** `b9e768b`
 **REMAINING WORK:** None — owner should watch the first real run.
 
 ---
@@ -191,7 +191,7 @@ capability document exists (never a stuck/orphaned partial one) AND that
 the new audit event recorded the attempt.
 **VERIFICATION:** LOCAL VERIFIED. Full backend suite re-run clean (545
 passed, 2 skipped, up from 544 — one new test, no regressions).
-**COMMIT:** (pending, this pass)
+**COMMIT:** `b9e768b`
 **REMAINING WORK:** None planned. If a future session decides mid-flight
 resumability (checkpointing a proposal so a reconnect can continue from
 where it left off, rather than restarting) is worth the real
