@@ -68,7 +68,7 @@ COMPLETED).
 **VERIFICATION:** LOCAL VERIFIED — 16/16 `graphExecutionState.test.mjs`
 tests pass, full backend suite unaffected (560 passed, 2 skipped), 9/9
 real-browser approve/reject checks pass. Not yet PRODUCTION VERIFIED.
-**COMMIT:** (recorded at push time below)
+**COMMIT:** `fd54235`
 **REMAINING WORK:** None.
 
 ---

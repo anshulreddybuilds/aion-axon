@@ -10,6 +10,124 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 20 — Day 2: BUG-011 (reason/error class in v5), real voice output, documented real-time boundary, full contract audit, HEAD fd54235
+
+Directive: a Day 2/3 execution command with an explicit priority order
+(P0 don't break governed execution; P1 finish voice→graph→execute; P2
+real-time graph execution; P3 contract audit; P4 UX hardening; P5
+tests/docs) and an explicit instruction to distinguish VERIFIED / NOT
+VERIFIED / ENVIRONMENT BLOCKED at every stage, never claim physical
+microphone verification, and never fabricate execution state.
+
+**P3 (contract audit) found a real bug, so it was fixed before anything
+else** — the audit's own point is to catch exactly this class before it
+ships. See **BUG-011** above for the full writeup: the `/v5` run panel
+showed bare status words (`FAILED`, `REFUSED`, `APPROVAL_REQUIRED`) with
+no reason, and a real human REJECTION was indistinguishable from "not
+yet decided" because `orchestrator.approve_and_resume()` maps both to
+the same `APPROVAL_REQUIRED` word. Fixed via two new pure, tested
+functions in `graphExecutionState.js` (`toneForMissionStatus`,
+`runOutcomeText`) plus capturing the real decision from `decide()`'s own
+response in `AppV5.jsx`'s `decideDirect()`. Also applied the BUG-008/010
+install-outcome check to `decideAcquisition()`, which previously did not
+check `api.install()`'s result at all — found proactively while auditing
+the same file, not from a report.
+
+**P1 (voice)**. The 17-point checklist was audited item by item against
+the existing `/v5` implementation (built Day 1): mic button, real
+transcript into an editable input, voice reusing the exact same
+`plannedMission()`/`planToGraph()` path as text, listening state,
+stop/cancel, empty-transcript non-submission, human-readable errors, and
+honest permission-denied handling (`speechRecognition.js`'s existing
+`not-allowed` → "Microphone blocked…" mapping, unchanged, already
+correct) were all already true from Day 1. The one real gap: voice
+OUTPUT was never wired into `/v5` at all — `AppV4.jsx` has it,
+`AppV5.jsx` didn't. Added a mute/unmute toggle (off by default, mirrors
+`AppV4.jsx`) that speaks the SAME `runOutcomeText()` sentence now shown
+on screen — never a separate scripted line — at every terminal point
+(`compileAndRun`, `planIt`, `decideDirect`, `decideAcquisition`).
+
+**P2 (real-time)**. Audited what the backend can actually stream: there
+is NO endpoint that reports per-step progress for a normal mission run
+— `mission_engine.run()` executes synchronously and returns one
+terminal/suspended summary. Per-node EXECUTING state during that call
+would have to be invented client-side, which the project's own rules
+explicitly forbid ("never fabricate node progress" / "do not manufacture
+execution states purely in React"). Implemented the smallest honest
+version instead, and documented the boundary in code, not just here:
+a single global "Planning the mission…" / "Running the mission…" banner
+covers the in-flight period for the main plan (no per-node fabrication),
+while the ONE sub-flow that IS genuinely real-time — capability
+acquisition, via the already-existing `GET /missions/{id}/acquire/
+stream` — now drives a live per-node override on the canvas: the exact
+node that BLOCKED shows the real current SYNAPSE stage (Guardian
+pre-screen / research / generate / sandbox / evaluate) as it actually
+streams in, via the same `describeStage()` `AppV4.jsx` already uses.
+
+**P4 (UX hardening)**. Audited the full checklist (node overlap,
+unreadable labels, impossible-to-select nodes, accidental connections,
+dangling edges, duplicate ids, invalid/empty/cyclic graph submission,
+capability-unavailable state, failed compilation, backend failure,
+approval-required state, blocked state, loading states, error messages,
+basic keyboard access to controls). Everything on the list was already
+correct from Day 1's own verification pass or is structurally impossible
+by construction (node ids are never user-editable, so duplicate ids
+can't occur from the UI even though the compiler still rejects them
+defensively; dangling edges are pruned automatically on node deletion).
+No changes made here beyond BUG-011 itself — per this pass's own rule
+("if something is already correct, do not modify it merely to create
+work"), nothing was touched that didn't need to be.
+
+**P5 (testing)** — the required user journeys, verified with real
+headless-browser runs against a live local backend
+(`AXON_FIRESTORE_MODE=memory`), not mocked:
+
+- **C. GRAPH EDIT → EXECUTE**: VERIFIED (Day 1's `graph_e2e.mjs`,
+  rerun clean this pass — 3-node dependency graph reaches COMPLETED
+  with the real computed answer 50).
+- **D. GRAPH → BLOCKED → ACQUISITION**: VERIFIED (Day 1's
+  `graph_e2e_gap.mjs`, rerun clean — a real live acquisition trace
+  renders as it streams).
+- **E. GRAPH → APPROVAL → RESUME**: VERIFIED, new this pass
+  (`graph_e2e_approval.mjs`, 9/9 checks) — a real MEDIUM-risk direct
+  approval gate, both APPROVE (reaches COMPLETED with the real computed
+  answer 2) and REJECT (shows the honest rejection sentence, approval
+  panel correctly clears, never fabricates COMPLETED) paths proven.
+  This is also BUG-011's own regression proof.
+- **A. TEXT → GRAPH → EXECUTE** and **B. VOICE → GRAPH → EXECUTE**:
+  PARTIALLY VERIFIED / ENVIRONMENT BLOCKED for the "a real plan
+  populates real graph nodes" leg specifically — this sandbox has no
+  real `GOOGLE_API_KEY` (session-scoped in the owner's own shell per
+  CLAUDE.md, not available here), so the planner's real Gemini call
+  fails with a real `400 INVALID_ARGUMENT` "API key not valid" error.
+  Everything else in the journey IS genuinely verified: for B
+  specifically (`graph_e2e_voice.mjs`, 8/8 checks), a SIMULATED (no
+  physical microphone — not claimed) `SpeechRecognition` implementation,
+  injected before page load exactly like `speechRecognition.test.mjs`'s
+  existing unit-level pattern, delivers a real transcript into the
+  editable Plan-it input; the transcript is verified editable; an empty
+  transcript is verified to leave "Plan it" disabled (never
+  auto-submits); clicking "Plan it" is verified via the actual captured
+  network request to call the real `POST /missions/planned` carrying
+  the real transcript text verbatim; and the real (failed, in this
+  key-less environment) response is verified to render honestly with
+  zero fabricated graph nodes — the exact "handle it honestly either
+  way" property this pass required. **A real key would need to be
+  supplied to see this journey's full graph-population leg complete
+  end to end; that specific leg is NOT VERIFIED here, and is not
+  claimed as verified.**
+
+`npm run build` clean. All pre-existing `*.test.mjs` files remain green;
+`graphExecutionState.test.mjs` grew from 6 to 16 tests (10 new, covering
+`toneForMissionStatus`/`runOutcomeText`'s full status matrix). Backend
+suite unaffected by this frontend-only commit: still 560 passed, 2
+skipped.
+
+**Notion**: not attempted this pass — still blocked (see Update 18/19).
+**NotebookLM**: still unavailable.
+
+Current HEAD: `fd54235` — supersedes every hash below.
+
 ## Update 19 — Graphical Mission Builder, Day 1: backend compiler entry point + visual canvas (v5), HEAD 6f33f86
 
 **Scope authorization**: the owner explicitly authorized a major scope
