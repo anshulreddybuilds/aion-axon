@@ -225,10 +225,42 @@ export const api = {
 
   mission: (id) => request(`/missions/${id}`),
 
+  // The graphical mission builder's entry point. `plan` is a
+  // MissionPlan built by graphCompiler.js's compileGraphToPlan() --
+  // the exact same schema plannedMission() gets from the Gemini
+  // planner, just authored on a canvas instead of free text. See
+  // POST /missions/from-graph (app/api.py) and MissionService
+  // .start_from_plan() (app/missions/service.py): there is no second
+  // execution engine, only a second way to produce the same plan.
+  missionFromGraph: (plan) =>
+    request("/missions/from-graph", {
+      method: "POST",
+      body: JSON.stringify(plan),
+    }),
+
   acquire: (missionId) =>
     request(`/missions/${missionId}/acquire`, {
       method: "POST",
       body: JSON.stringify({}),
+    }),
+
+  // Continue a graph (or planner) mission past a direct MEDIUM/HIGH-risk
+  // approval gate -- decide() only records the human's decision;
+  // resume-planned re-reads it and runs the rest of the plan. Distinct
+  // from install()'s auto-resume, which only fires for a BLOCKED
+  // capability-gap acquisition, not a plain approval-required step.
+  resumePlanned: (missionId) =>
+    request(`/missions/${missionId}/resume-planned`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
+  // Continue a mission that BLOCKED on a missing capability, optionally
+  // naming the capability that was just installed for that gap.
+  resumeBlocked: (missionId, capabilityName) =>
+    request(`/missions/${missionId}/resume-blocked`, {
+      method: "POST",
+      body: JSON.stringify({ capability_name: capabilityName || null }),
     }),
 
   install: (capability) =>
