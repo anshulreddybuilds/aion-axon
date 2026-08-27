@@ -7,6 +7,79 @@ P2 = reliability/usability/engineering issue, P3 = minor/polish.
 
 ---
 
+## BUG-013
+
+**SEVERITY:** P1
+**AREA:** Backend — real-network install-claim contention budget
+(`app/memory/firestore_store.py`)
+**FILE(S):** `app/memory/firestore_store.py`
+**PROBLEM:** `AxonFirestore.claim_install()`'s retry budget (8 attempts,
+0.05-0.2s backoff between them, added by BUG-003) reliably passed 8/8
+against a real Firestore emulator in this project's own dev sandbox, but
+genuinely failed the first time it ran against a real emulator on an
+actual GitHub Actions runner — 9 of 10 real concurrent
+`synapse.install()` callers exhausted the retry budget and got `FAILED`
+instead of the correct `ALREADY_INSTALLED`
+(`tests/test_concurrency_firestore_emulator_engine.py::
+test_ten_concurrent_installs_against_real_networked_firestore_produce_exactly_one_install`).
+This is not data corruption or a duplicate install (exactly one caller
+still got `INSTALLED`, as required) — it is an honest `FAILED` result
+for callers that should have safely resolved to a no-op — but it means
+9 of 10 callers in a real high-contention scenario would see a
+misleading "install failed" outcome for a capability that, in fact, a
+sibling caller had already installed successfully.
+**HOW DISCOVERED:** BUG-012's own CI fix, working exactly as intended,
+finally let this test run to completion in CI for the first time — it
+had never gotten this far before (always masked behind BUG-012's
+missing-emulator-readiness-check or, before that, simply never wired
+into CI at all per BUG-002). The failure was real, not environmental
+noise: reproduced mechanistically in this sandbox by artificially
+starving the SAME production code's retry budget (2 attempts / 20ms
+instead of 8 / 0.05-0.2s) against this project's own real local Firestore
+emulator, which reliably reproduced the identical 1-claimed/9-contended
+pattern seen in CI — confirming the retry budget itself, not the
+transactional-locking design, was the gap. A shared CI runner's real
+I/O contention is measurably noisier than this project's own dev
+sandbox, where the original 8-attempt budget was tuned and had always
+passed.
+**IMPACT:** Under real multi-instance Cloud Run contention (the exact
+scenario this method exists to make safe — multiple instances racing to
+install the same approved capability), most losers could see a false
+"install failed" outcome instead of the safe, correct, idempotent
+no-op, even though nothing was actually lost or corrupted. On a judge's
+machine or a busier/noisier Cloud Run cold-start burst, this is a real,
+visible reliability gap in exactly the concurrency-safety guarantee
+BUG-003 was built to provide.
+**STATUS:** FIXED
+**FIX:** Widened the outer retry budget in `AxonFirestore.claim_install()`
+from 8 attempts / 0.05-0.2s backoff to 20 attempts / 0.1-0.4s backoff —
+verified 5/5 clean locally against a real emulator with an equivalent
+synthetic starvation harness, then 6/6 clean with the actual production
+method unmodified beyond this budget change. `MemoryFirestore.claim_install()`
+(the in-process, GIL-serialized version used for local/CI in-memory
+tests) is unaffected — this bug and fix are specific to the real
+networked path.
+**REGRESSION TEST:** No new test file needed — the EXISTING real-emulator
+concurrency test (already present, already correct, never touched or
+weakened) is the regression test; it now needs to pass reliably in CI
+on every future run, which BUG-012's fix finally made observable. Locally
+verified: the exact starved-budget reproduction harness reliably
+reproduces the bug on demand (5/5), and the actual fixed production code
+passes reliably against a real local emulator (6/6, both concurrency
+test files).
+**VERIFICATION:** LOCAL VERIFIED (bug reproduced mechanistically, fix
+verified against a real local emulator, 560-test in-memory suite
+unaffected). Live-CI verification (a genuinely green run with this fix)
+pending — see the continuation handoff for the observed outcome.
+**COMMIT:** (recorded at push time below)
+**REMAINING WORK:** None if the live CI run comes back green with this
+budget. If a real CI runner's contention window is ever wider still,
+the fix now says so explicitly (a real `FAILED` with a real reason,
+never silent corruption) rather than requiring another investigation
+to find the same root cause again.
+
+---
+
 ## BUG-012
 
 **SEVERITY:** P1

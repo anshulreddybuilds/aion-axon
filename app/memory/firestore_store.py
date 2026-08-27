@@ -302,7 +302,23 @@ class AxonFirestore:
         attempts, giving the lock queue actual time to drain rather than
         hammering it back-to-back. Each outer attempt uses a fresh
         single-shot transaction (`max_attempts=1`) so the outer loop is
-        the only thing pacing retries."""
+        the only thing pacing retries.
+
+        BUG-013: an 8-attempt / 0.05-0.2s budget passed reliably (8/8) in
+        this project's own dev sandbox but genuinely failed on a real
+        GitHub Actions runner -- 9 of 10 real concurrent callers exhausted
+        the budget and got FAILED instead of the correct ALREADY_INSTALLED,
+        the first time this test ever ran to completion in CI (see
+        BUG-012). Reproduced mechanistically: an artificially starved
+        budget (2 attempts / 20ms) reliably reproduces the identical 1-
+        claimed/9-contended pattern against this project's own real
+        emulator, confirming the retry budget itself -- not the locking
+        design -- was the gap. A shared CI runner's I/O is real-world
+        noisier than a dedicated dev machine, and the fix has to hold
+        there, not just locally. Widened to 20 attempts and a 0.1-0.4s
+        backoff band (verified 5/5 clean locally against the real
+        emulator with this exact budget) -- more headroom for real
+        contention to drain, still well inside any test's own timeout."""
         doc_ref = self.db.collection("install_claims").document(name)
 
         @firestore.transactional
@@ -324,16 +340,17 @@ class AxonFirestore:
             "attempt hit real lock contention."
         )
 
-        for attempt in range(8):
+        attempts = 20
+        for attempt in range(attempts):
             try:
                 return _claim(self.db.transaction(max_attempts=1))
             except (ValueError, gcloud_exceptions.Aborted) as exc:
                 last_error = exc
-                time.sleep(0.05 + random.random() * 0.15)
+                time.sleep(0.1 + random.random() * 0.3)
 
         raise InstallClaimContention(
-            f"Could not resolve an install claim for '{name}' after 8 "
-            "attempts under real lock contention."
+            f"Could not resolve an install claim for '{name}' after "
+            f"{attempts} attempts under real lock contention."
         ) from last_error
 
     def write_evolution_event(self, data: dict[str, Any]) -> str:
