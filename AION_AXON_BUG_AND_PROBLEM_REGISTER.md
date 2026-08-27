@@ -67,16 +67,13 @@ verified: the exact starved-budget reproduction harness reliably
 reproduces the bug on demand (5/5), and the actual fixed production code
 passes reliably against a real local emulator (6/6, both concurrency
 test files).
-**VERIFICATION:** LOCAL VERIFIED (bug reproduced mechanistically, fix
-verified against a real local emulator, 560-test in-memory suite
-unaffected). Live-CI verification (a genuinely green run with this fix)
-pending — see the continuation handoff for the observed outcome.
-**COMMIT:** (recorded at push time below)
-**REMAINING WORK:** None if the live CI run comes back green with this
-budget. If a real CI runner's contention window is ever wider still,
-the fix now says so explicitly (a real `FAILED` with a real reason,
-never silent corruption) rather than requiring another investigation
-to find the same root cause again.
+**VERIFICATION:** LIVE CI VERIFIED — run #185
+(https://github.com/anshulreddybuilds/aion-axon/actions/runs/33051465314),
+commit `947352e`, completed **SUCCESS**, both jobs green, every step
+green, `Run Firestore-emulator concurrency tests` passed in 6s. The
+first genuinely green CI run this branch has ever had.
+**COMMIT:** `947352e`
+**REMAINING WORK:** None — closed and confirmed live.
 
 ---
 
@@ -172,17 +169,16 @@ before pushing Round 2: installed `firebase-tools` in one directory,
 started the emulator from a different directory using the exact fixed
 script's logic (absolute binary path + firebase.json + firestore.rules
 + the readiness loop), and confirmed it was detected alive in 4s.
-**VERIFICATION:** LOCAL VERIFIED (both bugs reproduced directly, both
-fixes verified directly, YAML syntax validated). Live-CI verification
-(a genuinely green GitHub Actions run) pending on Round 2's push — see
-the continuation handoff for the observed outcome.
-**COMMIT:** (recorded at push time below)
-**REMAINING WORK:** None if the live CI run comes back green; if the
-120s ceiling is still insufficient on a truly cold runner even with the
-cache miss on its very first run, the fix will now say so explicitly
-via the `::error::` message and the real emulator log, rather than
-requiring another multi-day investigation to find the same root cause
-again.
+**VERIFICATION:** LIVE CI VERIFIED — run #185
+(https://github.com/anshulreddybuilds/aion-axon/actions/runs/33051465314),
+commit `947352e` (the next commit on this branch after Round 2),
+completed **SUCCESS** with `Start Firestore emulator` green in 26s
+(cache hit) and the concurrency step itself green — proving both this
+fix and Round 1's readiness check genuinely hold end to end.
+**COMMIT:** `fd4f802` (Round 2)
+**REMAINING WORK:** None — closed and confirmed live. (This exact fix
+immediately surfaced the next real thing, filed separately as
+BUG-013 — see below.)
 
 ---
 

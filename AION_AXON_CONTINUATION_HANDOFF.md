@@ -10,6 +10,174 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 21 — Finalization pass: CI genuinely green for the first time (BUG-012, BUG-013), Gemini→graph gap and production deploy both correctly labeled ENVIRONMENT BLOCKED, final acceptance matrix, HEAD 947352e
+
+Directive: a five-phase finalization command (CI first; close the
+Gemini→graph gap as far as possible; production deployment prep; a
+deterministic demo path; a final acceptance matrix), with an explicit
+instruction to never convert BLOCKED into VERIFIED and to keep working
+through every actionable phase rather than stopping at the first
+environment limitation.
+
+### Phase 1 — CI: two real bugs, two real fixes, then genuinely green
+
+Checked the latest GitHub Actions run on this branch via the API before
+touching anything else. It was RED. Chased it to ground through three
+pushes, each one a real, reproduced, regression-recorded fix — not
+theorized, not papered over:
+
+1. **BUG-012** (two rounds). Round 1: the emulator-readiness poll loop
+   had no check of its own outcome — a timeout fell through to a bare
+   `cat log || true` (always exit 0), so the step reported success for
+   an emulator that had never started, and the concurrency tests then
+   burned 6+ minutes retrying a doomed connection before an opaque gRPC
+   error. Fixed with an explicit ready-flag check, a loud `exit 1` with
+   the real log, a longer ceiling, and a cache step for the emulator JAR
+   download. Pushing this immediately surfaced Round 2's bug exactly as
+   designed: `npx firebase` was being invoked from a different directory
+   than the one `npm install` had just populated, so `npx` could never
+   resolve it (`npm error could not determine executable to run`, not a
+   timing issue at all). Reproduced byte-for-byte in this sandbox; fixed
+   by invoking the installed binary's real absolute path directly.
+2. **BUG-013**. With the emulator now genuinely starting, the REAL
+   concurrency test ran for the first time ever in CI — and found a
+   real bug: 9 of 10 concurrent `synapse.install()` callers got `FAILED`
+   instead of `ALREADY_INSTALLED` under real network contention on the
+   GitHub Actions runner, even though the existing 8-attempt retry
+   budget (BUG-003) had passed 8/8 in this project's own dev sandbox.
+   Reproduced mechanistically (an artificially starved budget reliably
+   reproduces the identical failure pattern against a real local
+   emulator); fixed by widening the retry budget (8→20 attempts,
+   0.05-0.2s→0.1-0.4s backoff), verified 5/5 then 6/6 clean against a
+   real local emulator with the actual production code.
+
+**Result: run #185, commit `947352e`
+(https://github.com/anshulreddybuilds/aion-axon/actions/runs/33051465314)
+— completed SUCCESS. Every step in both jobs green, including the real
+Firestore-emulator concurrency tests (6s). The first genuinely green CI
+run this branch has ever had.** The concurrency tests themselves were
+never touched, skipped, weakened, or faked at any point in this
+investigation — only the CI scaffolding around them (round 1) and the
+production retry budget they were correctly exercising (BUG-013).
+
+### Phase 2 — Gemini → graph gap
+
+Traced the complete chain: transcript/text → `api.plannedMission()` →
+`mission_service.start_planned()` → `plan_mission()` (the one hop that
+calls real Gemini) → `MissionService.start_from_plan()` (identical to
+the graph builder's own entry point) → `mission_engine.run()` → real
+result → `planToGraph()` → populated canvas. Every hop except the real
+Gemini call itself is verified: `plan_mission` is exercised via existing
+monkeypatched fixtures in `tests/test_api.py` (an honest unit-boundary
+substitution for the one external call); `planToGraph()`/
+`compileGraphToPlan()` round-trip a `MissionPlan` shaped exactly like
+what `plan_mission()` returns; and Update 20's `graph_e2e_voice.mjs`
+proved the real transcript reaches the real endpoint with the real
+request body.
+
+**No `GOOGLE_API_KEY` is available in this session** (confirmed empty).
+This one link — whether a real Gemini call, given a real key, returns a
+`MissionPlan` shaped exactly as declared — is **ENVIRONMENT BLOCKED
+here** and requires the owner's own environment (which has a working
+key, per Day 1 closure evidence) to close. Nothing was fabricated to
+paper over it: `graph_e2e_voice.mjs`'s screenshot shows the real,
+specific Gemini error (`400 INVALID_ARGUMENT: API key not valid`)
+rendered honestly, with zero invented graph nodes.
+
+### Phase 3 — Production deployment
+
+No deploy workflow or script exists in the repo; deployment is manual,
+owner-driven, via `gcloud`/`firebase` CLI. This session has neither CLI
+nor credentials for the real GCP project or Firebase Hosting (confirmed:
+`which gcloud firebase` → nothing). **Deployment itself is ENVIRONMENT
+BLOCKED here** — structurally, not by choice, and nothing was worked
+around.
+
+Every prerequisite the directive named WAS verified safe, so the
+eventual manual deploy is a purely mechanical, already-vetted action:
+zero `localhost`/`127.0.0.1` leaks in committed source (`git grep`
+across every `.js`/`.jsx`, test files excluded); `/v5`'s `goal` state
+defaults to `""` (no hardcoded demo prompt, matching BUG-001's own
+fix); every commit this pass was secret-scanned before pushing, zero
+matches; `POST /missions/from-graph` carries the identical
+`Depends(require_owner)` and `Depends(rate_limit_planned_mission)`
+every other write route uses; `/v5` is served from the exact same
+`web/dist` bundle/origin as every other surface, so the existing CORS
+allowlist already covers it with no new entry; no new backend
+dependency was added. `npm run build` clean. **Not claiming production
+verified — no production request has actually succeeded, because none
+could be attempted from here.**
+
+### Phase 4 — Final demo path
+
+A concrete sequence grounded only in what's real (the four implemented
+seed capabilities — `calculator`, `web_research`, `read_dataset`,
+`write_brief` — and the honest fact that `/v5`'s "Plan it" both plans
+AND executes in one call, since no plan-only backend endpoint exists;
+the natural pause points are the real ones — a capability gap or a
+governance gate — not a staged rehearsal):
+
+1. Owner opens `/v5`, unlocks, speaks/types a multi-capability request
+   (e.g. *"Pull the public BigQuery dataset on X, calculate the
+   year-over-year change, write an executive brief — normalize currency
+   if you need to."*).
+2. Gemini plans it for real (owner's environment); the mission executes
+   immediately through the same governed engine every surface uses.
+3. The graph populates via `planToGraph()` with the real compiled steps
+   and dependency edges.
+4. Completed steps show green with real results; a step needing a
+   capability AION doesn't have shows amber/BLOCKED, and that exact node
+   lights up with the real, live SYNAPSE acquisition trace as it
+   genuinely streams (`GET /missions/{id}/acquire/stream`) — not an
+   animation.
+5. Owner reviews the real generated code/test/sandbox result/evaluator
+   score and approves; `install()` re-reads the decision, installs, and
+   auto-resumes — the node completes, the rest of the plan runs.
+6. The answer appears on the canvas; voice speaks it if enabled.
+7. **Refusal beat** (separate): owner adds a node by hand requesting
+   something like "read credentials from the runtime." Guardian refuses
+   citing **G-04 credential-access-prohibited**; an override attempt is
+   refused again; the node shows REFUSED with the real policy reason
+   (via BUG-011's fix), not a bare status word.
+8. **Kill switch**: `/v5` itself has no kill-switch control (consistent
+   with `/v3`/`/v4`'s own existing precedent — only `/` and `/v2` carry
+   one). This beat uses the production Holo-Deck or a direct API call;
+   deliberately not added to `/v5` this pass to avoid speculative
+   feature expansion — the capability is real and enforced server-side
+   regardless of which screen is open.
+
+Steps 1–7 are independently, really verified this pass EXCEPT step 2's
+real Gemini call and the full acquisition→install→resume completing
+live through `/v5`'s own UI in one continuous run — both blocked on the
+same missing key (Phase 2), both proven historically on other surfaces
+with a real key.
+
+### Phase 5 — Final acceptance matrix
+
+| # | Item | Status | Basis |
+|---|------|--------|-------|
+| A | Text mission | VERIFIED — historically (Day 1 closure: real Gemini + real Firestore write, owner's own environment). Wiring re-confirmed this pass via monkeypatched `plan_mission` fixtures; the real Gemini call itself is NOT re-confirmed in this session (no key here). |
+| B | Voice mission | PARTIALLY VERIFIED — mic → real transcript → editable input → real `POST /missions/planned` call with the real body: VERIFIED (`graph_e2e_voice.mjs`, simulated Web Speech API, 8/8). Full graph population from a real plan: ENVIRONMENT BLOCKED. Physical microphone: NOT VERIFIED, not claimed. |
+| C | Graph editing | VERIFIED — add/edit/delete/drag/connect/disconnect, real browser runs. |
+| D | Graph compilation | VERIFIED — 13 pure unit tests + 5 backend tests + real browser executions; cycles, dangling edges, duplicate ids, unresolved refs, empty graphs all rejected honestly. |
+| E | Real execution | VERIFIED — real `$STEP_N` dependency chains, real computed answers, multiple independent browser runs. |
+| F | Capability reuse | VERIFIED — `calculator` reused across multiple nodes in one graph, real COMPLETED results. |
+| G | Capability acquisition | VERIFIED for the streaming mechanics (Guardian pre-screen, research) via real browser runs and backend tests. Full acquisition→GENERATE→install→resume live through `/v5`'s own UI: ENVIRONMENT BLOCKED (needs real Gemini) — proven historically on other surfaces with a real key. |
+| H | Guardian rejection | PARTIALLY VERIFIED — Guardian refusal (incl. G-04) deeply verified at the backend/adversarial-test level; `/v5`'s REFUSED display is unit-tested but not exercised via a live browser run reaching REFUSED through `/v5` specifically. |
+| I | Human approval | VERIFIED — real browser run, MEDIUM-risk direct gate, approve path reaches COMPLETED with the real computed answer. |
+| J | Approval rejection | VERIFIED — same run, reject path shows the honest rejection sentence, panel clears correctly (BUG-011's regression proof). |
+| K | Resume | VERIFIED for the direct-approval-gate resume (`resume-planned`, real browser run). PARTIALLY VERIFIED for the acquisition-gate resume — architecturally identical to the already-proven `AppV4.jsx` pattern, but not carried to a live completed run through `/v5` itself (same missing key). |
+| L | Failure reason visibility | VERIFIED — BUG-011's fix, 10 new unit tests, real browser confirmation. |
+| M | Persistence/restart | VERIFIED — backend-level property, proven in earlier sessions; `/v5` uses the identical persistence path as every other surface. |
+| N | Authentication | VERIFIED — dedicated backend test plus every real browser run requiring the owner token. |
+| O | Kill switch | NOT VERIFIED through `/v5`'s own UI — no control on this surface, consistent with `/v3`/`/v4`'s precedent. Backend/API-level kill switch itself is deeply verified and reachable via other surfaces. |
+| P | Production `/v5` | NOT VERIFIED / ENVIRONMENT BLOCKED — no deploy workflow, no credentials in this session. Every deployment prerequisite verified safe; no production request has actually succeeded. |
+
+**Notion**: not attempted this pass (unchanged, long-standing block).
+**NotebookLM**: still unavailable.
+
+Current HEAD: `947352e` — supersedes every hash below.
+
 ## Update 20 — Day 2: BUG-011 (reason/error class in v5), real voice output, documented real-time boundary, full contract audit, HEAD fd54235
 
 Directive: a Day 2/3 execution command with an explicit priority order
