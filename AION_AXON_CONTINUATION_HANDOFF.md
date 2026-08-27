@@ -10,6 +10,53 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 15 — defense-in-depth confirmed (Guardian + AST screen independent), no new bug found this pass, HEAD 8b3dc29
+
+Directive: a "final completion" master prompt asked to keep sweeping for
+the same bug classes found before (reason/error mismatches, state
+mismatches, governance bypasses, etc.) across the whole system.
+
+Given the last two focused passes (Update 14's Batches A and B) both
+came back with zero new bugs despite genuine adversarial effort, this
+pass targeted one more concrete, previously-untested property: whether
+Guardian's text-based pre-screen and the AST safety screen are
+GENUINELY independent layers, not just each independently proven
+correct in isolation. Built a real end-to-end case: a completely
+benign-sounding acquisition need ("format a list of filenames into a
+readable report" — nothing for Guardian's text-based pre-screen to
+object to) paired with a mocked `generate_candidate` that returns
+genuinely malicious code (`import os; os.system(...)` reading
+`AXON_OWNER_TOKEN`). Ran it through the real `propose_stream()`
+pipeline. Result: Guardian's pre-screen correctly let the (harmless-
+sounding) need through, and the AST safety screen independently caught
+and rejected the malicious code before the pipeline ever reached the
+sandbox or an approval request. Confirmed real defense-in-depth, not a
+single point of failure — no bug found, but this exact end-to-end
+combination had no prior test (every existing malicious-code test
+called `screen()` directly, proving the AST layer alone, never paired
+with a benign NEED through the real pipeline). Added as a permanent
+regression test.
+
+Full backend suite: 555 passed (was 554), 2 skipped, no regressions.
+
+**Pattern worth naming explicitly for whoever continues this**: this
+session has now run five consecutive dedicated audit passes (BUG-005
+discovery, BUG-006 discovery, BUG-007 discovery, then Batches A/B, then
+this security pass). The first three each found a real, distinct,
+previously-invisible bug. The last two found zero new bugs despite
+comparable rigor (real reproduction attempts, real adversarial cases,
+not just re-reading code). That shift is itself real signal, not a sign
+the audits got lazier — the highest-density bug class (state
+mismatches, reason/error swallowing, thin-route wiring gaps) appears to
+be substantially exhausted in the areas reachable from this sandbox.
+What remains genuinely unaudited is listed honestly in the in-
+conversation final report this update accompanies, not glossed over.
+
+**Notion**: attempted again this pass; see the in-conversation report
+for the exact outcome. **NotebookLM**: still unavailable.
+
+Current HEAD: `8b3dc29` — supersedes every hash below.
+
 ## Update 14 — full-completion audit, Batches A & B: persistence/restart and capability-lifecycle governance both confirmed sound, HEAD 22af879
 
 Directive: a "full functional completion" master prompt asked for three
