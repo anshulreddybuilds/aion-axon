@@ -10,6 +10,65 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 14 — full-completion audit, Batches A & B: persistence/restart and capability-lifecycle governance both confirmed sound, HEAD 22af879
+
+Directive: a "full functional completion" master prompt asked for three
+batches (A: architecture/state-machine/persistence; B: planner/
+composition/capability-lifecycle/SYNAPSE/governance; C: frontend/voice/
+SSE/contracts/security/CI). This update covers real work on A and B,
+plus one concrete confirmation from C; it does NOT claim C got the same
+exhaustive depth — stated honestly rather than padded.
+
+**Batch A — persistence/restart, real finding: the architecture is
+already sound, closed one real coverage gap.** Every existing
+rehydration test (`tests/test_rehydrate.py`) checked
+`registry.is_implemented(name)` after `rehydrate_capabilities()` — which
+proves the name exists, not that CALLING it works (the exact class of
+gap behind BUG-005/006/007). Verified for real: simulated a restart
+(registry has no memory of a capability Firestore records as READY),
+rehydrated it, then genuinely CALLED the resulting function through the
+real sandbox-proxy closure — correct result. No bug; added as a
+permanent regression test. Also spot-checked `ApprovalManager`: its
+`self.pending` dict is write-only (`get()`/`decide()` both read directly
+from Firestore), so it's already restart-safe by construction, no
+hidden in-process dependency.
+
+**Batch B — capability lifecycle + governance adversarial checks, all
+held.** Fetched a full, un-truncated capability passport after a real
+(mocked-external-calls) acquisition and confirmed every governance-
+required field (research evidence with real citations, generated code,
+safety/sandbox/evaluation results, Guardian decision, approval record)
+is genuinely present with real values. Attempted three governance
+bypasses: install without approval decided, install after explicit
+rejection (both already covered by existing tests, re-confirmed still
+blocked), and a genuinely novel combination — approving capability A's
+real acquisition, then trying to install capability B (a different,
+still-pending proposal from the same session) — all correctly refused.
+`install()` only ever trusts its own capability's own stored
+`approval_request_id`. Added the novel case as a permanent test.
+
+**Batch C — one concrete confirmation, not a full pass.** Traced
+BUG-007's fix through to the actual frontend: `web/src/livePipeline.js`'s
+`actionsFromMissionSteps()` already reads a failed step's `reason` field
+for its displayed detail text (`s.reason || s.status || "not executed"`),
+so BUG-007's fix has real, direct user-facing value — a step that fails
+on a raised exception now shows the actual message in the UI instead of
+just `"FAILED"`. The rest of Batch C (voice deep audit beyond what's
+already covered, SSE recovery semantics beyond BUG-004's documented
+scope, full frontend/backend field-by-field contract diffing, a fresh
+security/CI pass) was NOT given dedicated depth this pass — stated
+explicitly rather than silently skipped or claimed done.
+
+Full backend suite: **554 passed** (was 552 at Update 13's HEAD), 2
+skipped, no regressions across two new commits (`3d6d553`, `22af879`).
+
+**Notion**: attempted once more this pass, same result expected/
+reported per protocol — see the in-conversation report for the exact
+outcome at time of writing. **NotebookLM**: still no integration
+available.
+
+Current HEAD: `22af879` — supersedes every hash below.
+
 ## Update 13 — deep integration audit: BUG-007 found via cross-codebase pattern search, HEAD 72ba993
 
 Directive: a "deep system integration + failure-recovery audit" asked
