@@ -329,3 +329,38 @@ def test_sandbox_proxies_are_left_bare_rather_than_shown_as_varargs():
     )
 
     assert _signature_of("emits_rows") == ""
+
+
+def test_a_step_can_reference_two_independent_earlier_steps():
+    """Two steps with no dependency on each other (each could run in
+    either order) both feeding a later step's args -- $STEP_1 and
+    $STEP_2 must each resolve to their OWN step's real output, not one
+    overwriting or leaking into the other.
+    """
+    seen = {}
+
+    registry.register(
+        "emits_rows", "First independent step.", "LOW",
+        lambda *a: {"status": "SUCCESS", "value": "first-value"},
+    )
+    registry.register(
+        "always_fails", "Second independent step (different tool, "
+        "reused here only as a second distinct registration point).",
+        "LOW", lambda *a: {"status": "SUCCESS", "value": "second-value"},
+    )
+    registry.register(
+        "echo_arg", "Captures both.", "LOW",
+        lambda *a: (seen.update(args=list(a)), {"status": "SUCCESS"})[1],
+    )
+
+    plan = MissionPlan(goal="g", steps=[
+        step(1, "emits_rows", []),
+        step(2, "always_fails", []),
+        step(3, "echo_arg", ["$STEP_1", "$STEP_2"]),
+    ])
+
+    summary = mission_engine.run(WorkflowState(user_request="r"), plan)
+
+    assert summary["status"] == "COMPLETED"
+    assert json.loads(seen["args"][0])["value"] == "first-value"
+    assert json.loads(seen["args"][1])["value"] == "second-value"
