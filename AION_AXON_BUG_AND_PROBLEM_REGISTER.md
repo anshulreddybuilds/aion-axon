@@ -58,7 +58,7 @@ mission reports `FAILED` with the actual exception message present, not
 **VERIFICATION:** LOCAL VERIFIED — reproduced before the fix, confirmed
 fixed after, via direct `mission_engine.run()` invocation. Full backend
 suite: 552 passed (was 551), 2 skipped, no regressions.
-**COMMIT:** (pending, this pass)
+**COMMIT:** `7b11626`
 **REMAINING WORK:** None. Worth noting this fix also covers the
 `resume_planned()` continuation path for free — steps AFTER an approved
 one run through this exact same `mission_engine.run()` code, so no
