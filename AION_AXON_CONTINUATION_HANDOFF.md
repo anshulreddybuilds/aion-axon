@@ -10,6 +10,61 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 17 — BUG-009: the reason/error class was live in every UI surface, not just AppV4, HEAD c1c2b89
+
+Directive: a master completion audit explicitly named the lesson from
+BUG-008 ("a component can look correct in isolation while its adjacent
+layer is broken") and asked to keep applying it.
+
+Applied it literally: BUG-008 fixed one instance in `AppV4.jsx`. Rather
+than assume the other three UI surfaces (`App.jsx` — the actual
+production-deployed v1 Holo-Deck, `AppV2.jsx`, `AppV3.jsx`) were clean,
+grepped every `.reason` read across all of `web/src/**/*.jsx` and
+cross-checked each against the real backend shape it consumes. Found
+the identical, independently-written bug in three more places, plus one
+differently-shaped variant of the same root problem:
+
+- `App.jsx` and `AppV2.jsx`: the same install-failure display pattern
+  as BUG-008 (`installed?.reason` only, never `installed?.error`).
+  `App.jsx` is the more consequential of the two — it's what actually
+  ships as the production Holo-Deck, not `AppV4.jsx`'s richer dev
+  surface.
+- `AppV2.jsx` and `AppV3.jsx`, separately: the top-level mission-result
+  display only checked `reason` for a mission that fails during
+  PLANNING (a real Gemini quota/auth refusal — the exact scenario each
+  file's own pre-existing comment already named as the motivating case,
+  years before this bug was actually traced to its root cause).
+  `mission_service.start_planned()`'s planning-failure response uses
+  `"error"`, not `"reason"`. `AppV3.jsx` showed nothing at all;
+  `AppV2.jsx` had a raw-JSON last-resort fallback that technically
+  surfaced the text but illegibly.
+- `MissionTheater.jsx` (rendered live inside `App.jsx`): a related but
+  differently shaped bug — `status || reason` checks `status` FIRST,
+  and `status` is always present on a real response, so the `reason`
+  branch was dead code regardless of which key actually held the
+  message.
+
+Every OTHER `.reason` read in the frontend (`Command.jsx`,
+`JudgeMode.jsx`, `missionStages.jsx`, `panels.jsx`, and the remaining
+reads in `MissionTheater.jsx`) was individually checked against its
+real backend shape and confirmed correct — not touched.
+
+**A process note worth recording honestly**: an earlier draft of the
+bug-register entry for this claimed "v2/v3 were not found to contain an
+install-failure display at all" before that claim had actually been
+verified. Caught via a fresh grep before finalizing the entry, not
+published unverified — but worth naming, since the whole point of this
+pass was exactly "don't assume a sibling layer is clean without
+checking."
+
+`npm run build` clean across all four changed files. Backend suite
+unaffected (frontend-only change): 555 passed, 2 skipped.
+
+**Notion**: attempted again this pass; see the in-conversation report.
+**NotebookLM**: still unavailable.
+
+Current HEAD: `c1c2b89` — supersedes every hash below.
+
 ## Update 16 — BUG-008: the reason/error mismatch class found live in the frontend, HEAD 8a7ecad
 
 Directive: continue the frontend/backend contract audit explicitly
