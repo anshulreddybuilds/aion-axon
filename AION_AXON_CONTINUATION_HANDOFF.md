@@ -10,6 +10,76 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 11 — BUG-005: resume_planned() was completely broken for every mid-mission approval, HEAD c09faed
+
+The most significant finding across this whole series of hardening
+passes. A repeated mega-prompt requirement to test "approval in the
+middle... resumed mission" for a multi-step plan led to grepping the
+whole test suite for `resume_planned`/`resume-planned` before writing
+that test — and finding **zero functional coverage anywhere**. Only an
+auth-only check (`test_owner_auth.py`) and a route-inventory line
+(`test_api_hardening.py`) ever referenced it; neither called it
+meaningfully.
+
+Writing the missing test reproduced a complete, 100%-reproducible
+failure on the first run: `POST /missions/{id}/resume-planned` — the
+real, live route ANY planned multi-step mission must use to continue
+once a human approves a step that isn't the mission's last one — always
+failed. Root cause: `resume_planned()`'s `WorkflowState` was built with
+`status = "EXECUTING"` and no `approval_request_id`, while
+`orchestrator.approve_and_resume()` requires `status ==
+"AWAITING_APPROVAL"` plus a matching `approval_request_id` to do
+anything. The sibling single-tool `resume()` method gets both of these
+right; `resume_planned()` was apparently written without copying them,
+and because nothing ever tested it, this shipped silently for as long as
+the method has existed. A second bug compounded it: the failure's real
+message was read from `approved.get("reason")`, but the guard failures
+carry `"error"`, so every caller saw `{"status": "FAILED", "reason":
+null}` with zero explanation.
+
+**Impact, precisely stated**: this affected ONLY missions where a
+Guardian/risk-tier approval gate sits somewhere before the final step
+(the exact "acquire a capability, get it approved, then keep going" and
+"buy something, get approval, then continue" shapes central to this
+project's own demo story). The acquisition-resume path
+(`resume_blocked()`, used when SYNAPSE needs to install a NEW
+capability) was unaffected — that's a different method with its own,
+already-tested logic.
+
+**Fix**: mirrors `resume()`'s already-correct pattern
+(`workflow.status = "AWAITING_APPROVAL"`, `workflow.approval_request_id
+= mission["approval_request_id"]`); additionally resolves the approved
+step's args via `mission_engine._resolve_args(step.args, completed)`
+before passing them through, instead of the plan's raw, unresolved
+`"$STEP_N"` placeholder text (a real secondary gap: even a hypothetical
+caller who worked around the first bug would have gotten the literal
+string, not a prior step's actual output); and reads `approved.get
+("reason") or approved.get("error")` so no failure path is ever silently
+reported as `null` again.
+
+Verified at the `mission_service` layer (two new regression tests in
+`tests/test_loop_closure.py`: a full 3-step mission with a mid-mission
+approval that also depends on step 1's real output via
+`$STEP_1.value`, completing end-to-end with the real resolved value
+arriving; and a corrupted-approval-id case proving a real, non-null
+reason surfaces on failure) AND independently at the real HTTP API
+layer (`POST /missions/planned` → `POST /approvals/{id}/decide` →
+`POST /missions/{id}/resume-planned` via `TestClient`, confirmed this
+pass, not committed as a separate permanent test since the service-layer
+tests already cover the same logic more directly).
+
+Full backend suite: 547 passed (was 545), 2 skipped, no regressions.
+Recorded as **BUG-005 (P1)** in `AION_AXON_BUG_AND_PROBLEM_REGISTER.md`.
+
+**Notion**: not yet re-attempted this specific update (the interactive-
+approval block has failed 4 consecutive times across sessions; will
+attempt once more at the end of this pass per protocol and report
+honestly either way). **NotebookLM**: confirmed via `ListConnectors`
+that no NotebookLM integration exists in this session at all — recorded
+here rather than silently skipped, per this pass's explicit instruction.
+
+Current HEAD: `c09faed` — supersedes every hash below.
+
 ## Update 10 — real P1 regression found by actually re-running the emulator, fixed; SSE-disconnect reasoning corrected; CI hardened, HEAD ccb28c0
 
 Directive: a "BEASTMODE + BERSERK" master build prompt required a full

@@ -55,6 +55,7 @@ A secondary, related gap: the approved step's args were passed to
 the way `mission_engine.run()`'s own per-step loop does — meaning even a
 hypothetical caller that patched around the first bug would have gotten
 the literal placeholder string instead of a prior step's real output.
+**STATUS:** FIXED
 **FIX:** `resume_planned()` now sets `workflow.status =
 "AWAITING_APPROVAL"` and `workflow.approval_request_id =
 mission["approval_request_id"]` before calling `approve_and_resume()`
@@ -78,7 +79,7 @@ confirmed this pass).
 failure), confirmed fixed after (100% success across multiple runs) at
 both the service layer and the real API layer. Full backend suite: 547
 passed (was 545 — two new tests), 2 skipped, no regressions.
-**COMMIT:** (pending, this pass)
+**COMMIT:** `c09faed`
 **REMAINING WORK:** None. Worth flagging to the owner: any mission
 plans/demo scripts authored around the assumption that a mid-mission
 approval could never actually resume should be re-checked, since this
