@@ -7,6 +7,85 @@ P2 = reliability/usability/engineering issue, P3 = minor/polish.
 
 ---
 
+## BUG-005
+
+**SEVERITY:** P1
+**AREA:** Mission engine / approval-resume / multi-step composition
+**FILE(S):** `app/missions/service.py` (`resume_planned`)
+**PROBLEM:** `POST /missions/{id}/resume-planned` — the real, live route a
+PLANNED multi-step mission MUST use to continue after a mid-mission
+(non-final-step) human approval — failed 100% of the time, for every
+mission, unconditionally. `resume_planned()` built its `WorkflowState`
+with `status = "EXECUTING"` and never set `approval_request_id` on it,
+while `orchestrator.approve_and_resume()` requires
+`workflow.status == "AWAITING_APPROVAL"` AND a matching
+`approval_request_id` before it does anything. A second, compounding bug
+made the failure invisible: `resume_planned()`'s own summary read
+`approved.get("reason")`, but `approve_and_resume()`'s guard-failure
+paths carry the message under `"error"`, not `"reason"` — so every
+caller saw only `{"status": "FAILED", "reason": null}` with no
+explanation at all.
+**HOW DISCOVERED:** This exact mega-prompt series explicitly asked for a
+test of "approval in the middle... resumed mission" for a multi-step
+plan. Before writing it, a grep across the whole test suite for
+`resume_planned` and for the route string `resume-planned` found it
+referenced only in an auth-only check (`test_owner_auth.py`, confirms it
+requires a token, never calls it meaningfully) and a route inventory
+line (`test_api_hardening.py`, never calls it either) — **zero
+functional test coverage anywhere**. Writing the missing test
+immediately reproduced the failure on the first run, confirmed at the
+`mission_service` layer and again independently at the real HTTP API
+layer via `TestClient`.
+**IMPACT:** Any real mission with an approval gate anywhere before its
+last step — exactly the "Buy something after checking the price" or
+"install this capability then use it" shape this whole project's demo
+story is built around — could never actually finish once the caller
+clicked approve, unless the approval happened to be the mission's final
+step. The sibling `resume_blocked()` path (capability-acquisition gaps)
+was unaffected; only mid-mission Guardian/risk-tier approval gates on an
+already-planned, already-executing mission hit this.
+**ROOT CAUSE:** `resume_planned()` was written without copying the two
+lines its sibling `resume()` (the single-tool mission path) already gets
+right (`workflow.status = "AWAITING_APPROVAL"` and
+`workflow.approval_request_id = mission["approval_request_id"]`) — the
+two implementations diverged and only one was ever exercised by a test.
+A secondary, related gap: the approved step's args were passed to
+`approve_and_resume()` unresolved (`*step.args`, the plan's raw
+`"$STEP_N"` text) instead of resolved against already-completed steps
+the way `mission_engine.run()`'s own per-step loop does — meaning even a
+hypothetical caller that patched around the first bug would have gotten
+the literal placeholder string instead of a prior step's real output.
+**FIX:** `resume_planned()` now sets `workflow.status =
+"AWAITING_APPROVAL"` and `workflow.approval_request_id =
+mission["approval_request_id"]` before calling `approve_and_resume()`
+(matching `resume()`'s pattern); resolves the approved step's args via
+`mission_engine._resolve_args(step.args, completed)` before passing them
+through; and reads `approved.get("reason") or approved.get("error")` so
+no failure path is ever silently reported as `null` again.
+**REGRESSION TEST:** `tests/test_loop_closure.py::
+test_resume_planned_completes_a_mission_with_a_mid_mission_approval` (a
+real 3-step mission: step 1 executes, step 2 needs MEDIUM-risk approval
+AND depends on step 1's output via `$STEP_1.value`, step 3 runs after —
+proves the whole chain completes and step 2 gets the real resolved
+value, not the placeholder or nothing) and `tests/test_loop_closure.py::
+test_resume_planned_reports_the_real_reason_not_a_null` (proves a real
+failure surfaces a real, non-null reason). Also verified independently
+at the real HTTP API layer (`POST /missions/planned` →
+`POST /approvals/{id}/decide` → `POST /missions/{id}/resume-planned`,
+via `TestClient`, not committed as a permanent test but run and
+confirmed this pass).
+**VERIFICATION:** LOCAL VERIFIED — reproduced before the fix (100%
+failure), confirmed fixed after (100% success across multiple runs) at
+both the service layer and the real API layer. Full backend suite: 547
+passed (was 545 — two new tests), 2 skipped, no regressions.
+**COMMIT:** (pending, this pass)
+**REMAINING WORK:** None. Worth flagging to the owner: any mission
+plans/demo scripts authored around the assumption that a mid-mission
+approval could never actually resume should be re-checked, since this
+capability genuinely did not work before this fix, in any prior commit.
+
+---
+
 ## BUG-003
 
 **SEVERITY:** P1

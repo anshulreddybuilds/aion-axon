@@ -253,7 +253,21 @@ class MissionService:
         return {"mission_id": mission_id, "goal": plan.goal, **summary}
 
     def resume_planned(self, mission_id: str) -> dict[str, Any]:
-        """Continue a planned mission from the step that suspended it."""
+        """Continue a planned mission from the step that suspended it.
+
+        BUG-005 (AION_AXON_BUG_AND_PROBLEM_REGISTER.md): this method built
+        its WorkflowState with `status = "EXECUTING"` and never set
+        `approval_request_id` on it, while `approve_and_resume()` requires
+        `workflow.status == "AWAITING_APPROVAL"` AND a matching
+        `approval_request_id` before it will do anything -- so this route
+        failed 100% of the time for every mid-mission approval, silently,
+        for as long as it existed. Nothing ever exercised it: the sibling
+        single-tool `resume()` sets both correctly (compare its own
+        `workflow.status = "AWAITING_APPROVAL"` / `workflow
+        .approval_request_id = ...` two lines below), and this method was
+        apparently written without copying them. Found by writing the
+        test this bug's own docstring says should have existed.
+        """
         mission = firestore_store.get_mission(mission_id)
 
         if mission is None:
@@ -277,7 +291,8 @@ class MissionService:
             user_request=mission["request"],
             workflow_id=mission["workflow_id"],
         )
-        workflow.status = "EXECUTING"
+        workflow.status = "AWAITING_APPROVAL"
+        workflow.approval_request_id = mission["approval_request_id"]
 
         index = mission.get("next_step_index", 0)
         completed = [
@@ -286,8 +301,16 @@ class MissionService:
         ]
 
         # Resume the suspended step through the approved path, then let
-        # the engine carry on with the rest.
+        # the engine carry on with the rest. Args are re-resolved against
+        # what already ran -- the plan document stores the step's
+        # ORIGINAL, unresolved args (e.g. "$STEP_1"), and the engine's own
+        # per-step loop only resolves them right before the first
+        # execution attempt. Without doing the same here, a step that
+        # both needs approval AND depends on an earlier step's real
+        # output would resume with the literal placeholder string instead
+        # of that output.
         step = plan.steps[index]
+        resolved_args = mission_engine._resolve_args(step.args, completed)
 
         approved = orchestrator.approve_and_resume(
             workflow,
@@ -295,7 +318,7 @@ class MissionService:
             step.action,
             RiskLevel(step.risk),
             mission["approval_request_id"],
-            *step.args,
+            *resolved_args,
         )
 
         if approved.get("status") != "EXECUTED":
@@ -307,7 +330,13 @@ class MissionService:
                 "step_results": completed,
                 "approval_request_id": mission["approval_request_id"],
                 "blocked_on": None,
-                "reason": approved.get("reason"),
+                # approve_and_resume()'s various guard/failure paths use
+                # "error" or "reason" depending on which one fired -- read
+                # both so a real message is never silently dropped
+                # (BUG-005's second half: this used to read only
+                # "reason", which is None on every guard-failure path,
+                # turning an explained FAILED into an unexplained one).
+                "reason": approved.get("reason") or approved.get("error"),
             }
         else:
             completed.append({
