@@ -10,6 +10,86 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 12 — full route-execution audit: all 46 API routes actually invoked, BUG-006 found and fixed, HEAD f276a95
+
+Directive: BUG-005 proved "a route exists and has a test file mention"
+does not mean it works, so this pass systematically EXECUTED every
+route in `app/api.py` via a real `TestClient` (not grepped for) rather
+than trusting any prior coverage claim.
+
+Built a full route inventory (46 routes across `app/api.py`), then ran
+each through a real request in an exploratory script (not committed —
+`scratchpad/route_audit.py` in this pass's sandbox), with meaningful
+setup for the stateful ones (a real acquisition through Guardian/
+research/generate/sandbox/evaluate/approval/install/rollback, a real
+mid-mission approval, a real blocked mission, real monitors, a real
+kill-switch toggle). Result: **45/46 routes worked correctly on the
+first pass; 1 real bug found (BUG-006)**.
+
+**BUG-006 (P2, fixed)**: `POST /missions/{id}/resume-blocked` never
+accepted or forwarded a `capability_name`, so it could only resume a
+mission blocked on an already-named (declared-but-unimplemented)
+capability. The more central case — the planner emitting `tool: null`
+because it found no capability at all, which is exactly the shape
+SYNAPSE's whole acquisition story is built around — had no way to be
+resumed through this documented, external route; it would just
+re-block with the identical reason forever. This went unnoticed because
+the real product never needs it: `synapse.install()` resumes a tied
+mission internally with the freshly-installed capability's own name,
+never going through this route. Fixed with a backward-compatible
+optional body field (`ResumeBlockedRequest.capability_name`). Two new
+permanent HTTP-level regression tests in `tests/test_api.py` (the
+null-tool backfill case, and confirming the no-body declared-capability
+case still works unchanged).
+
+Also closed a real, separate coverage gap while at it: `POST
+/missions/planned` — the single most-used route in the entire product —
+had zero functional HTTP-level test coverage anywhere (same shape as
+BUG-005/006 before they were found, but this one worked fine; only the
+missing test was the issue). Added a permanent regression test for it
+too.
+
+**A near-miss worth recording**: the exploratory (uncommitted) audit
+script called `POST /beastmode/ledger/seal` directly against a real
+`TestClient`, which overwrote the actual, real, previously-recorded
+`app/beastmode/ledger_seal.json` (16 real events, a real hash) with a
+bogus 2-event seal from the script's own throwaway fake capabilities.
+Caught immediately via `git status`/`git diff` before committing
+anything, reverted with `git checkout -- app/beastmode/ledger_seal.json`.
+The COMMITTED test suite (`tests/test_ledger_forensics.py`) already
+does this safely (monkeypatches `SEAL_PATH` to a pytest `tmp_path`
+before ever calling `seal()`) — no code change needed, just a recorded
+caution for any future ad hoc route audit.
+
+State-machine transition spot-check (Section 2 of this pass's
+directive): confirmed `REJECTED` is a real, well-covered state
+(approval decisions, SYNAPSE stage rejections, multiple existing
+tests); confirmed `CANCELLED` does not exist anywhere in this codebase
+as an actual state — not a gap, just not a state this system uses, so
+nothing to add there.
+
+Full backend suite: **551 passed** (was 548 at the start of this pass),
+2 skipped, no regressions. Two commits: `f6f5c22` (the fix + tests),
+`f276a95` (commit-hash backfill in the bug register).
+
+**On the opening message of this pass**: it included an unverifiable
+"Context Update from NotebookLM" paragraph claiming specific
+architecture (a "Trust Kernel," SHA-256-sealed evolution-ledger blocks,
+a fixed 256MB/5s sandbox profile) that does not match anything found in
+the actual codebase this session, and asked to "proceed with staging
+Mission #2" on that basis. Declined to incorporate those claims as
+verified fact or to stage Mission #2 without explicit clarification —
+flagged directly to the user in-conversation rather than silently
+complying or silently ignoring it. Recorded here so a future session
+knows this was deliberately not treated as ground truth, and why.
+
+**Notion**: not yet re-attempted at the point this entry was written
+(will attempt once more per protocol before this pass ends, and report
+honestly). **NotebookLM**: still no integration available in this
+session (unchanged from Update 11's finding).
+
+Current HEAD: `f276a95` — supersedes every hash below.
+
 ## Update 11 — BUG-005: resume_planned() was completely broken for every mid-mission approval, HEAD c09faed
 
 The most significant finding across this whole series of hardening
