@@ -2,8 +2,8 @@
 
 **Autonomous Governed Capability Spine for Enterprise AI Agents**
 
-[![Tests](https://img.shields.io/badge/tests-295%20passing-brightgreen)](#verify-it-yourself--no-api-key-needed)
-[![Assertions](https://img.shields.io/badge/assertions-552-blue)](#verify-it-yourself--no-api-key-needed)
+[![Tests](https://img.shields.io/badge/tests-545%20passing-brightgreen)](#verify-it-yourself--no-api-key-needed)
+[![Assertions](https://img.shields.io/badge/assertions-990%2B-blue)](#verify-it-yourself--no-api-key-needed)
 [![Deployment](https://img.shields.io/badge/deployment-Google%20Cloud%20Run-4285F4)](https://aion-core-638298765129.asia-south1.run.app)
 [![Sandbox](https://img.shields.io/badge/sandbox-zero%20credentials-critical)](#threat-model)
 [![License](https://img.shields.io/badge/license-Apache%202.0-lightgrey)](LICENSE)
@@ -103,14 +103,17 @@ pip install -r requirements.txt
 pytest -q
 ```
 
-**Expected: `280 passed`, in roughly 4–9 seconds, with zero network calls.**
+**Expected: `545 passed, 2 skipped`, in roughly 10 seconds, with zero network calls.**
+The 2 skips are the distributed-Firestore-concurrency tests, which only run
+against a real Firestore emulator (`FIRESTORE_EMULATOR_HOST` set) — CI runs
+them for real; a plain local clone correctly skips rather than fakes it.
 
 That hermeticity was itself a bug once: the suite used to make real billed
 model calls whenever an API key happened to be exported, turning a green run
 into an accident of which terminal you used. Fixed, and opt-in behind
 `AXON_LIVE_MODEL_TESTS=1`.
 
-**19 of the 295 are adversarial, plus 15 more testing the additive beastmode layer** — they attack the governance rather than
+**47 of the 545 are adversarial, plus 18 more testing the additive beastmode layer** — they attack the governance rather than
 confirm it: exfiltration payloads, persuasion phrasings, a planted secret in
 the sandbox scan, and kill-switch coverage on every path.
 
@@ -192,11 +195,16 @@ The Skill Passport therefore reads *ungrounded* instead of showing a
 fabricated source. **A system reporting 100% here would be lying about
 itself.**
 
-Also open, stated rather than hidden: voice input is implemented but unproven
-on the author's hardware and is rendered **disabled with the reason shown**
-rather than simulated; ADK planner token usage is reported `UNMEASURED`
-rather than estimated; and the evaluator occasionally returns no score at
-all, in which case SYNAPSE refuses rather than guessing.
+Also open, stated rather than hidden: voice input/output now dispatches
+through the exact same governed mission pipeline as typed text (no second,
+fake voice pipeline) and is verified with a real Chromium browser driving
+faithfully-simulated `SpeechRecognition`/`SpeechSynthesis` events — **not**
+yet tested against a real physical microphone on the author's own hardware,
+and the mic control only appears when the browser reports the Web Speech
+API as actually supported, degrading honestly rather than pretending
+otherwise. ADK planner token usage is reported `UNMEASURED` rather than
+estimated; and the evaluator occasionally returns no score at all, in which
+case SYNAPSE refuses rather than guessing.
 
 ---
 
