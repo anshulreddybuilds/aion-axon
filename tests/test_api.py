@@ -429,3 +429,128 @@ def test_second_version_produces_a_real_diff():
 
     assert any(line.startswith("-") and "return 1" in line for line in diff)
     assert any(line.startswith("+") and "return 2" in line for line in diff)
+
+
+# --- Route coverage audit: routes with a path string mentioned in a test ---
+# --- file, but never actually invoked with a real request, closed here. ---
+
+def test_missions_planned_route_actually_dispatches_a_real_mission(monkeypatch):
+    """POST /missions/planned is the single most-used route in the whole
+    product -- every real text/voice mission dispatch goes through it --
+    yet a full-repo audit found it had never once been invoked via HTTP
+    in the test suite (only a route-inventory line and an auth-only
+    check mentioned its path string). Executing it here proves the real
+    wiring (owner auth -> rate limiter -> Pydantic body -> plan_mission
+    -> mission_engine -> response) actually works end-to-end, not just
+    the mission_service function in isolation.
+    """
+    import app.missions.service as mission_service_module
+    from app.agents.plan_schema import MissionPlan, MissionStep
+
+    def fake_plan(request, user_id="anshul"):
+        return MissionPlan(
+            goal="route coverage check", steps=[MissionStep(
+                step=1, description="calc", kind="READ_ANALYZE",
+                tool="calculator", args=["3 + 4"], risk="LOW", action="a",
+            )],
+        ), None
+
+    monkeypatch.setattr(mission_service_module, "plan_mission", fake_plan)
+
+    resp = client.post("/missions/planned", json={"request": "what is 3 + 4"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "COMPLETED"
+    assert body["step_results"][0]["result"]["result"] == 7.0
+
+
+def test_resume_blocked_route_can_backfill_a_null_tool_step(monkeypatch):
+    """BUG-006: this route never accepted or forwarded a capability_name,
+    so it could only ever resume a mission blocked on an ALREADY-named
+    (declared-but-unimplemented) capability. The more common gap -- the
+    planner emitting tool: null because it found no capability at all --
+    had no way to be resumed through this route; it would just re-block
+    with the identical reason forever. The real product never hit this
+    because synapse.install() resumes the tied mission internally with
+    the freshly-installed name -- this route is the ONLY external way to
+    supply that name, and now actually can.
+    """
+    import app.missions.service as mission_service_module
+    from app.agents.plan_schema import MissionPlan, MissionStep
+    from app.capabilities.registry import registry
+
+    def fake_plan(request, user_id="anshul"):
+        return MissionPlan(
+            goal="route coverage null-tool gap", steps=[MissionStep(
+                step=1, description="a genuinely unknown capability",
+                kind="READ_ANALYZE", tool=None, args=["x"], risk="LOW",
+                action="a",
+            )],
+        ), None
+
+    monkeypatch.setattr(mission_service_module, "plan_mission", fake_plan)
+
+    created = client.post(
+        "/missions/planned", json={"request": "do something new"},
+    ).json()
+    assert created["status"] == "BLOCKED"
+    assert created["plan"][0]["tool"] is None
+
+    registry.register(
+        "route_coverage_backfilled_cap", "x", "LOW",
+        lambda *a: {"status": "SUCCESS", "value": "backfilled"},
+    )
+
+    resp = client.post(
+        f"/missions/{created['mission_id']}/resume-blocked",
+        json={"capability_name": "route_coverage_backfilled_cap"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "COMPLETED", (
+        f"resume-blocked could not backfill a null-tool step via the "
+        f"real HTTP route: {body}"
+    )
+    assert body["step_results"][0]["tool"] == "route_coverage_backfilled_cap"
+
+    registry.unregister("route_coverage_backfilled_cap")
+
+
+def test_resume_blocked_route_still_works_with_no_body(monkeypatch):
+    """The pre-existing, already-correct case must not regress: a
+    mission blocked on an already-declared capability resumes with no
+    body at all, exactly as before this fix."""
+    import app.missions.service as mission_service_module
+    from app.agents.plan_schema import MissionPlan, MissionStep
+    from app.capabilities.registry import registry
+
+    def fake_plan(request, user_id="anshul"):
+        return MissionPlan(
+            goal="route coverage declared gap", steps=[MissionStep(
+                step=1, description="a declared but unimplemented capability",
+                kind="READ_ANALYZE", tool="route_coverage_declared_cap",
+                args=["x"], risk="LOW", action="a",
+            )],
+        ), None
+
+    monkeypatch.setattr(mission_service_module, "plan_mission", fake_plan)
+    registry.declare("route_coverage_declared_cap", "x", "LOW")
+
+    created = client.post(
+        "/missions/planned", json={"request": "do the declared thing"},
+    ).json()
+    assert created["status"] == "BLOCKED"
+
+    registry.register(
+        "route_coverage_declared_cap", "x", "LOW",
+        lambda *a: {"status": "SUCCESS", "value": "declared-ok"},
+    )
+
+    resp = client.post(f"/missions/{created['mission_id']}/resume-blocked")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "COMPLETED"
+
+    registry.unregister("route_coverage_declared_cap")

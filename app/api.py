@@ -378,9 +378,35 @@ def acquire_for_mission_stream(mission_id: str) -> StreamingResponse:
     )
 
 
+class ResumeBlockedRequest(BaseModel):
+    # BUG-006 (AION_AXON_BUG_AND_PROBLEM_REGISTER.md): this route never
+    # accepted or forwarded a capability name at all, so it could only
+    # ever resume a mission blocked on an already-named (declared-but-
+    # unimplemented) capability -- the more common `tool: null` gap,
+    # where the planner found no capability name whatsoever, had no way
+    # to be resumed through this route. In practice this went unnoticed
+    # because the real product path never calls this route for that
+    # case: synapse.install() resumes the tied mission internally with
+    # the freshly-installed capability's own name. Found by actually
+    # executing every route rather than trusting that a thin wrapper
+    # must be correct.
+    capability_name: Optional[str] = Field(
+        None, max_length=200,
+        description=(
+            "Backfills the blocked step's tool when the plan left it "
+            "null. Omit when the step already names a declared "
+            "capability -- see mission_service.resume_blocked()'s "
+            "docstring for the exact rule."
+        ),
+    )
+
+
 @app.post("/missions/{mission_id}/resume-blocked", dependencies=[Depends(require_owner)])
-def resume_blocked_mission(mission_id: str) -> dict[str, Any]:
-    return mission_service.resume_blocked(mission_id)
+def resume_blocked_mission(
+    mission_id: str,
+    body: ResumeBlockedRequest = ResumeBlockedRequest(),
+) -> dict[str, Any]:
+    return mission_service.resume_blocked(mission_id, body.capability_name)
 
 
 @app.post("/missions/{mission_id}/resume-planned", dependencies=[Depends(require_owner)])

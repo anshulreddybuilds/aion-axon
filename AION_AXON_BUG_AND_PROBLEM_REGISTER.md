@@ -7,6 +7,75 @@ P2 = reliability/usability/engineering issue, P3 = minor/polish.
 
 ---
 
+## BUG-006
+
+**SEVERITY:** P2
+**AREA:** Mission engine / API surface
+**FILE(S):** `app/api.py` (`resume_blocked_mission`)
+**PROBLEM:** `POST /missions/{id}/resume-blocked` never accepted or
+forwarded a `capability_name` at all (`resume_blocked_mission(mission_id:
+str) -> ...: return mission_service.resume_blocked(mission_id)`), while
+`mission_service.resume_blocked(mission_id, capability_name=None)`
+requires that second argument to backfill a step's `tool` field when the
+planner left it `null` (a genuine capability gap, as opposed to a
+declared-but-unimplemented one that already carries a name). This route
+could therefore only ever correctly resume the LESS common case
+(already-named capability) — the more central "the planner found no
+capability at all, SYNAPSE built one, now finish the mission" case had
+no way to be resumed through this documented, live, external route; it
+would just re-block with the identical reason forever.
+**HOW DISCOVERED:** Found while executing every single route in
+`app/api.py` for real via `TestClient` (46 routes, all invoked, not
+grepped for) after BUG-005 proved that "a route exists and has a test
+file mention" does not mean it works. This route's only prior test
+coverage was an auth-only check and a route-inventory line — identical
+in shape to BUG-005 before it was found.
+**IMPACT:** Real, but narrower than BUG-005: the actual product never
+hits this gap, because `synapse.install()` resumes a tied mission
+internally with the freshly-installed capability's own name (an
+internal call, not this route). This route is only reachable by an
+external caller (a direct API integration, a future frontend feature,
+or a judge/tester probing the API surface) who does NOT go through the
+install-and-auto-resume path — for that caller, the documented
+capability of "resume a blocked mission with a capability name" simply
+did not work.
+**STATUS:** FIXED
+**FIX:** Added an optional `ResumeBlockedRequest` body
+(`capability_name: Optional[str] = None`) to the route, forwarded to
+`mission_service.resume_blocked()`. Fully backward compatible — a
+no-body call still resumes the already-named-capability case exactly as
+before.
+**REGRESSION TEST:** `tests/test_api.py::
+test_resume_blocked_route_can_backfill_a_null_tool_step` (a real
+`tool: null` gap, resumed via the HTTP route with `capability_name` in
+the body, completes end-to-end) and `tests/test_api.py::
+test_resume_blocked_route_still_works_with_no_body` (the pre-existing
+declared-capability case, unaffected).
+**VERIFICATION:** LOCAL VERIFIED — reproduced (route silently could not
+supply a name), fixed, confirmed via `TestClient` at the real HTTP
+layer. Full backend suite: 551 passed (was 548 -- 3 new tests, 2 for
+BUG-006 and 1 closing a real-but-not-broken coverage gap for
+`POST /missions/planned`), 2 skipped, no regressions.
+**COMMIT:** (pending, this pass)
+**REMAINING WORK:** None.
+
+**Also found during this same route-execution pass, and worth recording
+even though nothing was broken**: the exploratory audit script (not
+committed) called `POST /beastmode/ledger/seal` directly against a real
+`TestClient`, which overwrote the actual, real, previously-recorded
+`app/beastmode/ledger_seal.json` (16 real events, a real hash) with a
+bogus 2-event seal from the throwaway script's own fake capabilities.
+Reverted immediately via `git checkout`. The COMMITTED test suite
+(`tests/test_ledger_forensics.py`) already does this correctly —
+`monkeypatch.setattr(ledger_chain_module, "SEAL_PATH", tmp_path /
+"seal.json")` before ever calling `seal()` — so no code change was
+needed; this is a caution for any FUTURE ad hoc route audit, not a
+system defect: never call `/beastmode/ledger/seal` for real without
+first patching `SEAL_PATH` to a throwaway location, since it writes a
+real file on disk, not just Firestore.
+
+---
+
 ## BUG-005
 
 **SEVERITY:** P1

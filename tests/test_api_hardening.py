@@ -11,7 +11,7 @@ GET     /health                                 public  -
 GET     /capabilities                           public  -
 POST    /missions/planned                       owner   PlannedMissionRequest    real Gemini call (planner)
 POST    /missions/{id}/acquire                  owner   -                        path param only
-POST    /missions/{id}/resume-blocked           owner   -
+POST    /missions/{id}/resume-blocked           owner   ResumeBlockedRequest     capability_name optional (BUG-006)
 POST    /missions/{id}/resume-planned           owner   -
 POST    /missions                               owner   MissionRequest           real tool execution
 GET     /missions/{id}                          public  -
