@@ -10,6 +10,90 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 10 — real P1 regression found by actually re-running the emulator, fixed; SSE-disconnect reasoning corrected; CI hardened, HEAD ccb28c0
+
+Directive: a "BEASTMODE + BERSERK" master build prompt required a full
+audit (Phase 0/1, done — nothing changed since Update 9's audit, git
+state re-confirmed clean at `a6adf74`), then real hardening work per its
+phase order, maintaining a living `AION_AXON_BUG_AND_PROBLEM_REGISTER.md`
+(new, this pass) rather than only reporting findings.
+
+**BUG-003 (P1, fixed) — the most significant finding this pass.** Java is
+present in this sandbox (confirmed, not assumed), so rather than trust
+the prior session's "P1 closed" claim, this pass actually started a real
+Firestore emulator (`firebase-tools`, no gcloud SDK needed — downloads its
+own bundled jar) and re-ran both emulator-gated concurrency tests. The
+REAL production code path
+(`tests/test_concurrency_firestore_emulator_engine.py`, which exercises
+`app/synapse/engine.py`'s actual `install()`/`claim_install()`) failed on
+2 of 5 runs with `ValueError: Failed to commit transaction in 5 attempts`
+under real ~10-way simultaneous contention on one document — a genuine
+regression the prior "closed" claim had not caught, because it was only
+ever run once, not repeated. Raising `max_attempts` alone (tried to 20)
+did not fix it: the client library's retry loop fires attempts back-to-
+back with no delay, by its own design. What reliably fixed it (10+
+repeated runs, zero failures after): an outer retry loop with a REAL
+wall-clock sleep + jitter between attempts, giving the emulator's lock
+queue actual time to drain. `claim_install()` now does this and raises a
+new `InstallClaimContention` exception if still unresolved after 8
+attempts; `synapse.install()` catches it and returns an honest `FAILED`
+status (with a new `INSTALL_CLAIM_CONTENDED` audit event) instead of an
+unhandled 500. New fast, non-emulator-gated regression test added so this
+is covered on every CI run, not just when an emulator happens to be
+available: `tests/test_concurrency.py::
+test_install_fails_honestly_when_claim_is_genuinely_contended`.
+
+**BUG-004 (P2, fixed) — a self-correction.** Update 9's bug register
+entry (written by an earlier pass this session) claimed SSE client
+disconnects were harmless because "side effects happen as the generator
+advances, independent of whether the response is read." That was never
+actually tested and turned out to be wrong: Starlette's
+`StreamingResponse.stream_response()` simply stops calling `__next__()`
+on the generator once a `send()` fails, so a disconnect genuinely
+abandons the acquisition — and since a new candidate's capability
+document isn't written until `AWAITING_APPROVAL`, an earlier disconnect
+left zero trace anywhere (no doc, no audit event) despite possibly having
+already spent a real `generate_candidate`/sandbox/evaluator call. Fixed
+with one new `SYNAPSE_ACQUISITION_STARTED` audit event right after
+Guardian pre-screen passes — observability only, not mid-flight
+resumability (flagged as a real but out-of-scope larger change, not
+built speculatively). New regression test: `tests/test_synapse_stream.py
+::test_abandoning_the_stream_before_awaiting_approval_leaves_no_capability_trace`
+(directly abandons a real generator mid-run and checks both the absence
+of a stray capability doc and the presence of the new audit event).
+
+**BUG-002 (P2, fixed) — CI gap.** CI ran only the backend pytest suite.
+Added a `frontend` job (Node 22, runs all 6 `*.test.mjs` files = 58
+checks, then `npm run build`) and extended the `test` job with a real
+Firestore-emulator step (via `firebase-tools`, same mechanism proven
+working locally this pass) so the two emulator-gated concurrency tests
+run for real in CI instead of silently skipping. YAML validated locally;
+cannot watch an actual GitHub Actions run from this sandbox, so the owner
+should confirm the first real run on this branch shows both new jobs
+green.
+
+**Full backend suite**: 545 passed (was 543 at Update 9's HEAD — two new
+regression tests), 2 skipped, no regressions. Frontend: still 58 passed,
+build clean.
+
+**Not done this pass**: Phases 4 onward of the master prompt's own
+ordering (harden capability reuse/composition further, voice/UI changes,
+production deployment verification) — this pass focused specifically on
+what a real re-audit surfaced (the emulator regression and the SSE-
+disconnect correction) rather than speculatively touching areas nothing
+new was found in. Production verification remains blocked: this sandbox
+cannot reach `aion-axon-2026.web.app` or `aion-core-...run.app` (confirmed
+again this session's lineage, unchanged).
+
+**Notion**: attempted again this pass, failed again with the same
+interactive-approval requirement (4th consecutive failure across
+sessions). Repo/this file remain the authoritative, current source per
+this page's own stated policy — the Notion page itself, last fetched
+fresh this pass, is confirmed stale as of Update 9 (predates it by two
+updates now).
+
+Current HEAD: `ccb28c0` — supersedes every hash below.
+
 ## Update 9 — final hardening audit: one P0 found and fixed, 10-task adversarial suite 10/10 (LOCAL VERIFIED), HEAD 0569371
 
 Directive: a "FINAL HARDENING + ADVERSARIAL QA MASTER PROMPT" required an
