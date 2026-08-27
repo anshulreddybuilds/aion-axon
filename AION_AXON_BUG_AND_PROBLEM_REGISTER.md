@@ -56,7 +56,7 @@ supply a name), fixed, confirmed via `TestClient` at the real HTTP
 layer. Full backend suite: 551 passed (was 548 -- 3 new tests, 2 for
 BUG-006 and 1 closing a real-but-not-broken coverage gap for
 `POST /missions/planned`), 2 skipped, no regressions.
-**COMMIT:** (pending, this pass)
+**COMMIT:** `f6f5c22`
 **REMAINING WORK:** None.
 
 **Also found during this same route-execution pass, and worth recording
