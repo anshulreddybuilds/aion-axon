@@ -22,6 +22,7 @@ class MemoryFirestore:
         self.ledger_seal: Optional[dict[str, Any]] = None
         self._claim_lock = threading.Lock()
         self._approval_lock = threading.Lock()
+        self._mission_lock = threading.Lock()
 
     def create_approval(self, request_id: str, data: dict[str, Any]) -> None:
         self.approvals[request_id] = {
@@ -120,6 +121,38 @@ class MemoryFirestore:
 
     def get_mission(self, mission_id: str) -> Optional[dict[str, Any]]:
         return self.missions.get(mission_id)
+
+    def claim_mission_transition(
+        self,
+        mission_id: str,
+        required_status: str,
+        claim_status: str = "RESUMING",
+    ) -> bool:
+        """Atomic check-and-set: only the first resume_blocked()/
+        resume_planned()/resume() call whose read sees `required_status`
+        may proceed. Proven necessary, not speculative -- 5 real threads
+        racing resume_blocked() on one BLOCKED mission, each seeing the
+        same pre-claim status, made a real registered tool execute 5
+        times for a single resume (see tests/test_mission_resume_race.py).
+        The plain read-check-run-then-write this replaces had the exact
+        TOCTOU shape claim_install()/decide_approval() already closed for
+        installs and approvals, just never applied here -- and the window
+        here is worse: real tool execution (a real external effect, not
+        just a status flip) happens inside it.
+
+        Returns True if this call won the claim (the mission's status is
+        now `claim_status`), False if the mission wasn't in
+        `required_status` (already claimed by a concurrent caller, or
+        genuinely in some other state).
+        """
+        with self._mission_lock:
+            data = self.missions.get(mission_id)
+
+            if data is None or data.get("status") != required_status:
+                return False
+
+            data["status"] = claim_status
+            return True
 
     def save_capability(self, name: str, data: dict[str, Any]) -> None:
         # Merge, never replace: the ledger updates a few fields at a time
@@ -372,6 +405,79 @@ class AxonFirestore:
             return None
 
         return snapshot.to_dict()
+
+    def claim_mission_transition(
+        self,
+        mission_id: str,
+        required_status: str,
+        claim_status: str = "RESUMING",
+    ) -> bool:
+        """Atomic check-and-set, real Firestore transaction: only the
+        first resume_blocked()/resume_planned()/resume() call whose read
+        sees `required_status` may proceed to actually run the mission.
+        Mirrors claim_install()'s pattern for the exact same reason --
+        see MemoryFirestore.claim_mission_transition's docstring for the
+        proof this was a real, reproducible race (5/5 concurrent callers
+        double-executing a real tool), not a theoretical one.
+
+        A resumed mission does real work -- possibly a real external
+        effect, always at least a real Gemini/tool call -- inside the
+        window this closes, unlike the quick status flips claim_install()
+        and decide_approval() guard. If the process dies after a
+        successful claim but before the run finishes and persists its
+        real result, the mission is left at `claim_status` ("RESUMING")
+        rather than a genuine terminal state -- a stuck-but-honest
+        outcome, not a silently duplicated real-world action. That
+        tradeoff is deliberate: a mission that needs a human to notice
+        and re-run it is recoverable; a real tool executed twice often
+        is not.
+        """
+        doc_ref = self.db.collection("missions").document(mission_id)
+
+        @firestore.transactional
+        def _claim(transaction):
+            snapshot = doc_ref.get(transaction=transaction)
+
+            if not snapshot.exists:
+                return False
+
+            data = snapshot.to_dict() or {}
+
+            if data.get("status") != required_status:
+                return False
+
+            transaction.update(doc_ref, {"status": claim_status})
+            return True
+
+        # Same reasoning as decide_approval(): at most a couple of real
+        # contenders (a network retry, two tabs, two Cloud Run instances
+        # racing one webhook), nowhere near claim_install()'s ~10-way
+        # install races, so the client library's own default transaction
+        # retries (max_attempts=5) are enough in practice -- no outer
+        # jitter-backoff loop needed here.
+        #
+        # Catches ValueError too, not just Aborted: proven necessary, not
+        # speculative -- claim_install()'s own docstring records the same
+        # gap (BUG-013) under real heavy contention, and this method's own
+        # emulator test (10 threads on one doc, deliberately adversarial
+        # to prove the invariant, not a claim that resume sees that much
+        # real contention) reproduced it directly: the transaction
+        # wrapper's internal retry loop raises a bare ValueError
+        # ("Failed to commit transaction in 5 attempts"), not
+        # gcloud_exceptions.Aborted, once ITS OWN retry budget is
+        # exhausted -- that would otherwise crash the caller
+        # (resume_blocked() etc.) with a raw 500 instead of the clean
+        # FAILED response every other "wrong state" case already gets.
+        try:
+            return _claim(self.db.transaction())
+        except (ValueError, gcloud_exceptions.Aborted):
+            # Real lock contention with no definitive winner or loser --
+            # honest to report "did not win the claim" (the caller's
+            # existing not-in-the-right-state error path) rather than
+            # inventing a third outcome here; the mission is untouched
+            # either way (no write occurred), so nothing was lost by
+            # treating this as a loss.
+            return False
 
     def save_capability(self, name: str, data: dict[str, Any]) -> None:
         # merge=True: the ledger writes a few fields at a time and must

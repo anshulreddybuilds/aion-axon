@@ -220,12 +220,28 @@ class MissionService:
         if mission.get("mode") != "planned":
             return {"status": "FAILED", "error": "Not a planned mission."}
 
-        if mission.get("status") != "BLOCKED":
+        # Atomic check-and-set, not a plain read-check-run-then-write: two
+        # concurrent resume_blocked() calls (a network retry, two tabs,
+        # two Cloud Run instances handling the same webhook) could both
+        # read status == BLOCKED before either wrote, and both proceed to
+        # run mission_engine.run() below -- which executes real,
+        # registered tools. Proven to actually happen, not theoretical:
+        # 5 real threads racing this exact path made a real tool execute
+        # 5 times for one resume before this fix (see
+        # tests/test_mission_resume_race.py and
+        # firestore_store.claim_mission_transition()'s docstring for the
+        # full account). Only the winner's mission stays at the
+        # "BLOCKED" status this check already reported -- every other
+        # concurrent caller now gets the exact same FAILED response this
+        # plain status check always gave for a mission that wasn't
+        # BLOCKED, just decided atomically instead of racily.
+        if not firestore_store.claim_mission_transition(mission_id, "BLOCKED", "RESUMING"):
+            current = firestore_store.get_mission(mission_id) or {}
             return {
                 "status": "FAILED",
                 "error": (
                     "Mission is not blocked. "
-                    f"Current status: {mission.get('status')}"
+                    f"Current status: {current.get('status')}"
                 ),
             }
 
@@ -294,12 +310,18 @@ class MissionService:
         if mission.get("mode") != "planned":
             return {"status": "FAILED", "error": "Not a planned mission."}
 
-        if mission.get("status") != "AWAITING_APPROVAL":
+        # Atomic check-and-set -- same race, same fix, as resume_blocked()
+        # above: a plain status check here let two concurrent callers both
+        # see AWAITING_APPROVAL and both execute the approved step (and
+        # everything after it) for real. See
+        # firestore_store.claim_mission_transition()'s docstring.
+        if not firestore_store.claim_mission_transition(mission_id, "AWAITING_APPROVAL", "RESUMING"):
+            current = firestore_store.get_mission(mission_id) or {}
             return {
                 "status": "FAILED",
                 "error": (
                     "Mission is not awaiting approval. "
-                    f"Current status: {mission.get('status')}"
+                    f"Current status: {current.get('status')}"
                 ),
             }
 
@@ -411,12 +433,18 @@ class MissionService:
         if mission is None:
             return {"status": "FAILED", "error": "Unknown mission."}
 
-        if mission.get("status") != "AWAITING_APPROVAL":
+        # Atomic check-and-set -- same race, same fix, as resume_blocked()/
+        # resume_planned(): a plain status check here let two concurrent
+        # callers both see AWAITING_APPROVAL and both execute the
+        # approved tool for real. See
+        # firestore_store.claim_mission_transition()'s docstring.
+        if not firestore_store.claim_mission_transition(mission_id, "AWAITING_APPROVAL", "RESUMING"):
+            current = firestore_store.get_mission(mission_id) or {}
             return {
                 "status": "FAILED",
                 "error": (
                     "Mission is not awaiting approval. "
-                    f"Current status: {mission.get('status')}"
+                    f"Current status: {current.get('status')}"
                 ),
             }
 
