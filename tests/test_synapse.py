@@ -251,6 +251,29 @@ def test_rejected_approval_does_not_install(monkeypatch):
     assert registry.is_implemented("fx_normalize") is False
 
 
+def test_rejecting_through_approval_manager_advances_capability_state_past_validating(monkeypatch):
+    """Before this fix, a rejected capability's Firestore document stayed
+    at state="VALIDATING" forever -- indistinguishable at that layer from
+    "still pending" -- because nothing ever wrote a terminal state for a
+    rejection. This exercises the real ApprovalManager.decide() path
+    (not firestore_store.update_approval() directly, which bypasses the
+    fix) to prove the capability document itself now reflects the
+    rejection, not just the separate approval_requests document."""
+    from app.governance.approval import approval_manager
+
+    patch_pipeline(monkeypatch)
+    record = synapse.propose("normalize currency")
+
+    assert firestore_store.get_capability("fx_normalize")["state"] == "VALIDATING"
+
+    approval_manager.decide(
+        record.approval_request_id, approved=False, decided_by="anshul",
+    )
+
+    assert firestore_store.get_capability("fx_normalize")["state"] == "REJECTED"
+    assert registry.is_implemented("fx_normalize") is False
+
+
 def test_passport_records_the_whole_chain(monkeypatch):
     patch_pipeline(monkeypatch)
     record = synapse.propose("normalize currency")

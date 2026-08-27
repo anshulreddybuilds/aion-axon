@@ -14,6 +14,7 @@ export const TONE = {
   FAILED: "border-danger/40 text-danger",
   WAITING: "border-warn/40 text-warn",
   DONE: "border-ok/40 text-ok",
+  INSTALLED: "border-ok/40 text-ok",
   SKIPPED: "border-edge text-muted",
 };
 
@@ -118,6 +119,18 @@ export function deriveStages(record) {
     });
   } else if (["REJECTED", "REFUSED", "BLOCKED", "FAILED"].includes(record.status)) {
     stages.push({ key: "TERMINAL", label: `Mission stopped — ${record.status}`, tone: record.status, detail: record.reason });
+  } else if (record.status === "INSTALLED") {
+    // reconcileRecord() (missionApprovalReconcile.js) sets status to
+    // INSTALLED after a real approve+install round trip. Without this
+    // branch the "Human approval — WAITING" row above just disappears
+    // at the exact moment of success and nothing replaces it -- the
+    // stage timeline goes visually blank right when the mission
+    // actually finished, even though Proof of Action (which reads the
+    // same record) correctly shows INSTALLED.
+    stages.push({
+      key: "INSTALLED", label: "Capability installed", tone: "INSTALLED",
+      detail: record.candidate?.name,
+    });
   }
 
   return stages;

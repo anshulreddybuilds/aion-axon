@@ -141,7 +141,8 @@ jobs:
         run: |
           python -m pytest -v \
             tests/test_concurrency_firestore_emulator.py \
-            tests/test_concurrency_firestore_emulator_engine.py
+            tests/test_concurrency_firestore_emulator_engine.py \
+            tests/test_concurrency_firestore_emulator_approval.py
 
   frontend:
     runs-on: ubuntu-latest

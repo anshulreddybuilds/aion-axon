@@ -20,6 +20,7 @@ class MemoryFirestore:
         self.ground_truth: dict[str, dict[str, Any]] = {}
         self.install_claims: dict[str, str] = {}
         self._claim_lock = threading.Lock()
+        self._approval_lock = threading.Lock()
 
     def create_approval(self, request_id: str, data: dict[str, Any]) -> None:
         self.approvals[request_id] = {
@@ -40,6 +41,40 @@ class MemoryFirestore:
             "decided_by": decided_by,
             "decided_at": datetime.now(timezone.utc).isoformat(),
         })
+
+    def decide_approval(
+        self,
+        request_id: str,
+        approved: bool,
+        decided_by: str = "human",
+    ) -> str:
+        """Atomic check-and-set: only the first decide() on a given
+        request_id can win. See AxonFirestore.decide_approval's docstring
+        for why this exists -- the plain get()-then-update_approval() this
+        replaces raced under real concurrency the same way the install
+        path did before claim_install(). Held under a dedicated lock (not
+        _claim_lock, a different resource) so this is safe even though
+        MemoryFirestore has no network round trip to race across.
+        """
+        with self._approval_lock:
+            data = self.approvals.get(request_id)
+
+            if data is None:
+                return "NOT_FOUND"
+
+            if data.get("status") != "PENDING":
+                return "ALREADY_DECIDED"
+
+            status = "APPROVED" if approved else "REJECTED"
+
+            data.update({
+                "status": status,
+                "approved": approved,
+                "decided_by": decided_by,
+                "decided_at": datetime.now(timezone.utc).isoformat(),
+            })
+
+            return status
 
     def get_approval(self, request_id: str) -> Optional[dict[str, Any]]:
         return self.approvals.get(request_id)
@@ -160,6 +195,15 @@ class InstallClaimContention(Exception):
     """
 
 
+class ApprovalDecisionContention(Exception):
+    """decide_approval()'s transaction hit real lock contention and
+    could not determine whether this call's decision was recorded.
+    Distinct from "ALREADY_DECIDED" (which means a decision -- someone's
+    -- was definitely recorded) so a caller never mistakes unresolved
+    contention for a real, known outcome.
+    """
+
+
 class AxonFirestore:
     def __init__(self):
         self.db = firestore.Client(project="aion-axon-2026")
@@ -183,6 +227,78 @@ class AxonFirestore:
             "decided_by": decided_by,
             "decided_at": datetime.now(timezone.utc).isoformat(),
         })
+
+    def decide_approval(
+        self,
+        request_id: str,
+        approved: bool,
+        decided_by: str = "human",
+    ) -> str:
+        """Atomically check-and-set an approval decision with a real
+        Firestore transaction, so this holds across network-separated
+        callers (multiple Cloud Run instances), not just within one
+        process.
+
+        Before this existed, ApprovalManager.decide() did a plain read
+        (get_approval) followed by a separate write (update_approval) --
+        the exact read-check-write shape that was shown to race for real
+        on installs before claim_install() (see that method's docstring)
+        and was never fixed here. Two concurrent decide() calls on the
+        same request_id could both pass the "still PENDING" check before
+        either wrote, and the second .update() would silently overwrite
+        the first's status/approved/decided_by/decided_at -- an approval
+        recorded as APPROVED could flip to REJECTED (or vice versa) with
+        no error to either caller. Returns the request_id's status AFTER
+        this call resolves: "APPROVED"/"REJECTED" if this call's decision
+        was the one actually recorded, "ALREADY_DECIDED" if it was already
+        decided (by this call losing a race, or a prior call), or
+        "NOT_FOUND" if no such approval exists. The caller (ApprovalManager
+        .decide) re-reads the record after this returns to build its
+        response -- that second read is safe because by then the decision
+        is already durably committed, so there's no race left to lose.
+        """
+        doc_ref = self.db.collection("approval_requests").document(request_id)
+
+        @firestore.transactional
+        def _decide(transaction):
+            snapshot = doc_ref.get(transaction=transaction)
+
+            if not snapshot.exists:
+                return "NOT_FOUND"
+
+            data = snapshot.to_dict() or {}
+
+            if data.get("status") != "PENDING":
+                return "ALREADY_DECIDED"
+
+            status = "APPROVED" if approved else "REJECTED"
+
+            transaction.update(doc_ref, {
+                "status": status,
+                "approved": approved,
+                "decided_by": decided_by,
+                "decided_at": datetime.now(timezone.utc).isoformat(),
+            })
+
+            return status
+
+        # A human approval decision has at most a couple of real
+        # contenders (a double-click, or two tabs open on the same
+        # approval) -- nowhere near claim_install()'s ~10-concurrent-
+        # caller install races, so the client library's own default
+        # transaction retries (max_attempts=5) are enough; no need for
+        # claim_install()'s outer jitter-backoff loop here. Still catch
+        # Aborted rather than let a real lock-contention failure surface
+        # as an unhandled 500 -- map it to the same honest signal
+        # ApprovalManager already understands (a bare re-raise would be
+        # a new, unhandled exception type at the API layer).
+        try:
+            return _decide(self.db.transaction())
+        except gcloud_exceptions.Aborted as exc:
+            raise ApprovalDecisionContention(
+                f"Could not resolve approval decision for '{request_id}' -- "
+                "real lock contention. Safe to retry."
+            ) from exc
 
     def get_approval(self, request_id: str) -> Optional[dict[str, Any]]:
         snapshot = (

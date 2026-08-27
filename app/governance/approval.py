@@ -155,28 +155,37 @@ class ApprovalManager:
             })
             raise KillSwitchActive("Kill switch is active.")
 
-        request = self.get(request_id)
-
-        if request is None:
-            raise KeyError(
-                f"Unknown approval request: {request_id}"
-            )
-
-        if not request.pending:
-            raise ValueError(
-                f"Approval request {request_id} has already been decided."
-            )
-
-        if approved:
-            request.approve(decided_by)
-        else:
-            request.reject(decided_by)
-
-        firestore_store.update_approval(
+        # decide_approval() is a single atomic check-and-set (a real
+        # Firestore transaction on real Firestore) rather than the plain
+        # get()-then-update_approval() this replaces. That older shape
+        # read the record, checked `not request.pending`, and only then
+        # wrote -- a TOCTOU gap on network-separated Firestore that let
+        # two concurrent decide() calls on the same request_id both pass
+        # the pending check and race to write, with the second silently
+        # overwriting the first's decision. See
+        # firestore_store.decide_approval()'s docstring for the full
+        # account; this mirrors the fix claim_install() already applied
+        # to the analogous install race.
+        outcome = firestore_store.decide_approval(
             request_id,
             approved=approved,
             decided_by=decided_by,
         )
+
+        if outcome == "NOT_FOUND":
+            raise KeyError(
+                f"Unknown approval request: {request_id}"
+            )
+
+        if outcome == "ALREADY_DECIDED":
+            raise ValueError(
+                f"Approval request {request_id} has already been decided."
+            )
+
+        # The decision is now durably committed -- re-reading here is
+        # safe (no race left to lose) and gives this method the same
+        # ApprovalRequest return shape callers already depend on.
+        request = self.get(request_id)
 
         firestore_store.write_audit_event(
             "HUMAN_APPROVAL_DECISION",
@@ -190,6 +199,20 @@ class ApprovalManager:
                 "capability": request.capability,
             },
         )
+
+        # Without this, rejecting an install leaves the capability's
+        # Firestore document permanently stuck at state="VALIDATING" --
+        # the value SynapseEngine.propose_stream() wrote when it first
+        # created this exact approval request, awaiting this exact
+        # decision. Nothing else ever advances it past VALIDATING on a
+        # rejection, so at the capabilities-collection layer a rejected
+        # candidate is indistinguishable from "still pending," forever.
+        # Gated to policy_id == "INSTALL" specifically -- G-07 (below) is
+        # a different mechanism entirely, re-verifying an ALREADY
+        # installed/READY capability, and must never have this side
+        # effect on rejection.
+        if not approved and request.policy_id == "INSTALL" and request.capability:
+            firestore_store.save_capability(request.capability, {"state": "REJECTED"})
 
         # G-07 asked the human to VERIFY a capability. Recording the answer
         # is what stops the gate asking the same question forever: without

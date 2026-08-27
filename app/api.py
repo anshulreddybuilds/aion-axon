@@ -28,7 +28,7 @@ from app.governance.kill_switch import kill_switch
 from app.governance.owner_auth import HEADER as OWNER_TOKEN_HEADER, require_owner
 from app.governance.rate_limit import rate_limit_planned_mission, rate_limit_propose
 from app.governance.review import review_package
-from app.memory.firestore_store import firestore_store
+from app.memory.firestore_store import ApprovalDecisionContention, firestore_store
 from app.agents.plan_schema import MissionPlan
 from app.missions.service import mission_service
 from app.observability.telemetry import summarise
@@ -896,6 +896,17 @@ def decide_approval(
         return {"status": "NOT_FOUND", "request_id": request_id}
     except ValueError as error:
         return {"status": "ALREADY_DECIDED", "error": str(error)}
+    except ApprovalDecisionContention as error:
+        # Real lock contention that never resolved to a definitive
+        # winner or loser -- NOT the same as ALREADY_DECIDED (a decision
+        # was in fact recorded, just not provably this one). Reporting
+        # APPROVED/REJECTED here would claim a state that was never
+        # confirmed; the honest answer is the caller should retry.
+        return {
+            "status": "CONTENTION",
+            "error": str(error),
+            "request_id": request_id,
+        }
 
     return {
         "status": "APPROVED" if request.approved else "REJECTED",

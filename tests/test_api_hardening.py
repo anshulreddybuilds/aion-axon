@@ -273,6 +273,36 @@ def test_forged_approval_id_returns_a_clean_not_found():
     assert r.json()["status"] == "NOT_FOUND"
 
 
+def test_approval_decision_contention_returns_a_clean_200_not_a_500():
+    """decide_approval() (app/memory/firestore_store.py) raises
+    ApprovalDecisionContention when its real Firestore transaction hits
+    lock contention it could never resolve to a definitive winner or
+    loser -- distinct from ALREADY_DECIDED, which means a decision WAS
+    recorded. This can't be reproduced against MemoryFirestore (no real
+    network round trip to contend over -- see
+    tests/test_concurrency_firestore_emulator_approval.py for the real
+    transaction proof), so exercised here by forcing the exception at
+    the seam api.py actually catches it at."""
+    from app.memory.firestore_store import ApprovalDecisionContention
+
+    def _boom(request_id, approved, decided_by="human"):
+        raise ApprovalDecisionContention("real lock contention, safe to retry")
+
+    import app.governance.approval as approval_module
+
+    original = approval_module.firestore_store.decide_approval
+    approval_module.firestore_store.decide_approval = _boom
+    try:
+        r = owner.post("/approvals/some-id/decide", json={"approved": True})
+    finally:
+        approval_module.firestore_store.decide_approval = original
+
+    assert r.status_code == 200  # never a raw 500 for contention that's safe to retry
+    body = r.json()
+    assert body["status"] == "CONTENTION"
+    assert body["request_id"] == "some-id"
+
+
 def test_forged_capability_name_install_returns_a_clean_failure():
     r = owner.post("/synapse/install/does-not-exist-capability")
     assert r.status_code == 200

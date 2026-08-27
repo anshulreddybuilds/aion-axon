@@ -140,7 +140,25 @@ export default function App() {
   const decide = async (id, approved, capability) => {
     setBusy(true);
     try {
-      await api.decide(id, approved);
+      const decision = await api.decide(id, approved);
+
+      // POST /approvals/{id}/decide answers HTTP 200 even when the
+      // decision didn't apply -- ALREADY_DECIDED, NOT_FOUND, BLOCKED
+      // (kill switch), and CONTENTION are all normal 200 bodies, not
+      // thrown errors, so the await above never throws for them. This
+      // call discarded that response entirely and always proceeded as
+      // if it had succeeded -- the same bug already fixed in
+      // MissionTheater.jsx (see that file's decide()) but never applied
+      // here, the actual production approval queue.
+      const expected = approved ? "APPROVED" : "REJECTED";
+      if (decision.status !== expected) {
+        setError(
+          `Decision not recorded: ${decision.status}${
+            decision.reason ? ` — ${decision.reason}` : ""
+          }${decision.error ? ` — ${decision.error}` : ""}`
+        );
+        return;
+      }
 
       // Approving does not install. POST /approvals/{id}/decide records
       // the decision only; the install is a separate call that re-reads

@@ -31,9 +31,18 @@ function StatusPill({ status }) {
   );
 }
 
-/** One card = one endpoint. Fetches once, offers a manual re-run. */
-function ProofCard({ title, fetcher, render, needsOwner = false }) {
-  const [state, setState] = useState({ loading: true, data: null, error: null });
+/** One card = one endpoint. Fetches once, offers a manual re-run.
+ *
+ * autoRun=false skips the automatic on-mount fetch. Every fetcher here
+ * except ledgerSeal() is a read (GET); ledgerSeal() is POST
+ * /beastmode/ledger/seal, which "writes a new baseline" (its own card
+ * title says so) -- a real, non-idempotent mutation. Before autoRun
+ * existed every card ran unconditionally on mount, so simply opening
+ * Judge Mode as the owner fired a real, unrequested ledger write with no
+ * click and no confirmation. Only LedgerSealCard passes autoRun={false};
+ * every other card keeps the original fetch-on-mount behavior. */
+function ProofCard({ title, fetcher, render, needsOwner = false, autoRun = true }) {
+  const [state, setState] = useState({ loading: autoRun, data: null, error: null });
 
   const run = () => {
     setState({ loading: true, data: null, error: null });
@@ -42,9 +51,12 @@ function ProofCard({ title, fetcher, render, needsOwner = false }) {
       .catch((err) => setState({ loading: false, data: null, error: err.message }));
   };
 
-  useEffect(run, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (autoRun) run();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const status = state.error ? "ERROR" : state.loading ? null : "LIVE";
+  const idle = !autoRun && !state.loading && !state.data && !state.error;
+  const status = state.error ? "ERROR" : state.loading || idle ? null : "LIVE";
 
   return (
     <Panel
@@ -62,15 +74,16 @@ function ProofCard({ title, fetcher, render, needsOwner = false }) {
           )}
           <button
             onClick={run}
-            disabled={needsOwner && !hasOwnerToken()}
+            disabled={state.loading || (needsOwner && !hasOwnerToken())}
             className="text-[9px] tracking-[0.12em] px-2 py-1 rounded border border-edge text-muted hover:border-cyan/40 hover:text-cyan disabled:opacity-40 disabled:cursor-not-allowed"
-            title={needsOwner && !hasOwnerToken() ? "Owner token required" : "Re-run against the live API"}
+            title={needsOwner && !hasOwnerToken() ? "Owner token required" : idle ? "Run against the live API" : "Re-run against the live API"}
           >
-            ↻ RE-RUN
+            {idle ? "▶ RUN" : "↻ RE-RUN"}
           </button>
         </div>
       }
     >
+      {idle && <Empty>Not yet run — this writes real state, so it only runs on request.</Empty>}
       {state.loading && <Empty>Calling the live endpoint…</Empty>}
       {state.error && (
         <p className="text-xs text-danger">
@@ -82,7 +95,7 @@ function ProofCard({ title, fetcher, render, needsOwner = false }) {
           )}
         </p>
       )}
-      {!state.loading && !state.error && render(state.data)}
+      {!idle && !state.loading && !state.error && render(state.data)}
     </Panel>
   );
 }
@@ -170,6 +183,7 @@ function LedgerSealCard() {
       title="Ledger Seal — owner-gated, writes a new baseline"
       fetcher={api.ledgerSeal}
       needsOwner
+      autoRun={false}
       render={(d) => (
         <div className="text-[11px] space-y-1">
           <p className="text-ok">New seal written over the current live ledger.</p>

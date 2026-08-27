@@ -700,6 +700,12 @@ class SynapseEngine:
             "reason": record.reason,
             "capability": (record.candidate or {}).get("name"),
             "policy_id": record.guardian.get("policy_id"),
+            # record.mission_id was already tracked on AcquisitionRecord
+            # (set by propose()/propose_stream()) but never made it into
+            # the audit payload -- a mission-triggered acquisition's own
+            # audit trail couldn't be joined back to its mission from the
+            # audit_events collection alone.
+            "mission_id": record.mission_id,
         })
 
 
