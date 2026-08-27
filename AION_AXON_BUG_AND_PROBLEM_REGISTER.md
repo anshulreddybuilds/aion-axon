@@ -57,7 +57,7 @@ statuses (`INSTALLED`, `ALREADY_INSTALLED`, `FAILED`,
 OK/error classification for each. `npm run build` confirmed clean.
 **VERIFICATION:** LOCAL VERIFIED (build clean, classification verified
 against all four real backend statuses). Not yet PRODUCTION VERIFIED.
-**COMMIT:** (pending, this pass)
+**COMMIT:** `9f2edf4`
 **REMAINING WORK:** None.
 
 ---
