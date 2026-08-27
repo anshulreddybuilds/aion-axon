@@ -10,6 +10,137 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## Update 19 — Graphical Mission Builder, Day 1: backend compiler entry point + visual canvas (v5), HEAD 6f33f86
+
+**Scope authorization**: the owner explicitly authorized a major scope
+expansion beyond this file's own anti-scope-creep rules and the
+CLAUDE.md hard rules, with 3 days left before the Aug 30 submission:
+"BUILD THE GRAPHICAL MISSION BUILDER. BUILD THE VOICE INTEGRATION.
+CONNECT BOTH TO THE EXISTING AION MISSION ENGINE... You do NOT need to
+ask me again whether to proceed with these phases." Flagged the
+conflict via a direct question before proceeding; the owner's answer
+above is the standing authorization for this and the next 1-2 passes
+of related work, not re-litigated here.
+
+Hard constraint honored throughout: **no second execution engine.**
+Everything below produces the exact same `MissionPlan`/`MissionStep`
+schema (`app/agents/plan_schema.py`) the Gemini planner already
+produces, and runs through the identical `mission_engine.run()`.
+
+**Backend** (commit `9925f97`, prior to this entry's HEAD):
+- `MissionService.start_planned()` (`app/missions/service.py`) split
+  into itself (plan from free text) + a new
+  `start_from_plan(plan, request)` shared method that actually executes
+  and persists. Verified byte-identical behavior for the existing
+  planner path (555 passed both before/after, pure extraction).
+- New `POST /missions/from-graph` (`app/api.py`): owner-auth +
+  rate-limited identically to `/missions/planned`, takes a `MissionPlan`
+  body directly (Pydantic validates the schema for free), rejects an
+  empty `steps` list honestly, otherwise calls `start_from_plan()`.
+- 5 new backend tests (`tests/test_api.py`) proving a graph-authored
+  plan gets the SAME real `$STEP_N` dependency resolution, honest
+  `BLOCKED` gap detection, and real `AWAITING_APPROVAL` governance
+  gating as a planner-authored one — plus empty-graph rejection and
+  owner-auth enforcement. **560 passed, 2 skipped** (up from 555, zero
+  regressions).
+
+**Frontend** (commit `6f33f86`, this entry's HEAD) — new surface at `/v5`:
+- `graphCompiler.js` (pure, framework-free): `compileGraphToPlan(nodes,
+  edges, goal)` topologically sorts nodes via Kahn's algorithm (stable
+  tie-break = node array order) and compiles to a real `MissionPlan`. A
+  node references another node's real output with `@nodeId` /
+  `@nodeId.field` inside its own args text; this is the ONLY
+  graph-specific notation anywhere — it compiles straight to the
+  engine's own `$STEP_N`/`$STEP_N.field` convention and is completely
+  gone from the object that gets posted. Cycles (including self-loops),
+  dangling edges, duplicate node ids, unresolved `@id` references, and
+  empty graphs are all rejected with a specific honest message, never
+  silently accepted or silently broken. `planToGraph(plan)` is the
+  exact inverse — reconstructs an editable node/edge graph from any
+  `MissionPlan`, round-trip tested. 13 unit tests
+  (`graphCompiler.test.mjs`).
+- `graphExecutionState.js` (pure): `nodeStatuses({nodes,
+  stepNumberById, missionResult})` maps a REAL mission result onto
+  per-node visual state (COMPLETED / FAILED / BLOCKED / AWAITING
+  APPROVAL / not yet run). A node with nothing in the real result to
+  report is "not yet run" — never guessed at, never fabricated as
+  failed. 6 unit tests (`graphExecutionState.test.mjs`).
+- `v5/AppV5.jsx`: the actual canvas. Add/edit/delete/drag nodes
+  (pointer-event based, no drag library), connect/disconnect edges
+  (click "connect →" then click a target; SVG arrows render the wiring;
+  a compact edge list below the canvas allows removal), a capability
+  picker sourced live from `GET /capabilities`, "Compile & Run" against
+  `POST /missions/from-graph`. Inline approval UI for BOTH governance
+  paths a graph mission can hit: a direct MEDIUM/HIGH-risk step
+  (`decide()` + the new `resume-planned` call) and a capability
+  acquisition gap (`decide()` + `install()`, which auto-resumes
+  server-side — same pattern already proven in `AppV4.jsx`). "Plan it"
+  is the text/voice convergence path: it runs the exact same real
+  `plannedMission()` every other surface already uses (there is no
+  plan-only backend endpoint, so this genuinely executes, stopping at
+  the same real governance checkpoints a hand-built graph would), then
+  reconstructs the resulting plan onto the canvas via `planToGraph()` —
+  text, voice (via the existing `useSpeechInput` hook, unchanged) and
+  the graph all end up editing the SAME object.
+- Three new `api.js` methods: `missionFromGraph(plan)`,
+  `resumePlanned(missionId)`, `resumeBlocked(missionId,
+  capabilityName)` — the last two previously had no frontend caller at
+  all despite the routes existing since BUG-005/006.
+- Wired into `main.jsx` as `/v5`, alongside the untouched `/`, `/v2`,
+  `/v3`, `/v4` surfaces (v1 stays the production Holo-Deck).
+
+**Verification — real, not just unit tests.** Ran a live local stack
+(`AXON_FIRESTORE_MODE=memory` backend on 127.0.0.1:8099, Vite dev
+server on localhost:5173, CORS allowlist already covers `localhost:5173`
+by default) and drove the actual rendered `/v5` page with Playwright/
+Chromium (`/opt/pw-browsers/chromium`, pre-installed in this
+environment):
+  1. Built a 3-node graph by clicking through the real UI (two
+     `calculator` nodes, a third referencing both via
+     `@n1.result + @n2.result`, wired with two real drawn edges),
+     clicked the real "Compile & Run" button, and confirmed the mission
+     reached `COMPLETED` with the genuinely computed answer **50**
+     (40 + 10) rendered on screen — proving GRAPH → REAL API → REAL
+     MISSION → REAL EXECUTION STATE end to end, through the browser,
+     not just via `TestClient`.
+  2. Built a single node with no capability wired, ran it, and confirmed
+     the node turned `BLOCKED` (amber) and a real live acquisition
+     trace appeared showing the actual Guardian pre-screen and research
+     stages as they streamed in (research honestly reported "Ungrounded
+     — no citations available" since the local run used a dummy Gemini
+     key) — proving the honest-gap and live-acquisition paths render
+     real backend state, not fabricated progress.
+  Found and fixed one real, minor bug from run 1: freshly `Add
+  node`-created nodes used a spacing formula (60px steps) narrower than
+  the node card width (208px), so 2+ default-positioned nodes visually
+  overlapped. Fixed to match the 3-per-row/240px grid already used by
+  "Plan it"'s auto-layout; reverified with a second browser run
+  (2 fresh nodes, bounding-rect overlap check) that they no longer
+  overlap.
+
+**Not yet done** (explicitly still open, matching the user's own
+Day 2/3 framing — not attempted or claimed here): real-time SSE-driven
+node state (current implementation refreshes from the mission result
+object, not a live stream, for the graph's own `COMPLETED`/`BLOCKED`
+steps — the *acquisition* sub-panel IS truly live via the existing SSE
+stream); a dedicated component/browser-level automated test suite
+beyond the two ad hoc Playwright scripts run manually this pass (not
+committed as permanent CI checks — the frontend has no browser-level
+test runner installed, only plain Node `.test.mjs` scripts for pure
+logic); voice→graph beyond the existing "Plan it" convergence (e.g. a
+spoken correction to an already-built graph); further hardening/demo
+prep.
+
+`npm run build` clean both before and after the layout fix. All 8
+existing `*.test.mjs` files plus the 2 new ones remain green (19 new
+assertions, ~93 total across the suite). Backend suite unaffected by
+this frontend-only commit: still 560 passed, 2 skipped.
+
+**Notion**: not attempted this pass (see the long-standing block noted
+in Update 18 and below — unchanged). **NotebookLM**: still unavailable.
+
+Current HEAD: `6f33f86` — supersedes every hash below.
+
 ## Update 18 — BUG-010: ALREADY_INSTALLED (a real, safe status) was shown as an error everywhere, HEAD 47890e1
 
 Directive: continue the state-machine idempotency audit ("install
