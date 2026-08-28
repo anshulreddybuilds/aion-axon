@@ -52,6 +52,18 @@ def genai_client() -> genai.Client:
     Vertex AI when no key is set. Passing those values through
     explicitly here would only risk drifting out of sync with the
     SDK's own (already correct) precedence rules between them.
+
+    Note: genai.Client() itself never raises for missing ADC. Reading
+    google.genai._api_client.BaseApiClient.__init__ in the installed
+    google-genai==2.18.1 shows it only stores `self._credentials =
+    credentials` (None unless explicitly passed) -- google.auth.default()
+    is called lazily, inside _access_token()/load_auth(), the first time
+    a real API call needs a bearer token. So a missing-ADC failure always
+    surfaces from the actual generate_content()/embed_content() call, not
+    from this constructor -- which is exactly where every call site in
+    this codebase already has a broad `except Exception` around the real
+    call, and google-auth's own DefaultCredentialsError message already
+    points at the ADC setup docs.
     """
     if not genai_available():
         raise RuntimeError(
