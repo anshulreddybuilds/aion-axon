@@ -19,6 +19,7 @@ from google.genai import types
 
 from app.agents.plan_schema import MissionPlan
 from app.capabilities.declarations import capability_catalog
+from app.google_client import genai_available
 
 APP_NAME = "aion_axon_mission_planner"
 MODEL = os.getenv("AXON_PLANNER_MODEL", "gemini-3.6-flash")
@@ -102,7 +103,7 @@ def _agent() -> Agent:
 
 
 def planner_available() -> bool:
-    return bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
+    return genai_available()
 
 
 async def _run(request: str, user_id: str) -> str:
@@ -149,7 +150,12 @@ def plan_mission(
     take the service down or invent a plan.
     """
     if not planner_available():
-        return None, "No Gemini API key configured; planning skipped."
+        return None, (
+            "No Gemini access configured; planning skipped. Set "
+            "GOOGLE_API_KEY/GEMINI_API_KEY, or GOOGLE_GENAI_USE_VERTEXAI=true "
+            "with GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_LOCATION and Application "
+            "Default Credentials."
+        )
 
     try:
         raw = asyncio.run(_run(request, user_id))

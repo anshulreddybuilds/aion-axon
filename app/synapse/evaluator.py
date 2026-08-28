@@ -30,9 +30,9 @@ import os
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
-from google import genai
 from google.genai import types
 
+from app.google_client import genai_client
 from app.observability.telemetry import record_model_call, timed
 
 # Pinned from a live models.list() against the project's own key, not
@@ -74,17 +74,8 @@ class _EvaluatorResponse(BaseModel):
     correctness_concerns: list[str] = Field(default_factory=list)
 
 
-def _client() -> genai.Client:
-    key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-
-    if not key:
-        raise RuntimeError("No API key configured for the evaluator.")
-
-    return genai.Client(api_key=key)
-
-
 async def _score(prompt: str) -> str:
-    client = _client()
+    client = genai_client()
 
     # response_mime_type/response_schema ask the API for JSON directly.
     # This is a request, not a guarantee -- if the model or API version

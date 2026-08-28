@@ -18,10 +18,10 @@ report already are.
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Any
 
+from app.google_client import genai_available
 from app.governance.owner_auth import configured_token
 from app.memory.firestore_store import firestore_store
 
@@ -47,11 +47,13 @@ def _check_owner_auth() -> Check:
 
 
 def _check_gemini_key() -> Check:
-    configured = bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
+    configured = genai_available()
     return Check(
         "generation_and_evaluation_key_configured", configured, "LIVE",
-        "GOOGLE_API_KEY/GEMINI_API_KEY is set (value never read by this check)." if configured
-        else "No Gemini key configured -- generation and evaluation will fail.",
+        "GOOGLE_API_KEY/GEMINI_API_KEY or a Vertex AI configuration "
+        "(GOOGLE_GENAI_USE_VERTEXAI) is set (values never read by this check)."
+        if configured
+        else "No Gemini API key or Vertex AI configuration set -- generation and evaluation will fail.",
     )
 
 

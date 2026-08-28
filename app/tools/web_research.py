@@ -11,21 +11,12 @@ import asyncio
 import os
 from typing import Any
 
-from google import genai
 from google.genai import types
 
+from app.google_client import genai_client
 from app.observability.telemetry import record_model_call, timed
 
 MODEL = os.getenv("AXON_RESEARCH_MODEL", "gemini-3.6-flash")
-
-
-def _api_key() -> str:
-    key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-
-    if not key:
-        raise RuntimeError("No Gemini API key configured for web research.")
-
-    return key
 
 
 async def _generate_async(query: str, grounded: bool = True) -> Any:
@@ -39,7 +30,7 @@ async def _generate_async(query: str, grounded: bool = True) -> Any:
     that actually issues the request -- the same pattern the planner uses,
     which is why the planner never hit this.
     """
-    client = genai.Client(api_key=_api_key())
+    client = genai_client()
 
     instruction = (
         "You are a research assistant. Answer only from search "

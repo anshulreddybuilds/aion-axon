@@ -13,7 +13,6 @@ None. That keeps tests and CI offline and deterministic without pretending
 a plan was produced.
 """
 import asyncio
-import os
 from typing import Optional
 
 from google.adk.runners import Runner
@@ -21,13 +20,18 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from app.agents.planner import planner_agent
+from app.google_client import genai_available
 
 APP_NAME = "aion_axon"
 
 
 def planner_available() -> bool:
-    """True when a Gemini API key is configured."""
-    return bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
+    """True when a Gemini API key OR a Vertex AI configuration is
+    present. google.adk.models.Gemini builds its client the same way
+    genai_client() does (see app/google_client.py's own docstring for
+    the traced SDK source), so both auth paths that make a real call
+    possible also make the ADK-driven planner possible."""
+    return genai_available()
 
 
 async def _run(user_request: str, user_id: str) -> str:
