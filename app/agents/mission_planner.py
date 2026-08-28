@@ -19,6 +19,7 @@ from google.genai import types
 
 from app.agents.plan_schema import MissionPlan
 from app.capabilities.declarations import capability_catalog
+from app.google_client import genai_available
 
 APP_NAME = "aion_axon_mission_planner"
 MODEL = os.getenv("AXON_PLANNER_MODEL", "gemini-3.6-flash")
@@ -72,6 +73,16 @@ Rules you must follow:
 8. Keep steps minimal and concrete. Prefer fewer real steps to many
    vague ones.
 
+9. DO NOT add a write_brief step by default. write_brief packages
+   findings into a business report -- use it ONLY when the user's
+   request itself asks for a report, brief, summary document, or
+   something that genuinely benefits from that packaging (e.g. "brief
+   me on...", "write a report", a multi-finding business analysis).
+   For a request whose real answer is a single number, fact, or short
+   sentence (a conversion, a lookup, a calculation), the LAST step must
+   produce that answer directly -- do not wrap it in an unrequested
+   brief-writing step just because write_brief is available.
+
 Return ONLY the structured plan.
 """
 
@@ -92,7 +103,7 @@ def _agent() -> Agent:
 
 
 def planner_available() -> bool:
-    return bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
+    return genai_available()
 
 
 async def _run(request: str, user_id: str) -> str:
@@ -139,7 +150,12 @@ def plan_mission(
     take the service down or invent a plan.
     """
     if not planner_available():
-        return None, "No Gemini API key configured; planning skipped."
+        return None, (
+            "No Gemini access configured; planning skipped. Set "
+            "GOOGLE_API_KEY/GEMINI_API_KEY, or GOOGLE_GENAI_USE_VERTEXAI=true "
+            "with GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_LOCATION and Application "
+            "Default Credentials."
+        )
 
     try:
         raw = asyncio.run(_run(request, user_id))

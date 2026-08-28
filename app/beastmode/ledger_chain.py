@@ -11,26 +11,62 @@ prove:
     by the existing, unmodified write path (app.memory.firestore_store).
     Nothing about how or when an event is written has changed.
   - A SEAL is a snapshot: the final chain hash at a point in time, saved
-    to disk. Re-verifying later and getting the SAME final hash proves
-    nothing in the ledger was altered or reordered between seal and
-    verification. Getting a DIFFERENT hash proves something was.
+    to Firestore (system/ledger_seal) -- NOT local disk. It used to be a
+    file next to this module, which worked in a single long-running
+    local process but was silently broken in the actual deployed
+    architecture: a Cloud Run container's filesystem is neither shared
+    across instances nor durable across a cold start or redeploy, so a
+    seal written by one instance was invisible to every other
+    concurrently-running instance and vanished the moment the instance
+    that wrote it was recycled. Moved to Firestore, the same durable
+    store every other piece of state in this project already uses.
+    Re-verifying later and getting the SAME final hash proves nothing in
+    the ledger was altered or reordered between seal and verification.
+    Getting a DIFFERENT hash proves something was.
   - This is tamper-EVIDENT, not tamper-PROOF: nothing here stops someone
     with direct Firestore write access from editing an event AND
     re-sealing over the edit. Detecting that would need the seal to live
     somewhere the same actor cannot write to (out of scope for this pass,
     and stated here rather than implied away).
+
+Batch 2 / SEC-05 (ordering determinism): `firestore_store.list_evolution_events()`
+reads via a plain Firestore `.stream()` with no `.order_by()` clause --
+Firestore does not guarantee stream order without one, and adding a
+multi-field `.order_by()` to the live query risks requiring a composite
+index that may not exist in production (a real deployment risk, not
+something to introduce blindly from this environment). Since the hash
+chain is order-dependent by construction, an order-agnostic caller feeding
+it meant `final_hash` was not reliably reproducible across separate reads
+independent of any tampering -- found live 24 Aug when a real ledger
+re-verification did not reproduce the production seal's hash even though
+the only real change was one legitimate new event.
+
+The fix lives HERE rather than in the Firestore query: `build_chain()` now
+imposes its own canonical order on whatever list it's given, rather than
+trusting caller-supplied order (the opposite of this module's previous
+design). Ordering key is `(timestamp, event_id)`: `timestamp` is the real
+chronological signal, `event_id` is a guaranteed-unique field written into
+every event by BOTH firestore_store backends (not just the Firestore
+document ID -- see write_evolution_event()) and breaks a timestamp
+collision deterministically. It does not need to preserve "true" order
+under a collision, only PRODUCE THE SAME order every time given the same
+events -- which is the actual property tamper-evidence depends on.
+
+This changes nothing about existing events, does not reorder or rewrite
+any historical record, and does not touch any existing seal. It only
+changes how `build_chain()`/`seal()`/`verify()` compute a hash from
+whatever event list they're handed.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
-GENESIS = "0" * 64
+from app.memory.firestore_store import firestore_store
 
-SEAL_PATH = Path(__file__).parent / "ledger_seal.json"
+GENESIS = "0" * 64
 
 
 def _canonical(event: dict[str, Any]) -> str:
@@ -50,11 +86,31 @@ class ChainLink:
     change: str
 
 
-def build_chain(events: list[dict[str, Any]]) -> list[ChainLink]:
-    """Chain events in the order given. Caller supplies real event order —
-    this module does not fetch or sort, so it can be tested with fixtures
-    without needing Firestore.
+def _canonical_order(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deterministic, reproducible order: (timestamp, event_id).
+
+    Both fields are always present -- written by every code path that
+    creates an evolution event, in both the memory and real Firestore
+    backends (see firestore_store.write_evolution_event()). Sorting here,
+    rather than trusting whatever order the caller's query happened to
+    return, is what makes seal()/verify() reproducible across separate
+    reads regardless of Firestore's own unordered `.stream()`.
     """
+    return sorted(
+        events,
+        key=lambda e: (str(e.get("timestamp") or ""), str(e.get("event_id") or "")),
+    )
+
+
+def build_chain(events: list[dict[str, Any]]) -> list[ChainLink]:
+    """Chain events in canonical (timestamp, event_id) order, regardless
+    of the order the caller passed them in -- see _canonical_order().
+    Still testable with plain fixtures; it just no longer trusts the
+    fixture's own list order either, which is deliberate: a test that
+    only passes because its fixture happened to already be sorted would
+    hide exactly the bug this fixes.
+    """
+    events = _canonical_order(events)
     chain: list[ChainLink] = []
     previous = GENESIS
 
@@ -73,13 +129,21 @@ def build_chain(events: list[dict[str, Any]]) -> list[ChainLink]:
 
 
 def seal(events: list[dict[str, Any]]) -> dict:
-    """Write the current final chain hash to disk. This IS the claim
-    "the ledger looked like this at this moment" — nothing more."""
+    """Write the current final chain hash to Firestore. This IS the claim
+    "the ledger looked like this at this moment" — nothing more.
+
+    Firestore, not local disk: a Cloud Run container's own filesystem is
+    neither shared across instances nor durable across a cold start or
+    redeploy, so a seal written there was invisible to every OTHER
+    concurrently-running instance and silently lost the moment the
+    instance that wrote it was recycled -- the opposite of what a sealed
+    baseline is supposed to mean. See firestore_store.save_ledger_seal().
+    """
     chain = build_chain(events)
     final = chain[-1].chain_hash if chain else GENESIS
 
     record = {"event_count": len(events), "final_hash": final}
-    SEAL_PATH.write_text(json.dumps(record, indent=2))
+    firestore_store.save_ledger_seal(record)
     return record
 
 
@@ -93,16 +157,17 @@ def verify(events: list[dict[str, Any]]) -> dict:
     chain = build_chain(events)
     current_final = chain[-1].chain_hash if chain else GENESIS
 
-    if not SEAL_PATH.exists():
+    sealed = firestore_store.get_ledger_seal()
+
+    if sealed is None:
         return {
             "status": "NO_SEAL",
             "event_count": len(events),
             "current_final_hash": current_final,
-            "detail": "No prior seal on disk — nothing to compare against yet. "
+            "detail": "No prior seal recorded — nothing to compare against yet. "
                       "Run seal() to create a baseline.",
         }
 
-    sealed = json.loads(SEAL_PATH.read_text())
     intact = (
         sealed.get("final_hash") == current_final
         and sealed.get("event_count") == len(events)

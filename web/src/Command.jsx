@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { api, hasOwnerToken, setOwnerToken } from "./api.js";
+import { useSpeechInput } from "./useSpeechInput.js";
 
 /**
  * The front door. Say what you want, in a sentence.
@@ -19,10 +20,15 @@ import { api, hasOwnerToken, setOwnerToken } from "./api.js";
  *    outcome as a friendly chat reply would hide exactly the behaviour
  *    this project exists to demonstrate.
  *
- * Voice uses the browser's own SpeechRecognition. No Google Cloud speech
- * service, no key, no cost, no new dependency - and typing always works
- * if the microphone does not, because a demo that depends on a mic is a
- * demo with a single point of failure.
+ * Voice uses the browser's own SpeechRecognition, via the shared
+ * useSpeechInput()/speechRecognition.js core (see that module's own
+ * docstring for the two real bugs -- a re-render tearing recognition
+ * down mid-listen, and a dropped error code -- found live right here
+ * before being extracted so every mic button in this app fixes them
+ * once, not once each). No Google Cloud speech service, no key, no
+ * cost, no new dependency - and typing always works if the microphone
+ * does not, because a demo that depends on a mic is a demo with a
+ * single point of failure.
  */
 
 const STATUS_TONE = {
@@ -33,128 +39,6 @@ const STATUS_TONE = {
   REFUSED: "text-danger",
 };
 
-// Why the mic goes quiet, in words a listener can act on.
-//
-// The API reports these as bare slugs. "not-allowed" on screen tells the
-// operator nothing about which of the two very different fixes to reach
-// for -- the browser permission chip, or the OS privacy setting.
-const SPEECH_ERRORS = {
-  "not-allowed":
-    "Microphone blocked. Click the 🔒 icon left of the address bar → " +
-    "Microphone → Allow, then reload.",
-  "service-not-allowed":
-    "The browser refused speech recognition. Chrome sends audio to Google " +
-    "to transcribe it; a privacy blocker or managed policy can veto that.",
-  network:
-    "Speech recognition needs the network and could not reach it. This is " +
-    "the browser's transcription service, not aion-core.",
-  "no-speech": "Nothing was heard. Click the mic and speak once it turns red.",
-  aborted: "Listening was interrupted before anything was transcribed.",
-  "audio-capture":
-    "No microphone found. Check that one is connected and selected as the " +
-    "input device.",
-};
-
-function Speech({ onText, onError, busy }) {
-  const [listening, setListening] = useState(false);
-  const [supported, setSupported] = useState(true);
-  const recognition = useRef(null);
-
-  // The callbacks live in refs so the effect below can depend on NOTHING.
-  //
-  // It used to depend on [onText], and the parent passes an inline arrow --
-  // a new function identity on every single render. App.jsx polls the API
-  // every 3 seconds and re-renders the tree, so the effect tore itself down
-  // and its cleanup called r.abort() about three seconds after the mic was
-  // switched on. Every time. A one-word request could sneak through; the
-  // demo request is thirty words and never survived.
-  //
-  // It presented as "the mic isn't listening, I don't know why", which sent
-  // the search to microphone permissions and browser settings -- none of
-  // which were ever wrong. Recognition must outlive a render, so it is
-  // built once and the callbacks are read at fire time.
-  const onTextRef = useRef(onText);
-  const onErrorRef = useRef(onError);
-
-  onTextRef.current = onText;
-  onErrorRef.current = onError;
-
-  useEffect(() => {
-    const Impl =
-      window.SpeechRecognition || window.webkitSpeechRecognition || null;
-
-    if (!Impl) {
-      setSupported(false);
-      return;
-    }
-
-    const r = new Impl();
-    r.lang = "en-US";
-    r.interimResults = false;
-    r.maxAlternatives = 1;
-
-    r.onresult = (event) =>
-      onTextRef.current?.(event.results[0][0].transcript);
-
-    // Say WHY. Silently dropping the reason is what made this bug cost an
-    // evening: a blocked mic and a dead mic looked exactly alike on screen.
-    r.onerror = (event) => {
-      setListening(false);
-
-      const code = event?.error || "unknown";
-
-      onErrorRef.current?.(
-        SPEECH_ERRORS[code] || `Speech input failed (${code}).`
-      );
-    };
-
-    r.onend = () => setListening(false);
-
-    recognition.current = r;
-
-    return () => {
-      try {
-        r.abort();
-      } catch {
-        /* already stopped */
-      }
-    };
-  }, []);
-
-  if (!supported) return null;
-
-  const toggle = () => {
-    if (listening) {
-      recognition.current?.stop();
-      setListening(false);
-      return;
-    }
-
-    try {
-      recognition.current?.start();
-      setListening(true);
-    } catch {
-      setListening(false);
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={toggle}
-      disabled={busy}
-      title={listening ? "Listening — click to stop" : "Speak your request"}
-      className={`shrink-0 h-9 w-9 rounded-md border text-[13px] transition-colors ${
-        listening
-          ? "border-danger text-danger animate-pulse"
-          : "border-edge text-muted hover:border-cyan hover:text-cyan"
-      } disabled:opacity-40`}
-    >
-      {listening ? "◉" : "🎙"}
-    </button>
-  );
-}
-
 export default function Command({ onChanged }) {
   const [token, setToken] = useState("");
   const [unlocked, setUnlocked] = useState(hasOwnerToken());
@@ -163,6 +47,11 @@ export default function Command({ onChanged }) {
   const [log, setLog] = useState([]);
 
   const add = (entry) => setLog((l) => [entry, ...l].slice(0, 6));
+
+  const speech = useSpeechInput({
+    onText: setText,
+    onError: (message) => add({ kind: "error", text: message, at: Date.now() }),
+  });
 
   const unlock = (e) => {
     e.preventDefault();
@@ -243,13 +132,21 @@ export default function Command({ onChanged }) {
           placeholder="Pull the US birth totals from 2005 and brief me"
           className="flex-1 bg-void border border-edge rounded-md px-3 py-2 text-[12px] outline-none focus:border-cyan disabled:opacity-50"
         />
-        <Speech
-          onText={setText}
-          onError={(message) =>
-            add({ kind: "error", text: message, at: Date.now() })
-          }
-          busy={busy}
-        />
+        {speech.supported && (
+          <button
+            type="button"
+            onClick={speech.toggle}
+            disabled={busy}
+            title={speech.listening ? "Listening — click to stop" : "Speak your request"}
+            className={`shrink-0 h-9 w-9 rounded-md border text-[13px] transition-colors ${
+              speech.listening
+                ? "border-danger text-danger animate-pulse"
+                : "border-edge text-muted hover:border-cyan hover:text-cyan"
+            } disabled:opacity-40`}
+          >
+            {speech.listening ? "◉" : "🎙"}
+          </button>
+        )}
         <button
           type="submit"
           disabled={busy || !text.trim()}

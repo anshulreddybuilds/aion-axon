@@ -329,3 +329,73 @@ def test_sandbox_proxies_are_left_bare_rather_than_shown_as_varargs():
     )
 
     assert _signature_of("emits_rows") == ""
+
+
+def test_a_step_can_reference_two_independent_earlier_steps():
+    """Two steps with no dependency on each other (each could run in
+    either order) both feeding a later step's args -- $STEP_1 and
+    $STEP_2 must each resolve to their OWN step's real output, not one
+    overwriting or leaking into the other.
+    """
+    seen = {}
+
+    registry.register(
+        "emits_rows", "First independent step.", "LOW",
+        lambda *a: {"status": "SUCCESS", "value": "first-value"},
+    )
+    registry.register(
+        "always_fails", "Second independent step (different tool, "
+        "reused here only as a second distinct registration point).",
+        "LOW", lambda *a: {"status": "SUCCESS", "value": "second-value"},
+    )
+    registry.register(
+        "echo_arg", "Captures both.", "LOW",
+        lambda *a: (seen.update(args=list(a)), {"status": "SUCCESS"})[1],
+    )
+
+    plan = MissionPlan(goal="g", steps=[
+        step(1, "emits_rows", []),
+        step(2, "always_fails", []),
+        step(3, "echo_arg", ["$STEP_1", "$STEP_2"]),
+    ])
+
+    summary = mission_engine.run(WorkflowState(user_request="r"), plan)
+
+    assert summary["status"] == "COMPLETED"
+    assert json.loads(seen["args"][0])["value"] == "first-value"
+    assert json.loads(seen["args"][1])["value"] == "second-value"
+
+
+# --- BUG-007: a raised exception's real message must survive ------------
+
+def test_a_step_whose_tool_raises_reports_the_real_exception_not_null():
+    """Different from test_a_step_whose_tool_reports_error_fails_the_mission
+    above: THAT test covers a capability returning
+    {"status": "ERROR", "error": "..."} -- a normal, expected failure
+    shape. THIS covers a capability that raises a real Python exception
+    (a bug in its own code), which execution_gate._execute_tool()'s
+    except-clause catches and reports under "error", not "reason".
+    mission_engine.run()'s generic (non-EXECUTED) branch used to read
+    only "reason", silently reporting `"reason": null` for a completely
+    real, specific exception message that was one key over the whole
+    time. The mission correctly said FAILED either way -- never
+    fabricated success -- but the actual diagnosis was invisible.
+    """
+    registry.register(
+        "raises_for_real", "Raises instead of returning an error dict.",
+        "LOW", lambda *a: (_ for _ in ()).throw(
+            TypeError("a real bug inside this capability's own code")
+        ),
+    )
+
+    plan = MissionPlan(goal="g", steps=[step(1, "raises_for_real", ["x"])])
+    summary = mission_engine.run(WorkflowState(user_request="r"), plan)
+
+    assert summary["status"] == "FAILED"
+    reason = summary["step_results"][0]["reason"]
+    assert reason is not None, (
+        "a real exception's message was swallowed and replaced with null"
+    )
+    assert "a real bug inside this capability's own code" in reason
+
+    registry.unregister("raises_for_real")

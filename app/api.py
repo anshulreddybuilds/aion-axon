@@ -4,18 +4,21 @@ Every route that can cause execution goes through MissionService ->
 Orchestrator -> ExecutionGate. There is no route that executes a tool
 directly, and adding one would break the governance guarantee.
 """
+import json
 import os
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field, field_validator
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.capabilities.declarations import catalog_summary
 from app.capabilities.registry import registry
 from app.capabilities.rehydrate import rehydrate_capabilities
-from app.governance.approval import approval_manager
+from app.governance.approval import KillSwitchActive, approval_manager
 from app.governance.autonomy_ledger import (
     SUPERVISION_THRESHOLD,
     autonomy_ledger,
@@ -23,8 +26,10 @@ from app.governance.autonomy_ledger import (
 from app.governance.ground_truth import all_facts, lookup, record_fact
 from app.governance.kill_switch import kill_switch
 from app.governance.owner_auth import HEADER as OWNER_TOKEN_HEADER, require_owner
+from app.governance.rate_limit import rate_limit_planned_mission, rate_limit_propose
 from app.governance.review import review_package
-from app.memory.firestore_store import firestore_store
+from app.memory.firestore_store import ApprovalDecisionContention, firestore_store
+from app.agents.plan_schema import MissionPlan
 from app.missions.service import mission_service
 from app.observability.telemetry import summarise
 from app.monitors.service import monitor_service
@@ -80,7 +85,25 @@ ALLOWED_ORIGINS = [
 # internet the right to drive this API from a visitor's browser, which is
 # the exact thing the explicit allowlist above exists to prevent. Writes
 # still require the owner token regardless of origin.
-PREVIEW_CHANNEL_ORIGIN = r"^https://aion-axon-2026--[a-z0-9-]+\.web\.app$"
+#
+# Local-dev ports beyond the hardcoded 5173/4173 in ALLOWED_ORIGINS are
+# matched here too, for ANY port on localhost/127.0.0.1 -- found live:
+# Vite falls back to 5174, 5175, ... whenever a lower port is already in
+# use (e.g. two dev servers running at once), and the frontend's own
+# fetch() calls failed with the browser's generic, JS-unreadable "Failed
+# to fetch" (CORS rejections never surface a specific reason to catch
+# code) with no code change on the frontend side at all. This is safe to
+# open broadly for localhost specifically, unlike a broad web origin:
+# the browser's Origin header cannot be spoofed cross-origin, so only a
+# page ACTUALLY served from localhost can ever present
+# `Origin: http://localhost:<port>` -- which already means the caller is
+# running on the same machine as this dev server, a fundamentally
+# different trust boundary than a remote page on the public internet.
+# Mutations still require the owner token regardless of origin either way.
+CORS_ORIGIN_PATTERN = (
+    r"^(https://aion-axon-2026--[a-z0-9-]+\.web\.app"
+    r"|https?://(localhost|127\.0\.0\.1):\d+)$"
+)
 
 # The owner token header MUST be listed here, not just Content-Type.
 #
@@ -95,10 +118,88 @@ PREVIEW_CHANNEL_ORIGIN = r"^https://aion-axon-2026--[a-z0-9-]+\.web\.app$"
 #
 # Listing the header grants no authority: it only lets the request be
 # sent. require_owner still decides whether the token inside it is valid.
+# SEC-API (Batch 2 completion): Starlette places no limit on request body
+# size by default. Every real body this API expects is a short JSON
+# object -- a need, a reason, a handful of args -- so a multi-megabyte
+# body is never legitimate traffic, only an oversized-payload probe.
+# Checked BEFORE routing (so an unauthenticated flood can't reach route
+# logic) via Content-Length when the client declares one; a body sent
+# without Content-Length is still bounded because Pydantic's own
+# max_length constraints on individual fields (added this pass) reject
+# an oversized JSON payload once parsed, just after this coarser check.
+MAX_REQUEST_BODY_BYTES = 256_000
+
+
+def _reject_non_finite_json_constant(token: str):
+    """Passed to json.loads() as parse_constant. The stdlib json module
+    accepts bare NaN/Infinity/-Infinity tokens as a non-standard
+    extension by default -- confirmed live this pass that sending
+    `interval_minutes: NaN` reached Pydantic as a real float('nan') and
+    surfaced as an unhandled 500, not a clean 422 (the "invalid request
+    looks like a server failure" case this whole section exists to
+    prevent). Raising here instead of returning float('nan')/inf makes
+    json.loads itself fail cleanly, before Pydantic or any route logic
+    ever sees the value."""
+    raise ValueError(f"{token} is not a finite JSON number.")
+
+
+class BodySizeLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+
+        if content_length is not None:
+            try:
+                declared = int(content_length)
+            except ValueError:
+                declared = None
+
+            if declared is not None and declared > MAX_REQUEST_BODY_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "status": "ERROR",
+                        "code": "REQUEST_TOO_LARGE",
+                        "message": (
+                            f"Request body exceeds the "
+                            f"{MAX_REQUEST_BODY_BYTES}-byte limit."
+                        ),
+                    },
+                )
+
+        if (
+            request.method in ("POST", "PUT", "PATCH")
+            and "application/json" in request.headers.get("content-type", "")
+        ):
+            body = await request.body()
+
+            if body:
+                try:
+                    json.loads(body, parse_constant=_reject_non_finite_json_constant)
+                except ValueError:
+                    return JSONResponse(
+                        status_code=422,
+                        content={
+                            "status": "ERROR",
+                            "code": "INVALID_JSON",
+                            "message": (
+                                "Request body is not valid JSON, or contains "
+                                "a non-finite number (NaN/Infinity)."
+                            ),
+                        },
+                    )
+                # request.body() caches the bytes on the Request object,
+                # so the route handler's own body parse below reads the
+                # same cached bytes rather than an exhausted stream.
+
+        return await call_next(request)
+
+
+app.add_middleware(BodySizeLimitMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=PREVIEW_CHANNEL_ORIGIN,
+    allow_origin_regex=CORS_ORIGIN_PATTERN,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", OWNER_TOKEN_HEADER],
@@ -114,21 +215,37 @@ class MissionRequest(BaseModel):
     # generate a narrative "plan" that described a real computation, and
     # then fail at execution/resume time with a bare TypeError -- the
     # narrative promised work the request never actually specified.
-    request: str = Field(..., description="The messy human request.")
-    tool: str = Field(..., description="Registered tool name.")
-    action: str = Field(..., description="Action being proposed.")
-    risk: str = Field("MEDIUM", description="LOW | MEDIUM | HIGH")
-    args: list[Any] = Field(..., description="Positional args for the tool.")
+    # SEC-API (Batch 2 completion): max_length values are generous bounds
+    # for a short human-typed request/label, not a guess -- they exist so
+    # an oversized field can't inflate a stored mission record or (for
+    # `request`, on the planned path) an LLM prompt built from it.
+    # `risk` moving from a bare `str` to this Literal closes a real,
+    # reproduced bug: mission_service.start() does `RiskLevel(risk)` with
+    # no try/except, so an invalid string previously reached that line
+    # and surfaced as an unhandled 500 instead of a clean 422 -- the
+    # exact "invalid request looks like a server failure" case this
+    # section exists to prevent. `args` gets a max item count for the
+    # same reason as the string fields: bound what a single mutating
+    # request can make this service store or act on.
+    request: str = Field(..., max_length=4000, description="The messy human request.")
+    tool: str = Field(..., max_length=200, description="Registered tool name.")
+    action: str = Field(..., max_length=500, description="Action being proposed.")
+    risk: Literal["LOW", "MEDIUM", "HIGH"] = Field(
+        "MEDIUM", description="LOW | MEDIUM | HIGH"
+    )
+    args: list[Any] = Field(
+        ..., max_length=50, description="Positional args for the tool.",
+    )
 
 
 class ApprovalDecision(BaseModel):
     approved: bool
-    decided_by: str = "owner"
+    decided_by: str = Field("owner", max_length=200)
 
 
 class KillSwitchRequest(BaseModel):
     active: bool
-    reason: str = "Human emergency stop"
+    reason: str = Field("Human emergency stop", max_length=500)
 
 
 @app.get("/")
@@ -154,41 +271,86 @@ def capabilities() -> dict[str, Any]:
     }
 
 
+def _reject_blank_after_stripping(value: str) -> str:
+    """min_length alone does not catch this: "   " (3 spaces) satisfies
+    min_length=3 numerically while being semantically empty. Found live
+    this pass -- a whitespace-only need reached synapse.propose()
+    unconstrained despite the field's own comment claiming this was
+    already handled, spending a real (wasted) generation attempt before
+    failing downstream instead of a clean 422 up front."""
+    if not value.strip():
+        raise ValueError("must not be empty or whitespace-only")
+    return value
+
+
 class PlannedMissionRequest(BaseModel):
-    request: str = Field(..., description="The messy human request.")
+    # This request text is built directly into a real Gemini prompt
+    # (mission_service.start_planned() -> the planner) -- min_length
+    # mirrors AcquisitionRequest.need's existing empty-input guard,
+    # max_length bounds what a single call can spend on planning.
+    request: str = Field(
+        ..., min_length=3, max_length=4000, description="The messy human request.",
+    )
+
+    _reject_blank = field_validator("request")(_reject_blank_after_stripping)
 
 
-@app.post("/missions/planned", dependencies=[Depends(require_owner)])
+@app.post(
+    "/missions/planned",
+    dependencies=[Depends(require_owner), Depends(rate_limit_planned_mission)],
+)
 def create_planned_mission(body: PlannedMissionRequest) -> dict[str, Any]:
     """Plan a messy request with Gemini, then run it through the gate."""
     return mission_service.start_planned(body.request)
 
 
-@app.post("/missions/{mission_id}/acquire", dependencies=[Depends(require_owner)])
-def acquire_for_mission(mission_id: str) -> dict[str, Any]:
-    """Propose the capability a BLOCKED mission is missing.
+@app.post(
+    "/missions/from-graph",
+    dependencies=[Depends(require_owner), Depends(rate_limit_planned_mission)],
+)
+def create_mission_from_graph(plan: MissionPlan) -> dict[str, Any]:
+    """The graphical mission builder's entry point -- NOT a second
+    execution engine. `plan` is the exact same `MissionPlan`/
+    `MissionStep` schema the Gemini-backed planner produces for
+    /missions/planned; the only difference is who authored the steps
+    (a user, wiring real capabilities and `$STEP_N` dependencies on a
+    canvas, instead of Gemini reasoning over free text). From here on --
+    Guardian, safety screen, sandbox, approval, persistence, resume --
+    it is indistinguishable from any other mission, because it is the
+    identical validated object handed to the identical
+    `mission_engine.run()`. Rate-limited the same as /missions/planned:
+    a graph can request a real capability acquisition, which is exactly
+    as expensive and exactly as governed as one requested through text.
+    """
+    if not plan.steps:
+        return {"status": "FAILED", "error": "A mission graph needs at least one node."}
 
-    Reads the gap off the mission itself rather than making the caller
-    restate it, and ties the acquisition back to the mission so that
-    installing it finishes the original job.
+    return mission_service.start_from_plan(plan, plan.goal or "Graph-authored mission")
+
+
+def _need_for_blocked_mission(mission_id: str) -> tuple[Optional[str], Optional[dict[str, Any]]]:
+    """Shared by the sync and streaming acquire routes below: derive the
+    real acquisition need from a BLOCKED mission's own gap, so neither
+    route has to re-implement (or drift from) the other's logic.
+
+    Returns (need, error_response). Exactly one is non-None.
     """
     mission = mission_service.get(mission_id)
 
     if mission is None:
-        return {"status": "NOT_FOUND", "mission_id": mission_id}
+        return None, {"status": "NOT_FOUND", "mission_id": mission_id}
 
     if mission.get("status") != "BLOCKED":
-        return {
+        return None, {
             "status": "FAILED",
             "error": f"Mission is {mission.get('status')}, not BLOCKED.",
         }
 
     gap = mission.get("blocked_on") or {}
-
     need = gap.get("capability_description") or gap.get("description")
 
     if not need:
-        return {"status": "FAILED", "error": "Mission records no gap."}
+        return None, {"status": "FAILED", "error": "Mission records no gap."}
 
     # Show SYNAPSE the ACTUAL input the new capability will receive, not
     # just a description of the job. Without this it guesses the shape and
@@ -207,12 +369,96 @@ def acquire_for_mission(mission_id: str) -> dict[str, Any]:
             "Parse THIS shape. Do not invent different field names."
         )
 
+    return need, None
+
+
+@app.post("/missions/{mission_id}/acquire", dependencies=[Depends(require_owner)])
+def acquire_for_mission(mission_id: str) -> dict[str, Any]:
+    """Propose the capability a BLOCKED mission is missing.
+
+    Reads the gap off the mission itself rather than making the caller
+    restate it, and ties the acquisition back to the mission so that
+    installing it finishes the original job.
+    """
+    need, error = _need_for_blocked_mission(mission_id)
+    if error is not None:
+        return error
+
     return synapse.propose(need, mission_id).to_dict()
 
 
+@app.get(
+    "/missions/{mission_id}/acquire/stream",
+    dependencies=[Depends(require_owner), Depends(rate_limit_propose)],
+)
+def acquire_for_mission_stream(mission_id: str) -> StreamingResponse:
+    """The same acquisition as POST /missions/{mission_id}/acquire, streamed
+    stage-by-stage exactly like GET /synapse/propose/stream -- same
+    derivation of the need from the mission's own gap, same
+    synapse.propose_stream() generator, just observed live instead of
+    only at the end. No second pipeline: this route and the sync one
+    above call the identical propose_stream()/propose() pair engine.py
+    already exposes.
+    """
+    need, error = _need_for_blocked_mission(mission_id)
+
+    if error is not None:
+        def error_event():
+            yield _sse_event("error", error)
+        return StreamingResponse(error_event(), media_type="text/event-stream")
+
+    def events():
+        try:
+            for record in synapse.propose_stream(need, mission_id):
+                yield _sse_event("stage", record.to_dict())
+        except Exception as exc:  # noqa: BLE001 -- see synapse_propose_stream's comment
+            # The client sees this error event, but until now nothing
+            # server-side ever recorded it -- a stream failure had no
+            # audit trail to debug from afterward, unlike every other
+            # real failure in this codebase.
+            firestore_store.write_audit_event("ACQUIRE_STREAM_ERROR", {
+                "mission_id": mission_id,
+                "need": need,
+                "error": str(exc),
+            })
+            yield _sse_event("error", {"error": str(exc)})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+class ResumeBlockedRequest(BaseModel):
+    # BUG-006 (AION_AXON_BUG_AND_PROBLEM_REGISTER.md): this route never
+    # accepted or forwarded a capability name at all, so it could only
+    # ever resume a mission blocked on an already-named (declared-but-
+    # unimplemented) capability -- the more common `tool: null` gap,
+    # where the planner found no capability name whatsoever, had no way
+    # to be resumed through this route. In practice this went unnoticed
+    # because the real product path never calls this route for that
+    # case: synapse.install() resumes the tied mission internally with
+    # the freshly-installed capability's own name. Found by actually
+    # executing every route rather than trusting that a thin wrapper
+    # must be correct.
+    capability_name: Optional[str] = Field(
+        None, max_length=200,
+        description=(
+            "Backfills the blocked step's tool when the plan left it "
+            "null. Omit when the step already names a declared "
+            "capability -- see mission_service.resume_blocked()'s "
+            "docstring for the exact rule."
+        ),
+    )
+
+
 @app.post("/missions/{mission_id}/resume-blocked", dependencies=[Depends(require_owner)])
-def resume_blocked_mission(mission_id: str) -> dict[str, Any]:
-    return mission_service.resume_blocked(mission_id)
+def resume_blocked_mission(
+    mission_id: str,
+    body: ResumeBlockedRequest = ResumeBlockedRequest(),
+) -> dict[str, Any]:
+    return mission_service.resume_blocked(mission_id, body.capability_name)
 
 
 @app.post("/missions/{mission_id}/resume-planned", dependencies=[Depends(require_owner)])
@@ -324,11 +570,14 @@ def telemetry(limit: int = 500) -> dict[str, Any]:
 
 
 class GroundTruthRequest(BaseModel):
-    key: str = Field(..., description="Short identifier for the fact.")
-    statement: str = Field(..., description="What the fact is about.")
-    value: str = Field(..., description="The independently known value.")
-    source: str = Field(..., description="Where it came from. Required.")
-    recorded_by: str = Field("owner", description="Who recorded it.")
+    # This is written into Firestore and read back to grade the agent's
+    # future claims -- bounded so a single fact can't become an
+    # unbounded storage/ledger-bloat vector.
+    key: str = Field(..., max_length=200, description="Short identifier for the fact.")
+    statement: str = Field(..., max_length=1000, description="What the fact is about.")
+    value: str = Field(..., max_length=1000, description="The independently known value.")
+    source: str = Field(..., max_length=1000, description="Where it came from. Required.")
+    recorded_by: str = Field("owner", max_length=200, description="Who recorded it.")
 
 
 @app.post("/ground-truth", dependencies=[Depends(require_owner)])
@@ -359,7 +608,13 @@ def list_ground_truth() -> dict[str, Any]:
 
 
 @app.get("/ground-truth/match")
-def match_ground_truth(query: str) -> dict[str, Any]:
+def match_ground_truth(
+    # SEC-API: a bare `str` query param has no length bound by default --
+    # found during the Batch 2 route inventory. Public, read-only, local
+    # lexical match only (no LLM call), so this bounds compute per
+    # request rather than cost/quota.
+    query: str = Query(..., max_length=4000),
+) -> dict[str, Any]:
     """Show which fact WOULD be applied to a query, without running it.
 
     Useful before a demo: it makes the contradiction check inspectable
@@ -398,7 +653,12 @@ class AcquisitionRequest(BaseModel):
     # or whitespace-only need previously reached synapse.propose()
     # unconstrained; Pydantic now refuses it with a 422 before any real
     # resource is spent. See tests/test_reliability.py.
-    need: str = Field(..., min_length=3, description="The capability AION Axon lacks.")
+    need: str = Field(
+        ..., min_length=3, max_length=4000,
+        description="The capability AION Axon lacks.",
+    )
+
+    _reject_blank = field_validator("need")(_reject_blank_after_stripping)
     mission_id: Optional[str] = Field(
         None,
         description="Mission this acquisition should unblock, if any.",
@@ -413,7 +673,10 @@ class AcquisitionRequest(BaseModel):
     )
 
 
-@app.post("/synapse/propose", dependencies=[Depends(require_owner)])
+@app.post(
+    "/synapse/propose",
+    dependencies=[Depends(require_owner), Depends(rate_limit_propose)],
+)
 def synapse_propose(body: AcquisitionRequest) -> dict[str, Any]:
     """Run the acquisition loop up to — and stopping at — human approval.
 
@@ -425,6 +688,91 @@ def synapse_propose(body: AcquisitionRequest) -> dict[str, Any]:
     ).to_dict()
 
 
+def _sse_event(event: str, data: dict[str, Any]) -> str:
+    """Format one Server-Sent Event. `data` is JSON-encoded on a single
+    line -- an SSE payload cannot contain a bare newline, and json.dumps
+    never emits one by default."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@app.get(
+    "/synapse/propose/stream",
+    dependencies=[Depends(require_owner), Depends(rate_limit_propose)],
+)
+def synapse_propose_stream(
+    need: str = Query(..., min_length=3, max_length=4000),
+    mission_id: Optional[str] = Query(None, max_length=200),
+    allow_retry: bool = Query(False),
+) -> StreamingResponse:
+    """The same acquisition pipeline as POST /synapse/propose, streamed:
+    one real Server-Sent Event per pipeline stage as it actually
+    completes (GUARDIAN_PRESCREEN -> RESEARCH -> GENERATE ->
+    SAFETY_SCREEN -> SANDBOX_TEST -> EVALUATE -> GUARDIAN_SCREEN ->
+    AWAITING_APPROVAL, or an earlier terminal stage on a real
+    refusal/rejection/block/failure).
+
+    Backed directly by synapse.propose_stream() -- the exact generator
+    synapse.propose() above also drains. There is one pipeline
+    implementation; this route cannot show a stage the governed pipeline
+    did not actually just execute, because it never re-derives or mocks
+    any stage -- it only observes the real one as it runs.
+
+    A GET route with the need in the query string, not a POST body: the
+    frontend consumes this with `fetch()` + a stream reader (not the
+    browser's native EventSource, which cannot send the `X-Axon-Token`
+    header this route is gated on) -- see web/src/api.js. GET matches
+    what every browser streaming primitive expects, and keeping auth on
+    a header rather than a query string keeps the owner token out of
+    server logs and browser history, same as every other route.
+    """
+    # A manual call, not a Pydantic field_validator (there is no request
+    # body on a GET route to attach one to) -- so the ValueError it raises
+    # is caught and turned into the same clean 422 the POST route gets
+    # for free, instead of an unhandled 500 for a whitespace-only need.
+    try:
+        stripped = _reject_blank_after_stripping(need)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def events():
+        try:
+            for record in synapse.propose_stream(
+                stripped, mission_id, allow_retry=allow_retry,
+            ):
+                yield _sse_event("stage", record.to_dict())
+        except Exception as exc:  # noqa: BLE001 -- see comment below
+            # A stage that raises (a genuine bug, or a real model/network
+            # failure not already caught and degraded inside the
+            # pipeline itself) must still close the stream with an
+            # honest error event. An SSE connection that just drops looks,
+            # to the UI, identical to "still working" -- silently worse
+            # than a visible failure.
+            #
+            # Also recorded server-side, not just sent to the client: the
+            # client-visible event was the only trace of this failure
+            # before, so debugging it after the fact meant reproducing it
+            # live -- unlike every other real failure in this codebase,
+            # which lands in the audit trail.
+            firestore_store.write_audit_event("SYNAPSE_STREAM_ERROR", {
+                "mission_id": mission_id,
+                "need": stripped,
+                "error": str(exc),
+            })
+            yield _sse_event("error", {"error": str(exc)})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            # Disables buffering on Cloud Run's/nginx-style fronting
+            # proxies, which otherwise hold the whole response until it
+            # closes -- turning a live stream back into a delayed batch.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.post("/synapse/install/{capability}", dependencies=[Depends(require_owner)])
 def synapse_install(capability: str) -> dict[str, Any]:
     """Install an approved capability. Re-reads the approval from
@@ -433,7 +781,9 @@ def synapse_install(capability: str) -> dict[str, Any]:
 
 
 class RollbackRequest(BaseModel):
-    reason: str = Field(..., description="Why the capability is removed.")
+    reason: str = Field(
+        ..., max_length=1000, description="Why the capability is removed.",
+    )
 
 
 @app.post("/synapse/rollback/{capability}", dependencies=[Depends(require_owner)])
@@ -461,11 +811,13 @@ def skill_passport(capability: str) -> dict[str, Any]:
 
 
 class MonitorRequest(BaseModel):
-    name: str
-    capability: str
-    args: list[str] = Field(default_factory=list)
-    interval_minutes: int = Field(60, ge=1)
-    description: str = ""
+    name: str = Field(..., max_length=200)
+    capability: str = Field(..., max_length=200)
+    args: list[str] = Field(default_factory=list, max_length=50)
+    # An upper bound alongside the existing ge=1: a monitor scheduled to
+    # "run" once a decade is not a real schedule.
+    interval_minutes: int = Field(60, ge=1, le=525_600)
+    description: str = Field("", max_length=1000)
 
 
 @app.post("/monitors", dependencies=[Depends(require_owner)])
@@ -502,7 +854,7 @@ def run_due_monitors() -> dict[str, Any]:
 
 
 class DisableMonitorRequest(BaseModel):
-    reason: str = "Disabled by owner"
+    reason: str = Field("Disabled by owner", max_length=500)
 
 
 @app.post("/monitors/{monitor_id}/disable", dependencies=[Depends(require_owner)])
@@ -554,10 +906,27 @@ def decide_approval(
             body.approved,
             body.decided_by,
         )
+    except KillSwitchActive:
+        return {
+            "status": "BLOCKED",
+            "reason": "Kill switch is active.",
+            "request_id": request_id,
+        }
     except KeyError:
         return {"status": "NOT_FOUND", "request_id": request_id}
     except ValueError as error:
         return {"status": "ALREADY_DECIDED", "error": str(error)}
+    except ApprovalDecisionContention as error:
+        # Real lock contention that never resolved to a definitive
+        # winner or loser -- NOT the same as ALREADY_DECIDED (a decision
+        # was in fact recorded, just not provably this one). Reporting
+        # APPROVED/REJECTED here would claim a state that was never
+        # confirmed; the honest answer is the caller should retry.
+        return {
+            "status": "CONTENTION",
+            "error": str(error),
+            "request_id": request_id,
+        }
 
     return {
         "status": "APPROVED" if request.approved else "REJECTED",
@@ -613,8 +982,9 @@ def beastmode_red_team() -> dict[str, Any]:
 @app.get("/beastmode/ledger/verify")
 def beastmode_ledger_verify() -> dict[str, Any]:
     """Re-hashes the REAL live evolution ledger and compares it to the
-    last seal on disk. See app/beastmode/ledger_chain.py for exactly what
-    this can and cannot prove."""
+    last seal (Firestore, not local disk -- see app/beastmode/ledger_chain.py's
+    module docstring for why that matters on Cloud Run). See that module
+    for exactly what this can and cannot prove."""
     from app.beastmode.ledger_chain import verify
 
     events = firestore_store.list_evolution_events()
@@ -739,7 +1109,14 @@ def beastmode_explain_approval(request_id: str) -> dict[str, Any]:
 
 
 class MemoryQuery(BaseModel):
-    need: str = Field(..., description="Free-text capability need to check against memory.")
+    # Public, unauthenticated endpoint (read-only, no LLM call -- see the
+    # route's own docstring) -- max_length bounds the local lexical-match
+    # work an anonymous caller can trigger per request, not a cost/quota
+    # concern like the LLM-facing fields above.
+    need: str = Field(
+        ..., max_length=4000,
+        description="Free-text capability need to check against memory.",
+    )
 
 
 @app.post("/beastmode/memory/query")
@@ -780,7 +1157,11 @@ def beastmode_memory_history(capability: str) -> dict[str, Any]:
 
 
 class PlanQuery(BaseModel):
-    need: str = Field(..., description="Free-text capability need to plan for.")
+    # Same rationale as MemoryQuery.need above: public, read-only, no LLM
+    # call (see app/synapse/planner.py's own docstring).
+    need: str = Field(
+        ..., max_length=4000, description="Free-text capability need to plan for.",
+    )
 
 
 @app.post("/beastmode/plan")
@@ -821,3 +1202,43 @@ def beastmode_mission_readiness() -> dict[str, Any]:
     from app.beastmode.mission_readiness import build_readiness
 
     return build_readiness()
+
+
+@app.get("/beastmode/state-machine")
+def beastmode_state_machine() -> dict[str, Any]:
+    """The formal capability-lifecycle transition table, for direct
+    inspection -- this IS the proof that AI cannot self-authorize a
+    promotion, not a description of it. Pure constants (states and legal
+    transitions); nothing here is computed from live data or secret.
+
+    Read-only, existed as app/beastmode/state_machine.py before this
+    endpoint -- see that module's docstring for exactly what it can and
+    cannot prove (it's a compatibility mapping FROM the real pipeline's
+    own status strings, validated against an explicit transition table;
+    the real enforcement lives in app/synapse/engine.py and
+    app/governance/approval.py, which this table describes rather than
+    replaces)."""
+    from app.beastmode.state_machine import (
+        CANONICAL_STATES,
+        FAILURE_STATES,
+        SUCCESS_PATH,
+        TERMINAL_STATES,
+        _TRANSITIONS,
+    )
+
+    return {
+        "success_path": list(SUCCESS_PATH),
+        "failure_states": list(FAILURE_STATES),
+        "terminal_states": sorted(TERMINAL_STATES),
+        "transitions": {
+            state: sorted(targets) for state, targets in _TRANSITIONS.items()
+        },
+        "invariant": (
+            "A state not listed as a legal target from its current state "
+            "is unreachable -- there is no default 'allow' path. In "
+            "particular: nothing transitions directly to INSTALLED except "
+            "from INSTALLING, which itself is only reachable from APPROVED, "
+            "which is only reachable from AWAITING_APPROVAL via a real "
+            "human decision (see POST /approvals/{id}/decide, owner-gated)."
+        ),
+    }

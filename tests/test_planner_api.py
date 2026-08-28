@@ -28,6 +28,7 @@ _SANDBOX = {"status": "COMPLETED", "exit_code": 0, "passed": True, "stdout": "OK
 
 def setup_function():
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     firestore_store.audit_events.clear()
     firestore_store.approvals.clear()
 

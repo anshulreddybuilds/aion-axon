@@ -26,7 +26,8 @@ from app.capabilities.registry import registry
 from app.governance.approval import approval_manager
 from app.governance.autonomy_ledger import autonomy_ledger
 from app.governance.guardian import Decision, RiskLevel, guardian
-from app.memory.firestore_store import firestore_store
+from app.governance.kill_switch import kill_switch
+from app.memory.firestore_store import InstallClaimContention, firestore_store
 from app.synapse.evaluator import evaluate
 from app.synapse.generator import Candidate, generate_candidate
 from app.synapse.safety_screen import screen
@@ -92,13 +93,24 @@ class AcquisitionRecord:
 
 class SynapseEngine:
 
-    def propose(
+    def propose_stream(
         self,
         need: str,
         mission_id: Optional[str] = None,
         allow_retry: bool = False,
-    ) -> AcquisitionRecord:
-        """Run every stage up to (and stopping at) human approval.
+    ):
+        """The same pipeline as propose() below, expressed as a generator
+        so a caller (the live SSE endpoint) can observe each real stage
+        as it completes instead of only the final result.
+
+        propose() is a thin wrapper over this exact generator -- there is
+        only ONE implementation of the pipeline. The stream can never show
+        a stage that didn't really happen, because it isn't a second,
+        parallel narration of the pipeline; it's the pipeline, yielding
+        the same `record` object (mutated in place, same as before) at
+        every point where a real decision was just made. Do not add a
+        yield anywhere that isn't immediately after a real state change
+        already present in the code below.
 
         `allow_retry` is OFF by default, matching every call site that
         existed before this parameter did (the live UI, stage_take.py, and
@@ -112,6 +124,23 @@ class SynapseEngine:
         """
         record = AcquisitionRecord(need=need, mission_id=mission_id)
 
+        def snap(stage: str) -> AcquisitionRecord:
+            record.stage = stage
+            return record
+
+        # --- KILL SWITCH -------------------------------------------------
+        # Batch 2 / REL-01: found live that propose()/install() never
+        # checked this at all -- only execution_gate did, so the switch
+        # stopped USING an already-installed capability but not STARTING
+        # or FINISHING a new acquisition. "New synthesis must stop" means
+        # here too, not just at the tool-call boundary.
+        if kill_switch.is_active():
+            record.status = "BLOCKED"
+            record.reason = "Kill switch is active."
+            self._audit(record, "SYNAPSE_BLOCKED")
+            yield snap("KILL_SWITCH")
+            return
+
         # --- GUARDIAN PRE-SCREEN --------------------------------------
         # Screen the NEED before spending a single token on it. A request
         # for a credential-reading capability must be refused at the
@@ -123,7 +152,6 @@ class SynapseEngine:
         )
 
         if pre.decision == Decision.REFUSE:
-            record.stage = "GUARDIAN_PRESCREEN"
             record.status = "REFUSED"
             record.reason = pre.reason
             record.guardian = {
@@ -132,10 +160,28 @@ class SynapseEngine:
                 "policy_title": pre.policy_title,
             }
             self._audit(record, "SYNAPSE_REFUSED")
-            return record
+            yield snap("GUARDIAN_PRESCREEN")
+            return
+
+        # Found this session: nothing about a proposal is persisted to
+        # Firestore until it reaches AWAITING_APPROVAL (save_capability()
+        # below, right before that yield) -- confirmed by directly
+        # abandoning a generator mid-stream (simulating a real client
+        # disconnect, since stream_response() simply stops calling
+        # __next__ once a send() fails, it does not keep driving the
+        # generator in the background). A disconnect during RESEARCH
+        # through GUARDIAN_SCREEN previously left NO trace at all: no
+        # capability doc, no audit event, no way for the owner to even
+        # see that quota was spent on an attempt that never finished. Not
+        # a correctness bug (nothing partial could ever be mistaken for
+        # an installed or approved state), but an observability gap this
+        # one audit event closes without touching the pipeline's
+        # behavior or building actual mid-flight resumability (a much
+        # larger change, not warranted by what was actually found).
+        self._audit(record, "SYNAPSE_ACQUISITION_STARTED")
+        yield snap("GUARDIAN_PRESCREEN")
 
         # --- RESEARCH --------------------------------------------------
-        record.stage = "RESEARCH"
         research = search_web(
             f"How to implement in pure Python, standard library only: {need}"
         )
@@ -148,6 +194,7 @@ class SynapseEngine:
             "findings": (research.get("findings") or "")[:4000],
             "degraded_reason": research.get("degraded_reason"),
         }
+        yield snap("RESEARCH")
 
         # --- GENERATE / SCREEN / SANDBOX --------------------------------
         #
@@ -162,7 +209,6 @@ class SynapseEngine:
         tests: dict[str, Any] = {}
 
         for attempt in range(1, max_attempts + 1):
-            record.stage = "GENERATE"
             # Only pass prior_failure on an actual retry (attempt > 1).
             # The first attempt calls generate_candidate with exactly the
             # same 2 positional args as before this loop existed, so every
@@ -181,12 +227,13 @@ class SynapseEngine:
                 record.status = "FAILED"
                 record.reason = error
                 self._audit(record, "SYNAPSE_FAILED")
-                return record
+                yield snap("GENERATE")
+                return
 
             record.candidate = candidate.model_dump()
+            yield snap("GENERATE")
 
             # --- SAFETY SCREEN -------------------------------------------
-            record.stage = "SAFETY_SCREEN"
             screened = screen(candidate.code)
             record.safety = screened.to_dict()
 
@@ -206,10 +253,12 @@ class SynapseEngine:
                     + "; ".join(screened.findings)
                 )
                 self._audit(record, "SYNAPSE_REJECTED")
-                return record
+                yield snap("SAFETY_SCREEN")
+                return
+
+            yield snap("SAFETY_SCREEN")
 
             # --- SANDBOX TEST ----------------------------------------------
-            record.stage = "SANDBOX_TEST"
             tests = execute_in_sandbox(candidate.code, candidate.test)
             record.tests = tests
 
@@ -230,7 +279,8 @@ class SynapseEngine:
                     f"{tests.get('reason')}"
                 )
                 self._audit(record, "SYNAPSE_BLOCKED")
-                return record
+                yield snap("SANDBOX_TEST")
+                return
 
             if tests.get("passed"):
                 record.attempts.append({
@@ -239,6 +289,7 @@ class SynapseEngine:
                     "outcome": "SANDBOX_PASSED",
                     "detail": None,
                 })
+                yield snap("SANDBOX_TEST")
                 break  # a working candidate -- proceed to evaluation
 
             record.attempts.append({
@@ -257,7 +308,10 @@ class SynapseEngine:
                          f"after {max_attempts} attempts."
                 )
                 self._audit(record, "SYNAPSE_REJECTED")
-                return record
+                yield snap("SANDBOX_TEST")
+                return
+
+            yield snap("SANDBOX_TEST")
 
             # One attempt remains: carry the REAL stderr into the next
             # generation, not a generic "try again".
@@ -267,7 +321,6 @@ class SynapseEngine:
             )
 
         # --- EVALUATE ---------------------------------------------------
-        record.stage = "EVALUATE"
         record.evaluation = evaluate(
             candidate.name, candidate.description, candidate.code, tests,
         )
@@ -282,14 +335,15 @@ class SynapseEngine:
                 f"{record.evaluation.get('reason')}"
             )
             self._audit(record, "SYNAPSE_REJECTED")
-            return record
+            yield snap("EVALUATE")
+            return
 
         # An UNSCORED evaluation does not block the proposal -- it travels
         # to the owner clearly marked, so the human sees that no machine
         # opinion is available rather than a silent pass.
+        yield snap("EVALUATE")
 
         # --- GUARDIAN SCREEN OF THE BUILT CAPABILITY --------------------
-        record.stage = "GUARDIAN_SCREEN"
         decision = guardian.evaluate(
             f"install capability: {candidate.name}",
             RiskLevel(candidate.risk if candidate.risk in
@@ -309,10 +363,12 @@ class SynapseEngine:
             record.status = "REFUSED"
             record.reason = decision.reason
             self._audit(record, "SYNAPSE_REFUSED")
-            return record
+            yield snap("GUARDIAN_SCREEN")
+            return
+
+        yield snap("GUARDIAN_SCREEN")
 
         # --- HUMAN APPROVAL ---------------------------------------------
-        record.stage = "AWAITING_APPROVAL"
         record.status = "AWAITING_APPROVAL"
 
         request = approval_manager.create(
@@ -343,10 +399,40 @@ class SynapseEngine:
 
         self._audit(record, "SYNAPSE_AWAITING_APPROVAL")
 
-        return record
+        yield snap("AWAITING_APPROVAL")
+
+    def propose(
+        self,
+        need: str,
+        mission_id: Optional[str] = None,
+        allow_retry: bool = False,
+    ) -> AcquisitionRecord:
+        """Run every stage up to (and stopping at) human approval.
+
+        A thin wrapper over propose_stream(): drains the generator and
+        returns the last thing it yielded. Every existing caller (the
+        live UI, stage_take.py, every test in the suite) keeps calling
+        this exact signature and getting exactly the same AcquisitionRecord
+        it always did -- propose_stream() is the same code, not a second
+        implementation that could drift from this one.
+        """
+        last: Optional[AcquisitionRecord] = None
+        for snapshot in self.propose_stream(need, mission_id, allow_retry):
+            last = snapshot
+        return last
 
     def install(self, capability_name: str) -> dict[str, Any]:
         """Install an APPROVED capability. Refuses without a real approval."""
+        # Batch 2 / REL-01: same gap as propose() above -- confirmed live
+        # that a capability could reach state=READY while the kill switch
+        # was active, because nothing here ever checked it.
+        if kill_switch.is_active():
+            firestore_store.write_audit_event("INSTALL_BLOCKED", {
+                "capability": capability_name,
+                "reason": "Kill switch is active.",
+            })
+            return {"status": "BLOCKED", "reason": "Kill switch is active."}
+
         stored = firestore_store.get_capability(capability_name)
 
         if stored is None:
@@ -370,52 +456,135 @@ class SynapseEngine:
                 "reason": "Human approval has not been granted.",
             }
 
+        # Idempotency guard (Batch 2 / state integrity), made atomic (P1
+        # fix): an approval stays APPROVED forever once decided -- it is
+        # never consumed -- so nothing above stops this SAME request_id
+        # from reaching install() a second time (a retried client call,
+        # two racing requests, a replayed request). The original guard
+        # compared `stored`/`passport` -- both read ABOVE, before any
+        # writes -- against request_id: a plain read-check-write with a
+        # real gap between that read and the save_capability() write
+        # below. Proven to actually race over real network-separated
+        # Firestore -- 10/10 concurrent callers against the emulator all
+        # got INSTALLED, each re-registering the capability and writing
+        # its own evolution event -- in
+        # tests/test_concurrency_firestore_emulator_engine.py before this
+        # fix existed (see AION_AXON_CONTINUATION_HANDOFF.md's P1
+        # section). claim_install() closes the gap with one atomic
+        # operation (a real Firestore transaction for AxonFirestore, a
+        # lock for MemoryFirestore) instead of two separate calls with a
+        # window in between.
+        try:
+            claimed = firestore_store.claim_install(capability_name, request_id)
+        except InstallClaimContention as exc:
+            # Real lock contention that never resolved to a definitive
+            # winner or loser -- NOT the same as "someone else already
+            # has it" (that's the branch below). Reporting ALREADY_INSTALLED
+            # here would fabricate a state nobody actually reached; the
+            # honest answer is that install briefly could not be
+            # confirmed and the caller should retry.
+            firestore_store.write_audit_event("INSTALL_CLAIM_CONTENDED", {
+                "capability": capability_name,
+                "request_id": request_id,
+                "error": str(exc),
+            })
+            return {
+                "status": "FAILED",
+                "capability": capability_name,
+                "error": (
+                    "Installation is under heavy contention right now and "
+                    "could not be confirmed. Please retry."
+                ),
+            }
+
+        if not claimed:
+            refreshed = firestore_store.get_capability(capability_name) or stored
+            return {
+                "status": "ALREADY_INSTALLED",
+                "capability": capability_name,
+                "version": refreshed.get("version"),
+                "request_id": request_id,
+            }
+
         candidate = passport.get("candidate") or {}
 
-        registry.register(
-            candidate["name"],
-            candidate["description"],
-            candidate.get("risk", "LOW"),
-            self._sandbox_proxy(candidate),
-        )
+        # registry.register(), save_capability(), and write_evolution_event()
+        # must all succeed together for a capability to be genuinely
+        # READY -- claim_install() above only guarantees exactly one
+        # caller reaches this point, not that this point finishes
+        # cleanly. Proven necessary, not speculative: a real failure here
+        # (a malformed passport, a transient Firestore write error) used
+        # to leave the capability permanently stuck at
+        # state="VALIDATING", because every LATER install() call for the
+        # same request_id would see claimed=False and report the
+        # fabricated terminal state ALREADY_INSTALLED for a capability
+        # that was never actually installed -- see
+        # firestore_store.release_install_claim()'s docstring for the
+        # full account.
+        try:
+            registry.register(
+                candidate["name"],
+                candidate["description"],
+                candidate.get("risk", "LOW"),
+                self._sandbox_proxy(candidate),
+            )
 
-        before_count = registry.counts()["implemented"] - 1
+            before_count = registry.counts()["implemented"] - 1
 
-        firestore_store.save_capability(capability_name, {
-            "state": "READY",
-            "implemented": True,
-            "version": int(stored.get("version", 0)) + 1,
-            "installed_at": datetime.now(timezone.utc).isoformat(),
-            "approved_by": approval.get("decided_by"),
-            # Kept so the NEXT version can be diffed against what is
-            # actually running, rather than against the last thing that
-            # happened to be proposed.
-            "installed_code": candidate.get("code"),
-        })
+            firestore_store.save_capability(capability_name, {
+                "state": "READY",
+                "implemented": True,
+                "version": int(stored.get("version", 0)) + 1,
+                "installed_at": datetime.now(timezone.utc).isoformat(),
+                "approved_by": approval.get("decided_by"),
+                # Kept so the NEXT version can be diffed against what is
+                # actually running, rather than against the last thing that
+                # happened to be proposed.
+                "installed_code": candidate.get("code"),
+            })
 
-        event_id = firestore_store.write_evolution_event({
-            "capability_id": candidate["name"],
-            "before": (
-                f"AION Axon could not: {passport.get('need')}. "
-                f"Registry had {before_count} implemented capabilities."
-            ),
-            "change": f"Acquired capability '{candidate['name']}'.",
-            "reason": passport.get("need"),
-            "after": (
-                f"AION Axon can now: {candidate['description']} "
-                f"Registry has {registry.counts()['implemented']} "
-                f"implemented capabilities."
-            ),
-            "research_citations": (
-                passport.get("research", {}).get("sources") or []
-            ),
-            "grounded": passport.get("research", {}).get("grounded", False),
-            "test_results": passport.get("tests"),
-            "evaluation": passport.get("evaluation"),
-            "safety_screen": passport.get("safety"),
-            "approver": approval.get("decided_by"),
-            "approved_at": approval.get("decided_at"),
-        })
+            event_id = firestore_store.write_evolution_event({
+                "capability_id": candidate["name"],
+                "before": (
+                    f"AION Axon could not: {passport.get('need')}. "
+                    f"Registry had {before_count} implemented capabilities."
+                ),
+                "change": f"Acquired capability '{candidate['name']}'.",
+                "reason": passport.get("need"),
+                "after": (
+                    f"AION Axon can now: {candidate['description']} "
+                    f"Registry has {registry.counts()['implemented']} "
+                    f"implemented capabilities."
+                ),
+                "research_citations": (
+                    passport.get("research", {}).get("sources") or []
+                ),
+                "grounded": passport.get("research", {}).get("grounded", False),
+                "test_results": passport.get("tests"),
+                "evaluation": passport.get("evaluation"),
+                "safety_screen": passport.get("safety"),
+                "approver": approval.get("decided_by"),
+                "approved_at": approval.get("decided_at"),
+            })
+        except Exception as exc:  # noqa: BLE001 -- must report honestly, not crash or fabricate
+            # Un-registers even if registry.register() itself succeeded
+            # before a LATER step in this same block failed -- restores
+            # the in-process registry to match Firestore's still-
+            # VALIDATING state, so is_implemented() doesn't disagree with
+            # the capability document about whether this actually
+            # installed.
+            registry.unregister(capability_name)
+            firestore_store.release_install_claim(capability_name, request_id)
+            firestore_store.write_audit_event("INSTALL_FAILED_AFTER_CLAIM", {
+                "capability": capability_name,
+                "request_id": request_id,
+                "error": str(exc),
+            })
+            return {
+                "status": "FAILED",
+                "capability": capability_name,
+                "error": f"Install failed after claiming: {exc}. Safe to retry.",
+            }
 
         # A human read the Skill Passport -- tests, evaluation, safety
         # screen -- and approved. That IS a verification event, and the
@@ -564,6 +733,12 @@ class SynapseEngine:
             "reason": record.reason,
             "capability": (record.candidate or {}).get("name"),
             "policy_id": record.guardian.get("policy_id"),
+            # record.mission_id was already tracked on AcquisitionRecord
+            # (set by propose()/propose_stream()) but never made it into
+            # the audit payload -- a mission-triggered acquisition's own
+            # audit trail couldn't be joined back to its mission from the
+            # audit_events collection alone.
+            "mission_id": record.mission_id,
         })
 
 

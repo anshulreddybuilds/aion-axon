@@ -1,73 +1,70 @@
-# Paste this into a brand-new Claude Code session, in the AION AXON repo
+# Paste this into a brand-new Claude Code session (or hand to any other AI), in the AION AXON repo
 
-You are continuing AION AXON (`anshulreddybuilds/aion-axon`,
-branch `feat/beastmode-core`) from a prior session's checkpoint.
+You are continuing or testing AION AXON (`anshulreddybuilds/aion-axon`).
 
-**Step 1 — read the checkpoint, not the old conversation.**
-Read `AION_AXON_HANDOFF.md` and `AION_AXON_STATE.json` in full before
-doing anything else. Do NOT try to reconstruct project history from git
-log or from asking me questions — the handoff is deliberately complete.
+**The authoritative branch is `feat/beastmode-core-oagiwb-weku3h`.**
+Not `feat/beastmode-core` and not `feat/beastmode-core-oagiwb` — both are
+older, abandoned lines. This was determined from git history (commit
+ancestry + timestamps + CI results), not assumed; if in doubt, re-derive
+it the same way: check which branch's tip is a strict descendant of the
+others and has the most recent, real (non-junk) commits, and check
+GitHub Actions for which branch has an actually green run at its current
+tip.
 
-**Step 2 — verify minimally, then trust the checkpoint.**
-Run only:
+**Step 1 — verify branch/HEAD before trusting ANY other doc in this repo.**
 ```bash
-git status --short && git rev-parse HEAD && git fetch origin && git rev-parse origin/feat/beastmode-core
+git fetch origin
+git log --oneline -1 origin/feat/beastmode-core-oagiwb-weku3h
 ```
-Compare the result to `AION_AXON_STATE.json`'s `head`/`origin_head`/`clean`
-fields.
+This repo also contains `AION_AXON_HANDOFF.md`, `AION_AXON_STATE.json`,
+and `AION_AXON_PHASE_INDEX.md` — these are a checkpoint system from an
+**earlier, now-superseded branch** (`feat/beastmode-core`, an old HEAD)
+and are STALE. Do not trust their branch name, HEAD hash, or "current
+state" claims without independently re-verifying against git. They may
+still be useful for early project history/architecture rationale, but
+not for "what's the current state" questions.
 
-- **If they match**: the entire production state, test baseline, and
-  security posture described in the handoff is still accurate. Do NOT
-  re-run the full backend test suite, the fixture suite, a frontend
-  build, or any production smoke test "just to check" — that work was
-  already done and verified at this exact commit. Go straight to
-  deciding the next action.
-- **If they don't match**: something changed outside this handoff's
-  knowledge. Investigate the actual diff (`git log <handoff-head>..HEAD`)
-  before trusting anything else in the handoff — treat the delta as
-  unverified, not the whole document.
+**Step 2 — for CURRENT, accurate state, read these instead:**
+- `AION_AXON_CONTINUATION_HANDOFF.md` — chronological engineering log,
+  newest update at the top, actively maintained through the current HEAD.
+- `AION_AXON_BUG_AND_PROBLEM_REGISTER.md` — every real bug found across
+  this project's life, root cause, fix, and regression-test proof.
+  Newest (highest BUG-NNN) at the top.
+- `README.md` — architecture, threat model, honest-status section.
 
 **Step 3 — do not repeat completed work.**
-Phases 19-29 are done and LIVE VERIFIED in production as of the
-checkpoint HEAD. Do not redo: the AST/security bypass audit, the ledger
-forensic suite, the owner-auth endpoint sweep, the mission-pipeline code
-trace, the approval cross-binding proof, or the deploy+smoke-test cycle.
-`AION_AXON_HANDOFF.md` sections L and M list exactly what's done and
-what must not be repeated. `AION_AXON_PHASE_INDEX.md` gives a one-line
-orientation per phase if you need to find which commit did what.
+The governed mission pipeline (planner -> capability reuse or SYNAPSE
+acquisition -> Guardian -> AST safety screen -> sandbox -> evaluator ->
+human approval -> install -> resume), the graphical mission builder
+(`/v5`), voice integration (mechanically verified via simulated Web
+Speech API), and CI (genuinely green, including real Firestore-emulator
+concurrency tests) are all built and verified as of the current HEAD.
+Read `AION_AXON_CONTINUATION_HANDOFF.md`'s most recent entries before
+re-auditing anything that's already been through a hardening pass.
 
-**Step 4 — identify the actual next action, don't invent a new phase.**
-`AION_AXON_HANDOFF.md` section O has the current recommendation. In
-short: the highest-leverage remaining action is the owner personally
-executing the first real production mission — that is a human action,
-not something for you to do. If the owner isn't ready for that, the
-only other open item is a low-priority stale-number fix (section K.6/N.2).
-Do not self-generate a large new "Phase 30" of speculative hardening
-unless the owner directs it.
+**Step 4 — known open items, as of this file's own last update:**
+- Vertex AI + ADC support was just added (replacing API-key-only auth)
+  and is offline-verified only — not yet confirmed against a real live
+  Gemini call. This is the actively open item.
+- Production has never been deployed — no Claude session has ever had
+  deploy credentials; this is owner-only.
+- No live end-to-end rehearsal with a real deployed backend exists yet.
+- Physical microphone has never been tested (only simulated).
 
-**Step 5 — before ANY push or deploy, do a release-safety review.**
-Even though the checkpoint state is trusted, any NEW commit still needs:
-`git diff`, secret/credential grep, and a real (not assumed) test run
-before it gets pushed or deployed. Never skip this because "the last
-session already verified everything" — that verification covered the
-old commits, not new ones.
-
-**Step 6 — the real-mission boundary is absolute and unchanged.**
+**Step 5 — the real-mission boundary is absolute.**
 Never read, print, request, or use the real owner token. Never click
 RUN MISSION, approve/reject a real capability, install a real
 capability, or mutate production Firestore/ledger through the real
-mission path. If Mission Readiness says READY, that means the SYSTEM is
-ready — it is never permission for you to execute the mission yourself.
-The owner does this personally, in their own browser, with their own
-token. See `AION_AXON_HANDOFF.md` section P for the exact click-path to
-tell the owner if they ask.
+mission path. That is the owner's action, in their own browser, with
+their own token.
 
-**Working discipline for this session:**
-1. Read handoff → 2. check git state → 3. if no drift, skip
-re-verification → 4. pick the next real action from section O → 5.
-release-safety review before any push/deploy → 6. never cross the
-mission boundary.
+**Step 6 — before any push, do a release-safety review.**
+`git status`, `git diff`, a secret/credential grep, and a real test run
+(`AXON_FIRESTORE_MODE=memory pytest -q` — expect 572 passed, 4 skipped
+as of this file's last update; re-verify the number if it's been a
+while) before pushing anything.
 
-Keep responses grounded in the checkpoint's facts. If something in the
-handoff turns out to be wrong when you check it, say so plainly and
-correct your own document rather than silently trusting stale data.
+Keep responses grounded in verified facts, not this file's own claims
+taken on faith — if something here turns out wrong when you check it,
+say so and correct it, the same discipline this file itself is asking
+you to apply to the OLDER handoff docs it supersedes.

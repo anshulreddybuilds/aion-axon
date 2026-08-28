@@ -31,5 +31,151 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install pytest
 
-      - name: Run tests
+      - name: Run tests (in-memory Firestore)
         run: python -m pytest -q tests
+
+      # BUG-002 (AION_AXON_BUG_AND_PROBLEM_REGISTER.md): the emulator-gated
+      # concurrency suite was previously CI-invisible -- it correctly
+      # SKIPPED without FIRESTORE_EMULATOR_HOST, which is honest, but meant
+      # a real regression here (e.g. BUG-003, a genuine claim_install()
+      # gap under real contention) could land without CI ever noticing.
+      # ubuntu-latest ships a JDK already, so only the emulator binary
+      # itself needs fetching -- via firebase-tools, which downloads it
+      # from storage.googleapis.com without requiring the full gcloud SDK.
+      - name: Set up Java (for the Firestore emulator)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Node (for firebase-tools)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Firestore emulator's own JAR (not firebase-tools itself) is fetched
+      # by the CLI on first use, separately from npm install, and can be
+      # tens of MB -- caching THIS specific directory (not node_modules,
+      # which installs fast anyway) is what actually removes the cold-start
+      # risk the readiness check below exists to catch honestly if it ever
+      # recurs (a cache miss, a CLI version bump that changes the jar).
+      - name: Cache the Firestore emulator JAR
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firestore-emulator-jar-${{ runner.os }}
+
+      - name: Start Firestore emulator
+        run: |
+          set -euo pipefail
+          npm install --no-save firebase-tools
+          mkdir -p /tmp/emulator-cfg
+          cat > /tmp/emulator-cfg/firebase.json <<'EOF'
+          {
+            "firestore": { "rules": "firestore.rules" },
+            "emulators": { "firestore": { "host": "127.0.0.1", "port": 8080 } }
+          }
+          EOF
+          cat > /tmp/emulator-cfg/firestore.rules <<'EOF'
+          rules_version = '2';
+          service cloud.firestore {
+            match /databases/{database}/documents {
+              match /{document=**} { allow read, write: if true; }
+            }
+          }
+          EOF
+          # BUG-012's real root cause, found by this very fix: `npx
+          # firebase` run from /tmp/emulator-cfg cannot resolve the binary
+          # `npm install` just placed in this job's own node_modules --
+          # npx resolves a locally-installed package by walking up from
+          # the CURRENT directory, not from wherever the install happened
+          # to run, and this runner has no global `firebase` to fall back
+          # to. The observed failure was the blunt "npm error could not
+          # determine executable to run", not a timing issue at all --
+          # confirmed live via the GitHub Actions API on the very first
+          # run of this pass's earlier (readiness-check-only) fix, which
+          # correctly failed fast instead of hiding this behind another
+          # 6-minute downstream hang. Invoking the installed binary by its
+          # real, absolute path sidesteps npx's resolution entirely -- the
+          # same direct-path pattern already verified locally in this
+          # session (a real emulator start, detected alive in 16s).
+          FIREBASE_BIN="$GITHUB_WORKSPACE/node_modules/.bin/firebase"
+          (cd /tmp/emulator-cfg && nohup "$FIREBASE_BIN" emulators:start --only firestore --project aion-axon-ci > /tmp/emulator.log 2>&1 &)
+
+          # This loop's own outcome used to go unchecked -- a cold run
+          # let it exhaust silently and the step still exit 0, reporting
+          # success for an emulator that never actually started. The
+          # concurrency tests then spent 6+ minutes retrying a connection
+          # that was never going to succeed, before finally failing with
+          # an opaque gRPC "connection refused" stack trace nowhere near
+          # the real cause. Never again: poll for up to two minutes (the
+          # cache step above should make this fast on every run after the
+          # first; this ceiling is the honest worst case, not the
+          # expectation), and if it's not up, fail HERE, loud, with the
+          # real emulator log -- not several minutes later inside an
+          # unrelated test.
+          ready=""
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8080 >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+
+          echo "----- Firestore emulator log -----"
+          cat /tmp/emulator.log || true
+          echo "-----------------------------------"
+
+          if [ -z "$ready" ]; then
+            echo "::error::Firestore emulator never came up on 127.0.0.1:8080 after 120s -- see the emulator log above for the real cause. Failing here on purpose, instead of letting the concurrency tests hang for minutes retrying a connection that was never going to succeed."
+            exit 1
+          fi
+
+          echo "Firestore emulator is alive on 127.0.0.1:8080."
+
+      - name: Run Firestore-emulator concurrency tests
+        env:
+          AXON_FIRESTORE_MODE: emulator
+          FIRESTORE_EMULATOR_HOST: 127.0.0.1:8080
+        run: |
+          python -m pytest -v \
+            tests/test_concurrency_firestore_emulator.py \
+            tests/test_concurrency_firestore_emulator_engine.py \
+            tests/test_concurrency_firestore_emulator_approval.py \
+            tests/test_concurrency_firestore_emulator_mission_resume.py
+
+  frontend:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # These are plain Node scripts (no test-runner framework), matching
+      # how they're run manually today -- each exits non-zero on any
+      # failed assertion, so `set -e` (bash's default in a run: block)
+      # already fails the job on the first broken file.
+      - name: Run frontend tests
+        run: |
+          for f in $(find src -name '*.test.mjs'); do
+            echo "=== $f ==="
+            node "$f"
+          done
+
+      - name: Build
+        run: npm run build

@@ -29,8 +29,10 @@ from app.memory.firestore_store import firestore_store  # noqa: E402
 @pytest.fixture(autouse=True)
 def clean_ledger():
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     yield
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
 
 
 def grounded_result(findings: str, sources: int = 2) -> dict:

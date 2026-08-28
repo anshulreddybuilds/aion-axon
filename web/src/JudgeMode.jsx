@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, hasOwnerToken } from "./api.js";
 import { Panel, Empty } from "./panels.jsx";
+import { checkSelfAuthorizationShortcuts, formatPath } from "./stateMachineProof.js";
 
 /**
  * Judge Mode — a Proof Center over the real /beastmode/* API.
@@ -30,9 +31,18 @@ function StatusPill({ status }) {
   );
 }
 
-/** One card = one endpoint. Fetches once, offers a manual re-run. */
-function ProofCard({ title, fetcher, render, needsOwner = false }) {
-  const [state, setState] = useState({ loading: true, data: null, error: null });
+/** One card = one endpoint. Fetches once, offers a manual re-run.
+ *
+ * autoRun=false skips the automatic on-mount fetch. Every fetcher here
+ * except ledgerSeal() is a read (GET); ledgerSeal() is POST
+ * /beastmode/ledger/seal, which "writes a new baseline" (its own card
+ * title says so) -- a real, non-idempotent mutation. Before autoRun
+ * existed every card ran unconditionally on mount, so simply opening
+ * Judge Mode as the owner fired a real, unrequested ledger write with no
+ * click and no confirmation. Only LedgerSealCard passes autoRun={false};
+ * every other card keeps the original fetch-on-mount behavior. */
+function ProofCard({ title, fetcher, render, needsOwner = false, autoRun = true }) {
+  const [state, setState] = useState({ loading: autoRun, data: null, error: null });
 
   const run = () => {
     setState({ loading: true, data: null, error: null });
@@ -41,9 +51,12 @@ function ProofCard({ title, fetcher, render, needsOwner = false }) {
       .catch((err) => setState({ loading: false, data: null, error: err.message }));
   };
 
-  useEffect(run, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (autoRun) run();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const status = state.error ? "ERROR" : state.loading ? null : "LIVE";
+  const idle = !autoRun && !state.loading && !state.data && !state.error;
+  const status = state.error ? "ERROR" : state.loading || idle ? null : "LIVE";
 
   return (
     <Panel
@@ -61,15 +74,16 @@ function ProofCard({ title, fetcher, render, needsOwner = false }) {
           )}
           <button
             onClick={run}
-            disabled={needsOwner && !hasOwnerToken()}
+            disabled={state.loading || (needsOwner && !hasOwnerToken())}
             className="text-[9px] tracking-[0.12em] px-2 py-1 rounded border border-edge text-muted hover:border-cyan/40 hover:text-cyan disabled:opacity-40 disabled:cursor-not-allowed"
-            title={needsOwner && !hasOwnerToken() ? "Owner token required" : "Re-run against the live API"}
+            title={needsOwner && !hasOwnerToken() ? "Owner token required" : idle ? "Run against the live API" : "Re-run against the live API"}
           >
-            ↻ RE-RUN
+            {idle ? "▶ RUN" : "↻ RE-RUN"}
           </button>
         </div>
       }
     >
+      {idle && <Empty>Not yet run — this writes real state, so it only runs on request.</Empty>}
       {state.loading && <Empty>Calling the live endpoint…</Empty>}
       {state.error && (
         <p className="text-xs text-danger">
@@ -81,7 +95,7 @@ function ProofCard({ title, fetcher, render, needsOwner = false }) {
           )}
         </p>
       )}
-      {!state.loading && !state.error && render(state.data)}
+      {!idle && !state.loading && !state.error && render(state.data)}
     </Panel>
   );
 }
@@ -169,6 +183,7 @@ function LedgerSealCard() {
       title="Ledger Seal — owner-gated, writes a new baseline"
       fetcher={api.ledgerSeal}
       needsOwner
+      autoRun={false}
       render={(d) => (
         <div className="text-[11px] space-y-1">
           <p className="text-ok">New seal written over the current live ledger.</p>
@@ -300,6 +315,47 @@ function ContractCard({ capability }) {
           </div>
         )
       }
+    />
+  );
+}
+
+/** The formal transition table itself, and proof that the shortcuts a
+ * self-authorizing agent would need are structurally absent from it --
+ * not asserted, checked live against the real endpoint's own data. */
+function StateMachineCard() {
+  return (
+    <ProofCard
+      title="State Machine — AI cannot promote itself"
+      fetcher={api.stateMachine}
+      render={(d) => {
+        const shortcuts = checkSelfAuthorizationShortcuts(d.transitions);
+        return (
+          <div className="text-[10px] space-y-3">
+            <div>
+              <p className="text-white/70 mb-1">the real success path</p>
+              <p className="text-cyan leading-relaxed">{formatPath(d.success_path)}</p>
+            </div>
+
+            <div className="pt-2 border-t border-edge">
+              <p className="text-white/70 mb-1.5">shortcuts a self-authorizing agent would need</p>
+              <div className="space-y-1">
+                {shortcuts.map((s) => (
+                  <div key={`${s.from}-${s.to}`} className="flex items-center justify-between">
+                    <span className="text-muted">
+                      {s.from} → {s.to} <span className="text-muted/60">({s.label})</span>
+                    </span>
+                    <span className={s.blocked ? "text-ok" : "text-danger"}>
+                      {s.blocked ? "✓ BLOCKED" : "✗ ALLOWED"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <p className="text-muted pt-2 border-t border-edge">{d.invariant}</p>
+          </div>
+        );
+      }}
     />
   );
 }
@@ -668,6 +724,7 @@ export default function JudgeMode({ pending, acquiredNames }) {
 
       <MissionReadinessCard />
       <SecurityCoverageCard />
+      <StateMachineCard />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <RedTeamCard />

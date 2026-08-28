@@ -15,6 +15,7 @@ from app.beastmode.contracts import build_contract
 from app.beastmode.ledger_chain import GENESIS, build_chain, seal, verify
 from app.beastmode.red_team import _run
 from app.beastmode.risk_score import compute_risk_score
+from app.memory.firestore_store import firestore_store
 from app.synapse.safety_screen import FORBIDDEN_CALLS, FORBIDDEN_IMPORTS
 
 
@@ -145,40 +146,42 @@ def test_ledger_chain_changes_if_a_single_event_is_altered():
     assert before[0].chain_hash == after[0].chain_hash
 
 
-def test_ledger_seal_and_verify_round_trip(tmp_path, monkeypatch):
-    import app.beastmode.ledger_chain as lc
-    monkeypatch.setattr(lc, "SEAL_PATH", tmp_path / "seal.json")
+def test_ledger_seal_and_verify_round_trip(monkeypatch):
+    # Isolated per-test via monkeypatch (auto-restored after the test),
+    # same as every other test's own state in this suite -- seal storage
+    # moved from a local file to firestore_store (see ledger_chain.py's
+    # module docstring for why: a Cloud Run container's filesystem is
+    # neither shared across instances nor durable across a cold start).
+    monkeypatch.setattr(firestore_store, "ledger_seal", None)
 
     events = _fake_events(3)
-    lc.seal(events)
-    report = lc.verify(events)
+    seal(events)
+    report = verify(events)
 
     assert report["status"] == "VERIFIED"
     assert report["event_count"] == 3
 
 
-def test_ledger_verify_detects_tampering_after_sealing(tmp_path, monkeypatch):
+def test_ledger_verify_detects_tampering_after_sealing(monkeypatch):
     """Proven by reverting the fix, project-style: seal the real events,
     mutate one, and check verify() actually notices rather than trusting
     that it would."""
-    import app.beastmode.ledger_chain as lc
-    monkeypatch.setattr(lc, "SEAL_PATH", tmp_path / "seal.json")
+    monkeypatch.setattr(firestore_store, "ledger_seal", None)
 
     events = _fake_events(3)
-    lc.seal(events)
+    seal(events)
 
     tampered = [dict(e) for e in events]
     tampered[0]["approver"] = "someone-else"
 
-    report = lc.verify(tampered)
+    report = verify(tampered)
     assert report["status"] == "MISMATCH"
 
 
-def test_ledger_verify_with_no_prior_seal_says_so_honestly(tmp_path, monkeypatch):
-    import app.beastmode.ledger_chain as lc
-    monkeypatch.setattr(lc, "SEAL_PATH", tmp_path / "does_not_exist.json")
+def test_ledger_verify_with_no_prior_seal_says_so_honestly(monkeypatch):
+    monkeypatch.setattr(firestore_store, "ledger_seal", None)
 
-    report = lc.verify(_fake_events(2))
+    report = verify(_fake_events(2))
     assert report["status"] == "NO_SEAL"
 
 

@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone  # noqa: E402
 import pytest  # noqa: E402
 
 import app.capabilities.bootstrap  # noqa: E402,F401
+from app.capabilities.registry import registry  # noqa: E402
 from app.governance.kill_switch import kill_switch  # noqa: E402
 from app.memory.firestore_store import firestore_store  # noqa: E402
 from app.monitors.service import (  # noqa: E402
@@ -47,8 +48,35 @@ def test_monitor_is_created_and_due_immediately():
 
 
 def test_monitor_on_an_unimplemented_capability_is_refused():
-    """Refuse at creation rather than failing silently on every tick."""
-    result = make(capability="write_brief")
+    """Refuse at creation rather than failing silently on every tick.
+
+    Real bug, not a flake, found and fixed this pass: this test hardcoded
+    "write_brief" as an example of an unimplemented capability, but
+    write_brief has genuinely been implemented for a while (real function
+    registered in app/capabilities/bootstrap.py, `implemented=True` in
+    app/capabilities/seed.py) -- confirmed by source inspection, not
+    guessed. The test failed honestly in isolation and happened to pass
+    in the full suite only because some other file's cleanup left the
+    shared registry in a state where it looked unimplemented -- an
+    accident, not a real property being tested. Anchoring to "whatever is
+    still unbuilt" (the same fix already applied to
+    tests/test_adversarial.py::test_declared_capability_cannot_be_invoked_at_all
+    for this exact class of problem) keeps the property covered as
+    capabilities get implemented, instead of decaying as the code
+    improves.
+    """
+    declared_only = [
+        tool["name"] for tool in registry.list_tools()
+        if not tool["implemented"]
+    ]
+
+    assert declared_only, (
+        "Every capability is implemented, so there is nothing left to "
+        "prove this property against. It still matters -- declare a "
+        "throwaway capability here rather than deleting the test."
+    )
+
+    result = make(capability=declared_only[0])
 
     assert result["status"] == "REJECTED"
     assert "not implemented" in result["error"]
@@ -75,13 +103,66 @@ def test_run_executes_and_reschedules():
 
 
 def test_kill_switch_halts_scheduled_work():
-    """A monitor must not be a scheduled way around the Guardian."""
+    """A monitor must not be a scheduled way around the Guardian.
+
+    Batch 2.5 monitor governance audit: status changed from the raw
+    execution_gate "BLOCKED" to the monitor-specific
+    "SKIPPED_KILL_SWITCH_ACTIVE" -- see
+    test_killswitch_blocked_runs_never_count_toward_consecutive_failures
+    for why this distinction exists and matters. The underlying property
+    this test protects -- the capability never actually runs while
+    halted -- is unchanged; only the status label is more precise now.
+    """
     make()
     kill_switch.activate("stop everything")
 
     outcome = monitor_service.run_due()
 
-    assert outcome["results"][0]["status"] == "BLOCKED"
+    assert outcome["results"][0]["status"] == "SKIPPED_KILL_SWITCH_ACTIVE"
+    assert outcome["results"][0]["result"] is None
+
+
+def test_killswitch_blocked_runs_never_count_toward_consecutive_failures():
+    """Batch 2.5 monitor governance audit: reproduced live before this
+    fix -- 3 real consecutive due-ticks while the kill switch stayed
+    active auto-DISABLED a perfectly healthy monitor, purely because the
+    owner had their own emergency stop engaged. The capability was never
+    actually attempted (execution_gate blocked it before the tool ran),
+    so there was nothing that failed -- counting it as a failure
+    punished the owner's own halt. A kill-switch-blocked run must leave
+    the monitor's failure count and ACTIVE state untouched, and must not
+    advance next_run_at (so it's re-checked on the very next tick once
+    the switch is off, not stuck waiting out a full interval it never
+    got to use)."""
+    make(interval=1)
+    monitor_id = monitor_service.list_all()[0]["monitor_id"]
+
+    kill_switch.activate("extended halt")
+
+    for _ in range(MAX_CONSECUTIVE_FAILURES + 2):
+        firestore_store.save_monitor(monitor_id, {
+            "next_run_at": datetime.now(timezone.utc).isoformat(),
+        })
+        monitor_service.run_due()
+
+    monitor = monitor_service.get(monitor_id)
+
+    assert monitor["state"] == "ACTIVE"
+    assert monitor["consecutive_failures"] == 0
+    assert monitor["last_status"] == "SKIPPED_KILL_SWITCH_ACTIVE"
+    assert monitor["run_count"] == 0
+
+    # And it resumes normally once the switch is off, on the very next
+    # tick -- not delayed by a full interval it never actually used.
+    kill_switch.deactivate()
+    firestore_store.save_monitor(monitor_id, {
+        "next_run_at": datetime.now(timezone.utc).isoformat(),
+    })
+    monitor_service.run_due()
+
+    monitor = monitor_service.get(monitor_id)
+    assert monitor["last_status"] == "EXECUTED"
+    assert monitor["run_count"] == 1
 
 
 def test_repeated_failures_disable_rather_than_retry_forever():

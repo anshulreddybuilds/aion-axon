@@ -292,6 +292,41 @@ def test_unknown_origin_is_not_granted_access():
     assert "access-control-allow-origin" not in response.headers
 
 
+def test_vite_fallback_port_is_allowed():
+    """Found live: Vite falls back to 5174, 5175, ... whenever a lower
+    port is already in use (e.g. a second dev server running), and the
+    frontend's fetch() calls failed with the browser's generic,
+    JS-unreadable "Failed to fetch" -- CORS rejections never surface a
+    specific reason to catch code, so this looked like a network/backend
+    outage with zero diagnostic value. ALLOWED_ORIGINS only ever
+    hardcoded 5173/4173; any other localhost port must work too, since a
+    developer cannot control which port Vite happens to land on."""
+    for port in (5174, 5175, 3000, 8080):
+        response = client.get(
+            "/health", headers={"Origin": f"http://localhost:{port}"},
+        )
+        assert response.headers.get("access-control-allow-origin") == (
+            f"http://localhost:{port}"
+        ), f"port {port} was not allowed"
+
+
+def test_localhost_pattern_does_not_grant_a_remote_lookalike_origin():
+    """Negative control: the regex must match ONLY localhost/127.0.0.1,
+    never a domain that merely contains the word "localhost" or a
+    same-shaped remote host -- the browser's real Origin header cannot
+    be spoofed cross-origin, but the server-side regex itself must still
+    be precise, not merely "usually right"."""
+    for origin in (
+        "http://localhost.evil.example.com:5174",
+        "http://evil-localhost:5174",
+        "http://192.168.1.5:5174",
+    ):
+        response = client.get("/health", headers={"Origin": origin})
+        assert "access-control-allow-origin" not in response.headers, (
+            f"{origin} was wrongly allowed"
+        )
+
+
 def test_firebase_preview_channel_origin_is_allowed():
     """Preview channels get a generated subdomain that cannot be listed.
 
@@ -429,3 +464,293 @@ def test_second_version_produces_a_real_diff():
 
     assert any(line.startswith("-") and "return 1" in line for line in diff)
     assert any(line.startswith("+") and "return 2" in line for line in diff)
+
+
+# --- Route coverage audit: routes with a path string mentioned in a test ---
+# --- file, but never actually invoked with a real request, closed here. ---
+
+def test_missions_planned_route_actually_dispatches_a_real_mission(monkeypatch):
+    """POST /missions/planned is the single most-used route in the whole
+    product -- every real text/voice mission dispatch goes through it --
+    yet a full-repo audit found it had never once been invoked via HTTP
+    in the test suite (only a route-inventory line and an auth-only
+    check mentioned its path string). Executing it here proves the real
+    wiring (owner auth -> rate limiter -> Pydantic body -> plan_mission
+    -> mission_engine -> response) actually works end-to-end, not just
+    the mission_service function in isolation.
+    """
+    import app.missions.service as mission_service_module
+    from app.agents.plan_schema import MissionPlan, MissionStep
+
+    def fake_plan(request, user_id="anshul"):
+        return MissionPlan(
+            goal="route coverage check", steps=[MissionStep(
+                step=1, description="calc", kind="READ_ANALYZE",
+                tool="calculator", args=["3 + 4"], risk="LOW", action="a",
+            )],
+        ), None
+
+    monkeypatch.setattr(mission_service_module, "plan_mission", fake_plan)
+
+    resp = client.post("/missions/planned", json={"request": "what is 3 + 4"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "COMPLETED"
+    assert body["step_results"][0]["result"]["result"] == 7.0
+
+
+def test_resume_blocked_route_can_backfill_a_null_tool_step(monkeypatch):
+    """BUG-006: this route never accepted or forwarded a capability_name,
+    so it could only ever resume a mission blocked on an ALREADY-named
+    (declared-but-unimplemented) capability. The more common gap -- the
+    planner emitting tool: null because it found no capability at all --
+    had no way to be resumed through this route; it would just re-block
+    with the identical reason forever. The real product never hit this
+    because synapse.install() resumes the tied mission internally with
+    the freshly-installed name -- this route is the ONLY external way to
+    supply that name, and now actually can.
+    """
+    import app.missions.service as mission_service_module
+    from app.agents.plan_schema import MissionPlan, MissionStep
+    from app.capabilities.registry import registry
+
+    def fake_plan(request, user_id="anshul"):
+        return MissionPlan(
+            goal="route coverage null-tool gap", steps=[MissionStep(
+                step=1, description="a genuinely unknown capability",
+                kind="READ_ANALYZE", tool=None, args=["x"], risk="LOW",
+                action="a",
+            )],
+        ), None
+
+    monkeypatch.setattr(mission_service_module, "plan_mission", fake_plan)
+
+    created = client.post(
+        "/missions/planned", json={"request": "do something new"},
+    ).json()
+    assert created["status"] == "BLOCKED"
+    assert created["plan"][0]["tool"] is None
+
+    registry.register(
+        "route_coverage_backfilled_cap", "x", "LOW",
+        lambda *a: {"status": "SUCCESS", "value": "backfilled"},
+    )
+
+    resp = client.post(
+        f"/missions/{created['mission_id']}/resume-blocked",
+        json={"capability_name": "route_coverage_backfilled_cap"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "COMPLETED", (
+        f"resume-blocked could not backfill a null-tool step via the "
+        f"real HTTP route: {body}"
+    )
+    assert body["step_results"][0]["tool"] == "route_coverage_backfilled_cap"
+
+    registry.unregister("route_coverage_backfilled_cap")
+
+
+def test_resume_blocked_route_still_works_with_no_body(monkeypatch):
+    """The pre-existing, already-correct case must not regress: a
+    mission blocked on an already-declared capability resumes with no
+    body at all, exactly as before this fix."""
+    import app.missions.service as mission_service_module
+    from app.agents.plan_schema import MissionPlan, MissionStep
+    from app.capabilities.registry import registry
+
+    def fake_plan(request, user_id="anshul"):
+        return MissionPlan(
+            goal="route coverage declared gap", steps=[MissionStep(
+                step=1, description="a declared but unimplemented capability",
+                kind="READ_ANALYZE", tool="route_coverage_declared_cap",
+                args=["x"], risk="LOW", action="a",
+            )],
+        ), None
+
+    monkeypatch.setattr(mission_service_module, "plan_mission", fake_plan)
+    registry.declare("route_coverage_declared_cap", "x", "LOW")
+
+    created = client.post(
+        "/missions/planned", json={"request": "do the declared thing"},
+    ).json()
+    assert created["status"] == "BLOCKED"
+
+    registry.register(
+        "route_coverage_declared_cap", "x", "LOW",
+        lambda *a: {"status": "SUCCESS", "value": "declared-ok"},
+    )
+
+    resp = client.post(f"/missions/{created['mission_id']}/resume-blocked")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "COMPLETED"
+
+    registry.unregister("route_coverage_declared_cap")
+
+
+def test_installing_one_capability_does_not_leak_approval_to_a_sibling(monkeypatch):
+    """Batch B (deep completion audit) governance-bypass check: approving
+    capability A's acquisition must never let capability B install on
+    the strength of it, even though both went through the exact same
+    pipeline in the same session and both real approval records exist
+    in Firestore. install() must look up ITS OWN capability's own stored
+    approval_request_id, never any other real, valid, decided one.
+    """
+    from app.synapse import engine as engine_module
+    from app.synapse.generator import Candidate
+
+    monkeypatch.setattr(
+        engine_module, "search_web",
+        lambda q: {"status": "DEGRADED", "grounded": False, "sources": [],
+                   "findings": "x", "source_count": 0},
+    )
+    monkeypatch.setattr(
+        engine_module, "execute_in_sandbox",
+        lambda code, test="", timeout_seconds=10: {
+            "status": "COMPLETED", "passed": True, "stdout": "OK",
+            "stderr": "", "exit_code": 0,
+        },
+    )
+    monkeypatch.setattr(
+        engine_module, "evaluate",
+        lambda *a, **k: {"status": "SCORED", "score": 90, "verdict": "PASS",
+                         "reason": "x", "model": "gemma-4-26b-a4b-it"},
+    )
+
+    def candidate_for(name):
+        return Candidate(
+            name=name, description="x", risk="LOW",
+            code=f"def {name}(x):\n    return {{'status':'SUCCESS'}}\n",
+            test="print('OK')", entrypoint=name,
+        )
+
+    monkeypatch.setattr(
+        engine_module, "generate_candidate",
+        lambda need, notes=None, prior_failure=None: (
+            candidate_for("sibling_cap_a"), None,
+        ),
+    )
+    proposal_a = client.post(
+        "/synapse/propose", json={"need": "sibling capability A"},
+    ).json()
+
+    monkeypatch.setattr(
+        engine_module, "generate_candidate",
+        lambda need, notes=None, prior_failure=None: (
+            candidate_for("sibling_cap_b"), None,
+        ),
+    )
+    client.post("/synapse/propose", json={"need": "sibling capability B"})
+
+    # Approve A's real, distinct approval record. B's own is left PENDING.
+    client.post(
+        f"/approvals/{proposal_a['approval_request_id']}/decide",
+        json={"approved": True, "decided_by": "anshul"},
+    )
+
+    install_b = client.post("/synapse/install/sibling_cap_b").json()
+
+    assert install_b["status"] != "INSTALLED", (
+        f"capability B installed on the strength of capability A's "
+        f"unrelated approval: {install_b}"
+    )
+    assert install_b["status"] == "APPROVAL_REQUIRED"
+
+
+# --- Graphical mission builder: POST /missions/from-graph -----------------
+# Not a second execution engine -- the same MissionPlan/MissionStep schema
+# and the same mission_engine.run() the planner-driven path uses, just
+# authored directly (by a user wiring nodes on a canvas) instead of by
+# Gemini reasoning over free text.
+
+def test_graph_mission_executes_dependent_steps_through_the_real_engine():
+    """The exact property the visual builder depends on: a node's real
+    output must flow into a dependent node via $STEP_N, through the real
+    engine, with no graph-specific execution shortcut.
+    """
+    graph = {
+        "goal": "Graph: two calculations combined",
+        "steps": [
+            {"step": 1, "description": "First number", "kind": "READ_ANALYZE",
+             "tool": "calculator", "args": ["10 * 4"], "risk": "LOW", "action": "n1"},
+            {"step": 2, "description": "Second number", "kind": "READ_ANALYZE",
+             "tool": "calculator", "args": ["5 + 5"], "risk": "LOW", "action": "n2"},
+            {"step": 3, "description": "Combine", "kind": "READ_ANALYZE",
+             "tool": "calculator",
+             "args": ["$STEP_1.result + $STEP_2.result"],
+             "risk": "LOW", "action": "combine"},
+        ],
+    }
+
+    resp = client.post("/missions/from-graph", json=graph)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "COMPLETED"
+    assert body["steps_completed"] == 3
+    assert body["step_results"][2]["result"]["result"] == 50.0
+
+
+def test_graph_mission_with_a_real_gap_blocks_honestly():
+    """A graph node with no capability wired to it is a genuine gap --
+    same BLOCKED path a planner-authored mission takes, not silently
+    skipped or fabricated.
+    """
+    graph = {
+        "goal": "Graph with a real gap",
+        "steps": [{
+            "step": 1, "description": "unwired node", "kind": "READ_ANALYZE",
+            "tool": None, "args": ["x"], "risk": "LOW", "action": "gap",
+        }],
+    }
+
+    resp = client.post("/missions/from-graph", json=graph)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "BLOCKED"
+    assert body["blocked_on"] is not None
+
+
+def test_graph_mission_requiring_approval_uses_the_real_governance_gate():
+    """A MEDIUM-risk graph node must suspend for real human approval,
+    exactly like a planner-authored mission -- the graph cannot be used
+    to route around governance.
+    """
+    graph = {
+        "goal": "Graph with an approval-gated node",
+        "steps": [{
+            "step": 1, "description": "gated action", "kind": "EXTERNAL_EFFECT",
+            "tool": "calculator", "args": ["1 + 1"], "risk": "MEDIUM",
+            "action": "gated",
+        }],
+    }
+
+    resp = client.post("/missions/from-graph", json=graph)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "AWAITING_APPROVAL"
+    assert body["approval_request_id"]
+
+
+def test_empty_graph_is_rejected_honestly_not_silently_accepted():
+    resp = client.post("/missions/from-graph", json={"goal": "empty", "steps": []})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "FAILED"
+    assert "at least one node" in body["error"]
+
+
+def test_graph_mission_route_requires_owner_auth():
+    anon = TestClient(app)
+    resp = anon.post("/missions/from-graph", json={
+        "goal": "x",
+        "steps": [{"step": 1, "description": "x", "kind": "READ_ANALYZE",
+                   "tool": "calculator", "args": ["1+1"], "risk": "LOW", "action": "x"}],
+    })
+    assert resp.status_code in (401, 403)

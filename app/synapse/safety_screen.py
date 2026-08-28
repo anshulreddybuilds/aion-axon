@@ -59,6 +59,18 @@ FORBIDDEN_IMPORTS = {
     "google",
     "google.cloud",
     "firebase_admin",
+    # SEC-03 (Phase 40): `pickle` was already blocked, but `shelve` reaches
+    # the exact same arbitrary-code-execution-via-crafted-data primitive
+    # (it's a pickle-backed persistent dict) and was not. `requests` /
+    # `httpx` / `aiohttp` are not stdlib and may not even be installed in
+    # the sandbox container, but blocking them at the AST layer is a
+    # defense-in-depth check that costs nothing if the sandbox environment
+    # ever changes -- a data-transformation capability has no legitimate
+    # need for a third-party HTTP client any more than it needs `socket`.
+    "shelve",
+    "requests",
+    "httpx",
+    "aiohttp",
 }
 
 FORBIDDEN_CALLS = {
@@ -75,6 +87,12 @@ FORBIDDEN_CALLS = {
     "getattr",
     "setattr",
     "delattr",
+    # SEC-03 (Phase 40): `dir()` alone can't execute anything, but it's
+    # the reconnaissance half of a getattr-based reflection chain -- and
+    # getattr/setattr/delattr are already forbidden, so a legitimate
+    # data-transformation capability has zero use for `dir()` either.
+    # Blocked for the same reason globals()/locals()/vars() already are.
+    "dir",
 }
 
 

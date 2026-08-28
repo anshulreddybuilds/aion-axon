@@ -92,6 +92,24 @@ class MissionService:
                 "error": error,
             }
 
+        return self.start_from_plan(plan, request)
+
+    def start_from_plan(self, plan: MissionPlan, request: str) -> dict[str, Any]:
+        """Execute an already-built MissionPlan through the real gate.
+
+        The second entry point into the same engine `start_planned()`
+        uses -- not a second engine. `start_planned()` gets its plan from
+        the Gemini-backed planner reasoning over free text;
+        `create_mission_from_graph()` (app/api.py) gets an equally real
+        `MissionPlan` compiled directly from a user-authored graph
+        (real capability names, real risk levels, real `$STEP_N`
+        dependency edges). From this point on -- governance, sandbox,
+        approval, persistence, resume -- the two are indistinguishable to
+        the engine, because they produce the identical validated schema.
+        """
+        workflow = WorkflowState(user_request=request)
+        mission_id = str(uuid4())
+
         workflow.plan = [step.model_dump() for step in plan.steps]
         workflow.update_status("EXECUTING")
 
@@ -202,12 +220,28 @@ class MissionService:
         if mission.get("mode") != "planned":
             return {"status": "FAILED", "error": "Not a planned mission."}
 
-        if mission.get("status") != "BLOCKED":
+        # Atomic check-and-set, not a plain read-check-run-then-write: two
+        # concurrent resume_blocked() calls (a network retry, two tabs,
+        # two Cloud Run instances handling the same webhook) could both
+        # read status == BLOCKED before either wrote, and both proceed to
+        # run mission_engine.run() below -- which executes real,
+        # registered tools. Proven to actually happen, not theoretical:
+        # 5 real threads racing this exact path made a real tool execute
+        # 5 times for one resume before this fix (see
+        # tests/test_mission_resume_race.py and
+        # firestore_store.claim_mission_transition()'s docstring for the
+        # full account). Only the winner's mission stays at the
+        # "BLOCKED" status this check already reported -- every other
+        # concurrent caller now gets the exact same FAILED response this
+        # plain status check always gave for a mission that wasn't
+        # BLOCKED, just decided atomically instead of racily.
+        if not firestore_store.claim_mission_transition(mission_id, "BLOCKED", "RESUMING"):
+            current = firestore_store.get_mission(mission_id) or {}
             return {
                 "status": "FAILED",
                 "error": (
                     "Mission is not blocked. "
-                    f"Current status: {mission.get('status')}"
+                    f"Current status: {current.get('status')}"
                 ),
             }
 
@@ -253,7 +287,21 @@ class MissionService:
         return {"mission_id": mission_id, "goal": plan.goal, **summary}
 
     def resume_planned(self, mission_id: str) -> dict[str, Any]:
-        """Continue a planned mission from the step that suspended it."""
+        """Continue a planned mission from the step that suspended it.
+
+        BUG-005 (AION_AXON_BUG_AND_PROBLEM_REGISTER.md): this method built
+        its WorkflowState with `status = "EXECUTING"` and never set
+        `approval_request_id` on it, while `approve_and_resume()` requires
+        `workflow.status == "AWAITING_APPROVAL"` AND a matching
+        `approval_request_id` before it will do anything -- so this route
+        failed 100% of the time for every mid-mission approval, silently,
+        for as long as it existed. Nothing ever exercised it: the sibling
+        single-tool `resume()` sets both correctly (compare its own
+        `workflow.status = "AWAITING_APPROVAL"` / `workflow
+        .approval_request_id = ...` two lines below), and this method was
+        apparently written without copying them. Found by writing the
+        test this bug's own docstring says should have existed.
+        """
         mission = firestore_store.get_mission(mission_id)
 
         if mission is None:
@@ -262,12 +310,18 @@ class MissionService:
         if mission.get("mode") != "planned":
             return {"status": "FAILED", "error": "Not a planned mission."}
 
-        if mission.get("status") != "AWAITING_APPROVAL":
+        # Atomic check-and-set -- same race, same fix, as resume_blocked()
+        # above: a plain status check here let two concurrent callers both
+        # see AWAITING_APPROVAL and both execute the approved step (and
+        # everything after it) for real. See
+        # firestore_store.claim_mission_transition()'s docstring.
+        if not firestore_store.claim_mission_transition(mission_id, "AWAITING_APPROVAL", "RESUMING"):
+            current = firestore_store.get_mission(mission_id) or {}
             return {
                 "status": "FAILED",
                 "error": (
                     "Mission is not awaiting approval. "
-                    f"Current status: {mission.get('status')}"
+                    f"Current status: {current.get('status')}"
                 ),
             }
 
@@ -277,7 +331,8 @@ class MissionService:
             user_request=mission["request"],
             workflow_id=mission["workflow_id"],
         )
-        workflow.status = "EXECUTING"
+        workflow.status = "AWAITING_APPROVAL"
+        workflow.approval_request_id = mission["approval_request_id"]
 
         index = mission.get("next_step_index", 0)
         completed = [
@@ -286,8 +341,16 @@ class MissionService:
         ]
 
         # Resume the suspended step through the approved path, then let
-        # the engine carry on with the rest.
+        # the engine carry on with the rest. Args are re-resolved against
+        # what already ran -- the plan document stores the step's
+        # ORIGINAL, unresolved args (e.g. "$STEP_1"), and the engine's own
+        # per-step loop only resolves them right before the first
+        # execution attempt. Without doing the same here, a step that
+        # both needs approval AND depends on an earlier step's real
+        # output would resume with the literal placeholder string instead
+        # of that output.
         step = plan.steps[index]
+        resolved_args = mission_engine._resolve_args(step.args, completed)
 
         approved = orchestrator.approve_and_resume(
             workflow,
@@ -295,7 +358,7 @@ class MissionService:
             step.action,
             RiskLevel(step.risk),
             mission["approval_request_id"],
-            *step.args,
+            *resolved_args,
         )
 
         if approved.get("status") != "EXECUTED":
@@ -307,7 +370,13 @@ class MissionService:
                 "step_results": completed,
                 "approval_request_id": mission["approval_request_id"],
                 "blocked_on": None,
-                "reason": approved.get("reason"),
+                # approve_and_resume()'s various guard/failure paths use
+                # "error" or "reason" depending on which one fired -- read
+                # both so a real message is never silently dropped
+                # (BUG-005's second half: this used to read only
+                # "reason", which is None on every guard-failure path,
+                # turning an explained FAILED into an unexplained one).
+                "reason": approved.get("reason") or approved.get("error"),
             }
         else:
             completed.append({
@@ -364,12 +433,18 @@ class MissionService:
         if mission is None:
             return {"status": "FAILED", "error": "Unknown mission."}
 
-        if mission.get("status") != "AWAITING_APPROVAL":
+        # Atomic check-and-set -- same race, same fix, as resume_blocked()/
+        # resume_planned(): a plain status check here let two concurrent
+        # callers both see AWAITING_APPROVAL and both execute the
+        # approved tool for real. See
+        # firestore_store.claim_mission_transition()'s docstring.
+        if not firestore_store.claim_mission_transition(mission_id, "AWAITING_APPROVAL", "RESUMING"):
+            current = firestore_store.get_mission(mission_id) or {}
             return {
                 "status": "FAILED",
                 "error": (
                     "Mission is not awaiting approval. "
-                    f"Current status: {mission.get('status')}"
+                    f"Current status: {current.get('status')}"
                 ),
             }
 

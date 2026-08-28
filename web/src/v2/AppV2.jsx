@@ -42,9 +42,9 @@ function StatusLine({ result }) {
           exactly what a quota refusal looks like. A failure with no reason
           is the same defect as a silent mic error: the reader is told
           something went wrong and given nothing to act on. */}
-      {result?.reason && (
+      {(result?.reason || result?.error) && (
         <p className="text-[11px] text-red-300 mt-1.5 leading-relaxed break-all">
-          {result.reason}
+          {result.reason || result.error}
         </p>
       )}
 
@@ -59,6 +59,7 @@ function StatusLine({ result }) {
           than leave a blank line that looks like the UI broke. */}
       {status !== "COMPLETED" &&
         !result?.reason &&
+        !result?.error &&
         !result?.blocked_on &&
         !(result?.step_results || []).length && (
           <p className="text-[10.5px] text-zinc-500 mt-1.5 leading-relaxed">
@@ -134,10 +135,15 @@ export default function AppV2() {
       // changed nothing. See the same fix in App.jsx and v4/AppV4.jsx.
       if (approved && capability) {
         const installed = await api.install(capability);
-        if (installed?.status !== "INSTALLED") {
+        // BUG-010: ALREADY_INSTALLED is a real, safe, idempotent
+        // outcome (see App.jsx), not an error -- do not show one for it.
+        if (!["INSTALLED", "ALREADY_INSTALLED"].includes(installed?.status)) {
+          // BUG-009: same reason/error mismatch as App.jsx/AppV4.jsx --
+          // synapse.install()'s FAILED responses carry their message
+          // under "error", not "reason".
           setError(
             `Approved, but install did not complete: ${
-              installed?.reason || installed?.status || "unknown"
+              installed?.reason || installed?.error || installed?.status || "unknown"
             }`
           );
         }

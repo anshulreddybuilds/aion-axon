@@ -32,6 +32,7 @@ BRIEF_CODE = (
 def clean():
     firestore_store.missions.clear()
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     firestore_store.approvals.clear()
     firestore_store.evolution_events.clear()
     # declare() deliberately never overwrites a real implementation, so an
@@ -42,6 +43,7 @@ def clean():
     yield
     firestore_store.missions.clear()
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     registry.unregister("write_brief")
     registry.declare("write_brief", "Writes an executive brief.", "LOW")
     registry.unregister("summarize_notes_v1")
@@ -404,3 +406,145 @@ def test_rejected_approval_leaves_the_mission_blocked(monkeypatch):
 
     assert result["status"] == "APPROVAL_REQUIRED"
     assert firestore_store.get_mission(mission_id)["status"] == "BLOCKED"
+
+
+# --- BUG-005: resume_planned() for a mid-mission approval ------------------
+
+def test_resume_planned_completes_a_mission_with_a_mid_mission_approval():
+    """The real bug, found live this session: resume_planned() built its
+    WorkflowState with status="EXECUTING" and never set
+    approval_request_id, while approve_and_resume() requires
+    status=="AWAITING_APPROVAL" plus a matching approval_request_id
+    before it will do anything. Every mid-mission approval on a PLANNED
+    (multi-step) mission failed 100% of the time as a result -- and the
+    real error was invisible too (resume_planned() read "reason", but
+    the guard failure carries "error"), so a caller saw only
+    `{"status": "FAILED", "reason": null}`.
+
+    This is the exact "approval in the middle... resumed mission"
+    scenario the project's own multi-step composition requirements call
+    for, and POST /missions/{id}/resume-planned had ZERO functional test
+    coverage anywhere before this -- only an auth-only check
+    (test_owner_auth.py) and a route inventory line
+    (test_api_hardening.py). Neither ever called the method.
+
+    Also proves the approved (2nd) step gets its args genuinely
+    RE-RESOLVED against what already ran, not the plan's raw
+    "$STEP_1.value" placeholder -- a step that needs both approval AND a
+    prior step's real output must get the real output, not the literal
+    string.
+    """
+    from app.governance.approval import approval_manager
+    from app.missions.engine import mission_engine
+    from app.workflows.state import WorkflowState
+
+    seen = {}
+    registry.register(
+        "emits_value", "Emits a real value.", "LOW",
+        lambda *a: {"status": "SUCCESS", "value": "real-step-1-output"},
+    )
+    registry.register(
+        "gated_consumer", "Consumes step 1's value, needs approval.", "MEDIUM",
+        lambda *a: (seen.update(arg=a[0] if a else None), {"status": "SUCCESS"})[1],
+    )
+
+    plan = MissionPlan(
+        goal="3-step mission with an approval gate depending on step 1",
+        steps=[
+            MissionStep(
+                step=1, description="emit", kind="READ_ANALYZE",
+                tool="emits_value", args=[], risk="LOW", action="emit",
+            ),
+            MissionStep(
+                step=2, description="consume step 1's real value",
+                kind="EXTERNAL_EFFECT", tool="gated_consumer",
+                args=["$STEP_1.value"], risk="MEDIUM", action="consume",
+            ),
+            MissionStep(
+                step=3, description="final step after the approval",
+                kind="READ_ANALYZE", tool="emits_value", args=[],
+                risk="LOW", action="final",
+            ),
+        ],
+    )
+
+    workflow = WorkflowState(user_request="mid-mission approval test")
+    summary = mission_engine.run(workflow, plan)
+
+    assert summary["status"] == "AWAITING_APPROVAL"
+    assert summary["steps_completed"] == 1
+
+    mission_id = "mission-mid-approval"
+    mission_service._persist_planned(
+        mission_id, workflow, "mid-mission approval test", plan, summary,
+    )
+
+    approval_manager.decide(
+        summary["approval_request_id"], True, "anshul",
+    )
+
+    resumed = mission_service.resume_planned(mission_id)
+
+    assert resumed["status"] == "COMPLETED", (
+        f"mid-mission approval resume did not complete the mission: {resumed}"
+    )
+    assert resumed["steps_completed"] == 3
+    assert seen["arg"] == "real-step-1-output", (
+        "step 2 got the raw '$STEP_1.value' placeholder or nothing, "
+        "not step 1's real resolved output"
+    )
+
+    registry.unregister("emits_value")
+    registry.unregister("gated_consumer")
+    firestore_store.missions.clear()
+
+
+def test_resume_planned_reports_the_real_reason_not_a_null(monkeypatch):
+    """The second half of BUG-005: a resume_planned() failure must
+    surface approve_and_resume()'s actual message. Simulated by resuming
+    with a request_id that no longer matches the workflow's (the same
+    guard a stale/replayed resume attempt would hit for real)."""
+    from app.governance.approval import approval_manager
+    from app.missions.engine import mission_engine
+    from app.workflows.state import WorkflowState
+
+    registry.register(
+        "gated_consumer", "Needs approval.", "MEDIUM",
+        lambda *a: {"status": "SUCCESS"},
+    )
+
+    plan = MissionPlan(
+        goal="approval then mismatch",
+        steps=[MissionStep(
+            step=1, description="gated", kind="EXTERNAL_EFFECT",
+            tool="gated_consumer", args=[], risk="MEDIUM", action="gated",
+        )],
+    )
+
+    workflow = WorkflowState(user_request="mismatch test")
+    summary = mission_engine.run(workflow, plan)
+    assert summary["status"] == "AWAITING_APPROVAL"
+
+    mission_id = "mission-mismatch"
+    mission_service._persist_planned(
+        mission_id, workflow, "mismatch test", plan, summary,
+    )
+    approval_manager.decide(summary["approval_request_id"], True, "anshul")
+
+    # Corrupt the persisted approval_request_id after the real approval,
+    # so approve_and_resume()'s own request-id guard is the one that
+    # fires -- that guard's failure dict carries "error", not "reason".
+    mission = firestore_store.get_mission(mission_id)
+    mission["approval_request_id"] = "some-other-request-id"
+    firestore_store.save_mission(mission_id, mission)
+
+    resumed = mission_service.resume_planned(mission_id)
+
+    assert resumed["status"] == "FAILED"
+    assert resumed["reason"] is not None, (
+        "the real failure reason was swallowed and replaced with null"
+    )
+    assert "not found" in resumed["reason"]
+
+    registry.unregister("gated_consumer")
+    firestore_store.missions.clear()

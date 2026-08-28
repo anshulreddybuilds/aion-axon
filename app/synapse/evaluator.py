@@ -9,14 +9,30 @@ it is honestly UNSCORED. If Gemma is unavailable -- wrong model id, quota,
 outage -- this returns UNSCORED. It never invents a number, because a
 fabricated score is worse than a missing one: a missing score prompts a
 human to look, a fabricated one stops them looking.
+
+SEC-01 (found live during Mission #1, 24 Aug): the original parser
+expected one strict pipe-delimited line (`SCORE: 0-100 | VERDICT: ... |
+REASON: ...`) with no fallback. Gemma answered with free-form prose
+instead of that line -- a real, reproducible model-adherence failure, not
+a quota issue (the call itself succeeded; see the git history for the
+full forensic trace). Structured JSON output is more reliably followed by
+instruction-tuned models than a bespoke pipe format, so this now asks for
+JSON and validates it strictly server-side. The validator is the actual
+security boundary here, not the prompt -- a JSON-shaped response is not
+trusted just because it parses; every field is type- and range-checked,
+and anything ambiguous still degrades to the same honest UNSCORED shape
+callers already handle.
 """
 import asyncio
+import json
+import math
 import os
-from typing import Any
+from typing import Any, Optional
 
-from google import genai
+from pydantic import BaseModel, Field
 from google.genai import types
 
+from app.google_client import genai_client
 from app.observability.telemetry import record_model_call, timed
 
 # Pinned from a live models.list() against the project's own key, not
@@ -31,32 +47,58 @@ MODEL = os.getenv("AXON_EVALUATOR_MODEL", "gemma-4-26b-a4b-it")
 
 PROMPT = """You are grading a generated Python capability.
 
-Answer with ONE line in exactly this format:
-SCORE: <0-100> | VERDICT: <PASS|FAIL> | REASON: <one short sentence>
+Respond with ONLY a single JSON object, no other text, no markdown
+fences, matching exactly this shape:
+
+{"score": <integer 0-100>, "passed": <true|false>, "reason": "<one short sentence>"}
 
 Score on whether the TEST OUTPUT demonstrates the capability really works,
 not on style. If the tests passed but only tested trivial input, score low
-and say so.
+and say so in "reason". Output nothing before or after the JSON object.
 """
 
 
-def _client() -> genai.Client:
-    key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+class _EvaluatorResponse(BaseModel):
+    """The schema handed to the model as response_schema.
 
-    if not key:
-        raise RuntimeError("No API key configured for the evaluator.")
+    Optional fields are additive -- current callers only read score and
+    passed/reason -- but accepting them means a model that volunteers
+    more detail doesn't get punished for it, and future callers can start
+    reading them without another schema migration.
+    """
 
-    return genai.Client(api_key=key)
+    score: int = Field(ge=0, le=100)
+    passed: bool
+    reason: str = ""
+    security_concerns: list[str] = Field(default_factory=list)
+    correctness_concerns: list[str] = Field(default_factory=list)
 
 
 async def _score(prompt: str) -> str:
-    client = _client()
+    client = genai_client()
 
+    # response_mime_type/response_schema ask the API for JSON directly.
+    # This is a request, not a guarantee -- if the model or API version
+    # rejects the config, or the call fails for any other reason (quota,
+    # network, timeout), the exception propagates to evaluate()'s own
+    # try/except exactly like before this change and degrades to
+    # UNSCORED. Deliberately NOT retried here in a different mode: a
+    # silent second call on failure would double real API usage on every
+    # transient error, which is the wrong tradeoff on a quota that has
+    # already been observed exhausted in production (see the research
+    # stage's 429 during Mission #1). The manual JSON extraction +
+    # validation below is the real safety net for the call that DOES
+    # succeed but returns malformed content -- that was the actual
+    # Mission #1 failure mode, not a call failure.
     with timed() as clock:
         response = await client.aio.models.generate_content(
             model=MODEL,
             contents=prompt,
-            config=types.GenerateContentConfig(system_instruction=PROMPT),
+            config=types.GenerateContentConfig(
+                system_instruction=PROMPT,
+                response_mime_type="application/json",
+                response_schema=_EvaluatorResponse,
+            ),
         )
 
     record_model_call("evaluate", MODEL, response, clock["ms"])
@@ -64,30 +106,97 @@ async def _score(prompt: str) -> str:
     return (response.text or "").strip()
 
 
+def _extract_json_object(text: str) -> Optional[str]:
+    """Finds the first balanced {...} substring in `text`, if any.
+
+    Models sometimes wrap JSON in markdown fences or add a stray sentence
+    before/after it despite instructions. This is a bounded brace-count
+    scan over the literal text -- no eval, no regex backtracking risk --
+    so it safely tolerates that without trusting anything about the
+    content inside the braces; validation still happens after.
+    """
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+
+    for i in range(start, len(text)):
+        ch = text[i]
+
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+
+    return None
+
+
 def _parse(text: str) -> dict[str, Any]:
-    score = None
-    verdict = None
-    reason = text.strip()
+    """Strict JSON parse + validation. Never raises; returns a dict with
+    "valid": False on anything malformed, ambiguous, or out of range."""
+    candidate = _extract_json_object(text)
 
-    for part in text.split("|"):
-        part = part.strip()
+    if candidate is None:
+        return {"valid": False}
 
-        if part.upper().startswith("SCORE:"):
-            digits = "".join(
-                c for c in part.split(":", 1)[1] if c.isdigit()
-            )
-            if digits:
-                score = max(0, min(100, int(digits)))
+    try:
+        payload = json.loads(candidate)
+    except (json.JSONDecodeError, ValueError):
+        return {"valid": False}
 
-        elif part.upper().startswith("VERDICT:"):
-            value = part.split(":", 1)[1].strip().upper()
-            if value in ("PASS", "FAIL"):
-                verdict = value
+    if not isinstance(payload, dict):
+        return {"valid": False}
 
-        elif part.upper().startswith("REASON:"):
-            reason = part.split(":", 1)[1].strip()
+    raw_score = payload.get("score")
 
-    return {"score": score, "verdict": verdict, "reason": reason}
+    # bool is a subclass of int in Python -- isinstance(True, int) is
+    # True -- so bool must be rejected explicitly or "score": true would
+    # silently pass as score=1.
+    if isinstance(raw_score, bool) or not isinstance(raw_score, (int, float)):
+        return {"valid": False}
+
+    if isinstance(raw_score, float) and (
+        math.isnan(raw_score) or math.isinf(raw_score)
+    ):
+        return {"valid": False}
+
+    score = int(raw_score)
+
+    if score != raw_score or score < 0 or score > 100:
+        return {"valid": False}
+
+    passed = payload.get("passed")
+
+    if not isinstance(passed, bool):
+        return {"valid": False}
+
+    reason = payload.get("reason")
+
+    if reason is not None and not isinstance(reason, str):
+        return {"valid": False}
+
+    return {
+        "valid": True,
+        "score": score,
+        "verdict": "PASS" if passed else "FAIL",
+        "reason": (reason or "").strip()[:500],
+    }
 
 
 def evaluate(
@@ -96,7 +205,9 @@ def evaluate(
     code: str,
     test_result: dict[str, Any],
 ) -> dict[str, Any]:
-    """Score a candidate. Never raises; UNSCORED when unavailable."""
+    """Score a candidate. Never raises; UNSCORED when unavailable or
+    malformed. Fails closed at every step -- an ambiguous or partially
+    valid response is treated the same as no response at all."""
     prompt = (
         f"CAPABILITY: {candidate_name}\n"
         f"PURPOSE: {description}\n\n"
@@ -128,12 +239,12 @@ def evaluate(
 
     parsed = _parse(raw)
 
-    if parsed["score"] is None:
+    if not parsed.get("valid"):
         return {
             "status": "UNSCORED",
             "reason_code": "EVALUATOR_MALFORMED_OUTPUT",
             "model": MODEL,
-            "reason": "Evaluator response could not be parsed into a score.",
+            "reason": "Evaluator response could not be parsed into a valid score.",
             "raw": raw[:300],
             "score": None,
             "verdict": None,

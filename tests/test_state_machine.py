@@ -91,6 +91,7 @@ _FAILED_SANDBOX = {"status": "COMPLETED", "exit_code": 1, "passed": False, "stdo
 
 def setup_function():
     firestore_store.capabilities.clear()
+    firestore_store.install_claims.clear()
     firestore_store.audit_events.clear()
     firestore_store.approvals.clear()
 

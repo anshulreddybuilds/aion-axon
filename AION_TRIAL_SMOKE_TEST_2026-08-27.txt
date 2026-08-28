@@ -1,0 +1,130 @@
+AION AXON — TRIAL SMOKE TEST
+Date: 2026-08-27
+Verified against HEAD: e76cb9f65a837d5f7459411bd8bcd01fc48568db
+Run these AFTER deploying this HEAD (see AION_FULL_SYSTEM_AUDIT_2026-08-27.txt
+section 10) -- against a still-stale production, tests 4-9 below will very
+likely reproduce the SAME already-fixed symptoms documented in the audit.
+
+================================================================
+LOCAL COMMANDS (already run and passing this pass, safe to re-run anytime)
+================================================================
+
+Backend full suite:
+    cd C:\Users\sneha\Desktop\AION-AXON-core
+    .venv\Scripts\python.exe -m pytest -q
+Expected: 562 passed, 2 skipped, 0 failed
+
+CORS fix specifically:
+    .venv\Scripts\python.exe -m pytest tests/test_api.py -v -k "cors or origin or preview"
+Expected: 6 passed
+
+Mid-mission-approval resume (BUG-005):
+    .venv\Scripts\python.exe -m pytest tests/test_loop_closure.py -v -k "resume_planned"
+Expected: 2 passed
+
+Frontend test scripts (run each):
+    node web/src/api.stream.test.mjs               -> 8 passed
+    node web/src/demoRecoveryFixture.test.mjs       -> 11 passed
+    node web/src/graphCompiler.test.mjs             -> 13/13
+    node web/src/graphExecutionState.test.mjs       -> 16/16
+    node web/src/livePipeline.test.mjs              -> 15 passed
+    node web/src/missionApprovalReconcile.test.mjs  -> 6 passed
+    node web/src/speechRecognition.test.mjs         -> 11 passed
+    node web/src/stateMachineProof.test.mjs         -> 7 passed
+
+Frontend build:
+    cd web && npm run build
+Expected: clean, no errors
+
+================================================================
+PRODUCTION READ-ONLY CHECKS (safe, no owner token needed, no mutation)
+================================================================
+
+TEST A -- health/capabilities:
+    curl -s https://aion-core-638298765129.asia-south1.run.app/
+    curl -s https://aion-core-638298765129.asia-south1.run.app/capabilities
+Expected: {"service":"aion-core","status":"LIVE",...}, 20 capabilities,
+12 implemented (as of this pass's check -- re-verify after redeploy,
+the count itself should not change from a frontend-only fix).
+
+TEST B -- sandbox proof:
+    curl -s https://aion-core-638298765129.asia-south1.run.app/sandbox/proof
+Expected: 200, a real credential-scan result (no ambient credentials).
+
+TEST C -- confirm deployed revision after redeploy:
+    gcloud run services describe aion-core --region=asia-south1 \
+      --format="value(status.latestReadyRevisionName)"
+Expected (after a real redeploy from this HEAD, using the documented
+--revision-suffix=rel-$(git rev-parse --short=10 HEAD) convention):
+a revision named aion-core-rel-e76cb9f65a (or the exact HEAD at deploy
+time), NOT aion-core-00039-sfq.
+
+TEST D -- confirm deployed frontend bundle after redeploy:
+    curl -s https://aion-axon-2026.web.app/ | grep -oE '/assets/index-[A-Za-z0-9]+\.(js|css)'
+Expected: a bundle hash that does NOT match index-9omx4ZTA.js /
+index-CPjNheCw.css (this pass's pre-redeploy values).
+
+================================================================
+THE ACTUAL TRIAL MISSION (owner performs the real click-through)
+================================================================
+
+TEST E -- the reported scenario, end to end:
+  1. Open https://aion-axon-2026.web.app/v5 (or the redeployed frontend
+     URL) in a real browser.
+  2. Unlock with the real owner token.
+  3. Enter: "Research current trends and developments in AI robotics
+     using web search, then write an executive brief summarizing the
+     findings."
+  4. Click Plan it. Confirm a real graph renders (node 1: web_research,
+     node 2: write_brief, edge n1 -> n2).
+  5. Click Compile & Run.
+  6. Watch the run panel. On THIS HEAD, if any step fails or needs
+     approval, the panel must show a REAL, readable reason -- never a
+     bare status word alone (this is exactly what BUG-011's fix
+     changed).
+  7. If an approval gate appears, the owner personally reviews and
+     decides it -- not performed by any agent.
+  8. Confirm the mission reaches a real terminal state (COMPLETED or an
+     HONEST failure with a real reason) -- not a silent "FAILED, steps
+     0/2" with no explanation, which was the ORIGINAL reported symptom
+     this smoke test exists to disprove.
+
+TEST F -- duplicate-install safety (if a capability install happens
+  during the trial):
+  Click the same install/approve action twice in quick succession (or
+  reload and retry). Expected: the second attempt shows
+  "ALREADY_INSTALLED" as a normal, non-error status (BUG-010/011's
+  fix), never a red error banner for a call that actually succeeded.
+
+TEST G -- voice path:
+  Click the microphone button, speak a request, confirm the transcript
+  appears in the mission input box, then proceed as TEST E. Expected:
+  transcript insertion works; an empty/failed recognition attempt does
+  not crash the input or silently submit a stale value.
+
+================================================================
+FAILURE INJECTION (optional, if time allows)
+================================================================
+
+TEST H -- unauthorized monitor call (expected to correctly 401):
+    curl -s -o /dev/null -w "%{http_code}\n" \
+      -X POST https://aion-core-638298765129.asia-south1.run.app/monitors/run-due
+Expected: 401 -- this is CORRECT, not a bug (see audit section 5).
+Do NOT "fix" this by adding a token to a public script or removing the
+auth requirement.
+
+TEST I -- malformed mission request:
+    curl -s -X POST https://aion-core-638298765129.asia-south1.run.app/missions/planned \
+      -H "Content-Type: application/json" -d '{}'
+Expected: 422 (missing required "request" field), not a 500 or a raw
+traceback.
+
+================================================================
+DO NOT
+================================================================
+- Do not run TEST E's approval step without the owner personally
+  clicking it.
+- Do not add a real owner token to any script committed to the repo.
+- Do not treat a stale-production symptom as a still-open code bug
+  without first confirming the deployed revision matches this HEAD
+  (TEST C/D above).

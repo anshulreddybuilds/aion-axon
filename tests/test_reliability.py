@@ -107,7 +107,24 @@ def test_resuming_a_completed_mission_does_not_run_it_again():
 
 
 def test_installing_the_same_capability_twice_is_safe():
-    """A retried install must not corrupt the registry or double-count."""
+    """A retried/replayed install must not corrupt the registry, double-
+    count the version, or duplicate the ledger event.
+
+    Batch 2 (state integrity): this test originally only checked that the
+    registry didn't grow a duplicate entry, which registry.register()
+    already made trivially true (it overwrites, not appends) even before
+    a real bug was found and fixed here -- registry non-duplication was
+    never actually the broken invariant. The real bug, confirmed live: a
+    second install() call on an already-installed capability with the
+    same still-APPROVED approval silently re-ran the entire install path,
+    bumping `version` 1->2 and writing a SECOND evolution event for the
+    same real-world action. install() now recognises a replay of the
+    SAME approval_request_id against an already-READY capability and
+    returns ALREADY_INSTALLED without touching the registry, version, or
+    ledger again -- distinguishable from a fresh INSTALLED on purpose, so
+    a caller (or the frontend) can tell a genuine new install from a
+    no-op replay.
+    """
     firestore_store.save_capability("twice_skill", {
         "name": "twice_skill",
         "description": "adds one",
@@ -134,14 +151,25 @@ def test_installing_the_same_capability_twice_is_safe():
 
     from app.synapse.engine import synapse
 
+    events_before = len(firestore_store.list_evolution_events())
+
     first = synapse.install("twice_skill")
     second = synapse.install("twice_skill")
+    third = synapse.install("twice_skill")
 
     assert first["status"] == "INSTALLED"
-    assert second["status"] == "INSTALLED"
+    assert second["status"] == "ALREADY_INSTALLED"
+    assert third["status"] == "ALREADY_INSTALLED"
 
     names = [t["name"] for t in registry.list_tools()]
     assert names.count("twice_skill") == 1, "registry duplicated a capability"
+
+    assert firestore_store.get_capability("twice_skill")["version"] == 1, (
+        "a replayed install must not bump the version again"
+    )
+    assert len(firestore_store.list_evolution_events()) == events_before + 1, (
+        "a replayed install must not write a second evolution event"
+    )
 
     registry.unregister("twice_skill")
 
@@ -309,15 +337,39 @@ def test_unknown_capability_is_a_clean_capability_gap():
 
 
 def test_declared_but_unbuilt_capability_is_also_a_gap():
+    """Real bug, not a flake, found and fixed this pass: this test
+    hardcoded "write_brief" as an example of an unimplemented capability,
+    but write_brief has genuinely been implemented for a while (real
+    function registered in app/capabilities/bootstrap.py,
+    `implemented=True` in app/capabilities/seed.py) -- confirmed by
+    source inspection. The test failed honestly when run in a way that
+    left the shared registry in its natural default state, and only
+    "passed" as part of a larger ordered run by accident. Anchoring to
+    "whatever is still unbuilt" (same fix already applied to
+    tests/test_adversarial.py and tests/test_monitors.py for this exact
+    class of problem) keeps the property covered as capabilities get
+    implemented, instead of decaying as the code improves."""
+    declared_only = [
+        tool["name"] for tool in registry.list_tools()
+        if not tool["implemented"]
+    ]
+
+    assert declared_only, (
+        "Every capability is implemented, so there is nothing left to "
+        "prove this property against."
+    )
+
+    tool_name = declared_only[0]
+
     body = client.post("/missions", json={
-        "request": "x", "tool": "write_brief",
-        "action": "write the brief", "risk": "LOW", "args": [],
+        "request": "x", "tool": tool_name,
+        "action": "run it", "risk": "LOW", "args": [],
     })
 
     result = body.json()["result"]
 
     assert result["status"] == "BLOCKED"
-    assert result["missing_capability"] == "write_brief"
+    assert result["missing_capability"] == tool_name
 
 
 # --- Phase 28I: the real mission path must not trust an empty need --------

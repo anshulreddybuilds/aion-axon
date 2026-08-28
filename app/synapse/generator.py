@@ -10,10 +10,10 @@ import json
 import os
 from typing import Optional
 
-from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from app.google_client import genai_client
 from app.observability.telemetry import record_model_call, timed
 
 MODEL = os.getenv("AXON_BUILDER_MODEL", "gemini-3.6-flash")
@@ -65,20 +65,11 @@ Return only the structured candidate.
 """
 
 
-def _client() -> genai.Client:
-    key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-
-    if not key:
-        raise RuntimeError("No Gemini API key configured for generation.")
-
-    return genai.Client(api_key=key)
-
-
 async def _generate(prompt: str) -> str:
     # Built inside the coroutine: the ADK Runner closes the shared genai
     # transport when its loop tears down, and the planner runs on every
     # mission.
-    client = _client()
+    client = genai_client()
 
     with timed() as clock:
         response = await client.aio.models.generate_content(

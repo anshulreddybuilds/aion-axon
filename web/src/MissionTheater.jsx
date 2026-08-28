@@ -3,6 +3,7 @@ import { api, hasOwnerToken } from "./api.js";
 import { Panel, Empty } from "./panels.jsx";
 import DemoRecoveryMode from "./DemoRecoveryMode.jsx";
 import { deriveStages, StageRow } from "./missionStages.jsx";
+import { reconcileRecord } from "./missionApprovalReconcile.js";
 
 /**
  * Mission Theater — one real acquisition, watched stage by stage.
@@ -33,13 +34,28 @@ function ApprovalGate({ record, onDecided }) {
   const decide = async (approved) => {
     setBusy(true);
     try {
-      await api.decide(record.approval_request_id, approved);
+      // app/api.py's /approvals/{id}/decide returns HTTP 200 even when
+      // the decision didn't apply -- ALREADY_DECIDED, NOT_FOUND, and
+      // BLOCKED (kill switch active) are all normal 200 bodies, not
+      // thrown errors, so api.js's request() won't throw for them. Check
+      // the actual status instead of assuming the call succeeded, or a
+      // stale double-click / a kill switch tripped mid-decision would
+      // silently install nothing while the UI still claims APPROVED.
+      const decision = await api.decide(record.approval_request_id, approved);
+      const expected = approved ? "APPROVED" : "REJECTED";
+      if (decision.status !== expected) {
+        setResult({
+          approved,
+          error: `Decision not recorded: ${decision.status}${decision.reason ? ` — ${decision.reason}` : ""}`,
+        });
+        return;
+      }
       let installResult = null;
       if (approved) {
         installResult = await api.install(record.candidate.name);
       }
       setResult({ approved, installResult });
-      onDecided?.(approved);
+      onDecided?.(approved, installResult);
     } catch (err) {
       setResult({ approved, error: err.message });
     } finally {
@@ -102,7 +118,18 @@ function ApprovalGate({ record, onDecided }) {
               <p className="text-muted">
                 {result.installResult?.status === "INSTALLED"
                   ? "INSTALLED → ACTIVE. Mission's original need is now satisfiable."
-                  : `Install: ${result.installResult?.status || result.installResult?.reason || "unknown"}`}
+                  : (() => {
+                      // `status` is checked first below and is always
+                      // present on a real response, so a bare
+                      // `status || reason` chain never reaches `reason`
+                      // -- and synapse.install()'s FAILED responses
+                      // carry their message under "error" anyway, not
+                      // "reason". Show both: the status, plus whatever
+                      // real diagnostic is present.
+                      const r = result.installResult;
+                      const detail = r?.reason || r?.error;
+                      return `Install: ${r?.status || "unknown"}${detail ? ` — ${detail}` : ""}`;
+                    })()}
               </p>
             </div>
           ) : (
@@ -385,7 +412,15 @@ export default function MissionTheater() {
       )}
 
       {record?.status === "AWAITING_APPROVAL" && !decided && (
-        <ApprovalGate record={record} onDecided={() => setDecided(true)} />
+        <ApprovalGate
+          record={record}
+          onDecided={(approved, installResult) => {
+            setDecided(true);
+            setRecord((prev) =>
+              prev ? reconcileRecord(prev, { approved, installResult }) : prev
+            );
+          }}
+        />
       )}
 
       {record && (

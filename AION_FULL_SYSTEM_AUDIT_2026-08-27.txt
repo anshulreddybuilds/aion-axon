@@ -1,0 +1,298 @@
+AION AXON — FULL SYSTEM AUDIT
+Date: 2026-08-27
+Branch: feat/beastmode-core-oagiwb
+HEAD at end of this pass: e76cb9f65a837d5f7459411bd8bcd01fc48568db
+(started this pass at 33b717d)
+
+================================================================
+1. GIT STATE
+================================================================
+Branch: feat/beastmode-core-oagiwb
+Remote: https://github.com/anshulreddybuilds/aion-axon.git
+Local == origin/feat/beastmode-core-oagiwb before this pass's one commit.
+merge-base(feat/beastmode-core-oagiwb, feat/beastmode-core) = e383d61
+-> confirmed genuine continuation of prior work, not an unrelated branch.
+214 commits of real, well-documented work (BUG-001 through BUG-013,
+Updates 12-22) between e383d61 and 33b717d.
+Working tree: clean except two harmless pre-existing untracked files
+(see section 11).
+
+================================================================
+2. ARCHITECTURE DISCOVERED
+================================================================
+Backend: FastAPI (app/api.py, 40+ routes), FastAPI + Firestore
+  (app/memory/firestore_store.py: MemoryFirestore for tests/CI,
+  AxonFirestore for production, switched by AXON_FIRESTORE_MODE).
+Mission engine: app/missions/engine.py (MissionEngine.run — the ONE
+  execution engine, confirmed by direct code inspection: exactly three
+  call sites project-wide — MissionService.start_from_plan(),
+  resume_blocked(), resume_planned()).
+Governance: app/governance/{approval,owner_auth,guardian,kill_switch,
+  execution_gate,rate_limit}.py.
+SYNAPSE (capability acquisition): app/synapse/{engine,generator,
+  safety_screen,sandbox_client,evaluator}.py.
+Monitors: app/monitors/service.py — pull-based, POST /monitors/run-due
+  called by an external scheduler, owner-token gated by design.
+Frontend: Vite + React, 5 surfaces (v1 App.jsx = production Holo-Deck,
+  v2/v3/v4 = dev iterations, v5 = new graphical mission builder
+  reached at /v5, built this branch's Day 1-2 work).
+Distributed concurrency: app/memory/firestore_store.py
+  AxonFirestore.claim_install() -- real Firestore transaction with an
+  outer wall-clock retry loop (20 attempts, 0.1-0.4s jitter backoff),
+  raises InstallClaimContention (not an opaque library error) if still
+  contended after the full budget. synapse.install() catches it and
+  returns an honest FAILED, never a fabricated ALREADY_INSTALLED.
+
+================================================================
+3. SERVICES DISCOVERED (read-only inspection, no mutation performed)
+================================================================
+Cloud Run project: aion-axon-2026, region asia-south1.
+Service: aion-core.
+  Latest ready revision (verified live this pass): aion-core-00039-sfq
+  Deploy timestamp: 2026-08-26T00:09:29Z
+  This revision already includes GET /beastmode/state-machine (verified
+  by a real curl returning the correct real transition table) -- proves
+  the deployed code is at least as recent as commit 195f769.
+  IMPORTANT: this deploy timestamp (Aug 26) is BEFORE the bulk of
+  BUG-005 through BUG-013's fixes (documented as Day 2 work, dated
+  around Aug 27 per file mtimes in this working tree). Production is
+  very likely running code that predates those fixes. Not deployed by
+  either this session or the prior 214-commit session (which explicitly
+  had no production egress throughout) -- deployed by some other action,
+  most plausibly the owner running gcloud commands directly (consistent
+  with the PowerShell region-prompt incident reported this pass).
+Frontend: Firebase Hosting, project aion-axon-2026.
+  Live bundle (verified this pass): index-9omx4ZTA.js /
+  index-CPjNheCw.css -- also does not match this branch's current local
+  build output, confirming the deployed frontend predates this branch's
+  Day 1-2 work too.
+Sandbox: aion-sandbox Cloud Run service (not independently re-verified
+  this pass beyond what the bug register already established; no new
+  finding).
+
+================================================================
+4. ENDPOINT INVENTORY (backend, from app/api.py, this HEAD)
+================================================================
+Public GET: /, /health, /capabilities, /autonomy, /autonomy/{cap},
+  /telemetry, /evolution, /monitors, /sandbox/proof,
+  /approvals/{id}/review, /approvals/pending, /killswitch,
+  /beastmode/* (red-team, ledger/verify, contract, quarantine, lineage,
+  approval/explain, security/report, mission/readiness, state-machine),
+  /capabilities/{name}/passport, /ground-truth, /ground-truth/match,
+  /missions/{id}.
+Owner-gated POST (X-Axon-Token required, verified via
+  Depends(require_owner)): /missions, /missions/planned,
+  /missions/{id}/acquire, /missions/{id}/resume*, /missions/from-graph,
+  /synapse/propose, /synapse/install/{name}, /synapse/rollback/{name},
+  /monitors (create), /monitors/run-due, /monitors/{id}/disable,
+  /approvals/{id}/decide, /killswitch (POST), /ground-truth (POST),
+  /beastmode/ledger/seal.
+Public POST (advisory, zero side effects): /beastmode/memory/query,
+  /beastmode/plan.
+
+================================================================
+5. PROBLEMS FOUND THIS PASS
+================================================================
+
+--- NEW FINDING: CORS rejects Vite's fallback dev ports ---
+SEVERITY: P2 (dev-experience / diagnosability, not a security or
+  production-mission blocker)
+ROOT CAUSE: ALLOWED_ORIGINS hardcoded only localhost:5173/4173.
+  Vite silently falls back to 5174, 5175, ... when a lower port is
+  occupied (confirmed: this is exactly what happened -- port 5174 was
+  in use this session). A CORS-rejected request surfaces to browser JS
+  only as the generic "Failed to fetch" (browsers deliberately hide the
+  specific CORS reason from catch code), which is indistinguishable
+  from a real network/backend outage without opening browser devtools'
+  network tab specifically.
+STATUS: FIXED this pass.
+FIX: app/api.py -- allow_origin_regex now matches
+  https?://(localhost|127.0.0.1):<any port>, in addition to the
+  existing Firebase-preview-channel pattern (combined into one regex,
+  Starlette only accepts one). Safe specifically for localhost: the
+  Origin header cannot be spoofed cross-origin, so only a page actually
+  running on the same machine can ever present it -- a fundamentally
+  different trust boundary than a public web origin. Production origins
+  and the owner-token requirement for mutations are both unaffected.
+REGRESSION TESTS: tests/test_api.py::test_vite_fallback_port_is_allowed
+  (5174/5175/3000/8080 all correctly get CORS headers) and
+  test_localhost_pattern_does_not_grant_a_remote_lookalike_origin
+  (negative control: a domain merely containing "localhost", or a real
+  LAN IP, is correctly still rejected).
+COMMIT: e76cb9f
+VERIFICATION: 6/6 CORS-specific tests pass; full backend suite 562
+  passed / 2 skipped / 0 failed (up from 560, +2 new tests); zero
+  regressions.
+
+--- INVESTIGATED, NOT A BUG: POST /monitors/run-due -> 401 ---
+The route is owner-token-gated by design
+(dependencies=[Depends(require_owner)]) -- confirmed by direct source
+read, app/api.py line ~807. grepped the ENTIRE repository (source,
+docs, CI workflows, deploy scripts) for any Cloud Scheduler job
+definition, IAM binding, or OIDC configuration targeting this route:
+NONE EXISTS ANYWHERE. No scheduler was ever actually provisioned for
+this project. The 401 observed in the Cloud Run logs is the endpoint
+correctly refusing an unauthenticated caller -- almost certainly a
+manual/ad-hoc call (curl, browser, or a misconfigured attempt) made
+without the owner token, not a broken authentication mechanism.
+ROOT CAUSE OF THE UNDERLYING GAP: no Cloud Scheduler job (or other
+authenticated caller) has ever been set up for this endpoint. This is
+a missing piece of INFRASTRUCTURE, not a code defect. Per this
+project's own standing rule ("do not solve authentication failures by
+making protected endpoints public"), this was NOT weakened. If the
+owner wants scheduled monitor execution working end-to-end, the real
+next step is a deliberate infrastructure decision: either (a) a Cloud
+Scheduler job configured with the owner token as a custom header
+(workable but means a long-lived secret sits in Scheduler job config),
+or (b) extending require_owner to also accept Cloud Run's own OIDC
+service-to-service token for this one route specifically (a real,
+scoped auth-model change, not something to do silently in a general
+audit pass). Flagging for an explicit owner decision, not implemented.
+STATUS: no code change made. Correctly working as designed.
+
+--- INVESTIGATED, ALREADY FIXED LOCALLY: "MISSION FAILED, steps 0/2" ---
+The bug register (AION_AXON_BUG_AND_PROBLEM_REGISTER.md) already
+documents and fixes the two most likely root causes of exactly this
+symptom:
+  BUG-005 (P1): POST /missions/{id}/resume-planned failed 100% of the
+    time for every mid-mission approval -- the exact "approval clicked,
+    mission never continues, ends up FAILED" shape. Fixed at c09faed.
+  BUG-011 (P2): the /v5 graph builder's run panel showed only the bare
+    status word ("FAILED") with zero explanation, even when a real
+    reason existed one field over. Fixed at fd54235.
+Both regression tests were re-run FRESH this pass (not assumed from the
+register): tests/test_loop_closure.py::
+  test_resume_planned_completes_a_mission_with_a_mid_mission_approval
+  and ::test_resume_planned_reports_the_real_reason_not_a_null both
+  PASS. web/src/graphExecutionState.test.mjs's BUG-011-specific checks
+  ("a FAILED mission's real reason is shown, not just the bare status
+  word") all PASS.
+CONCLUSION: this exact failure class is fixed on this HEAD. The most
+likely explanation for the ORIGINAL observation is that it was tested
+against the DEPLOYED production backend (revision aion-core-00039-sfq,
+deployed 2026-08-26, before these Day-2 fixes existed) rather than this
+local, patched code -- consistent with everything else found this pass
+(production frontend/backend both predate this branch's most recent
+work; see section 3). NOT independently re-reproduced end-to-end with a
+real live Gemini call this pass (no GOOGLE_API_KEY/GEMINI_API_KEY set
+in this shell -- same "environment blocked" limitation the prior
+206-commit session already disclosed for every Gemini-dependent
+scenario). The mechanism itself (dependency-graph mission, mid-mission
+approval, resume, completion) IS independently verified end-to-end with
+a real (non-Gemini) capability by the register's own
+graph_e2e_approval.mjs (9/9) and graph_e2e.mjs (7/7).
+STATUS: no code change needed -- already fixed. Root cause of the
+ORIGINAL observation is almost certainly stale production, not a
+remaining code defect.
+
+--- NOT A CODE ISSUE: "weather" capability / Failed to fetch ---
+No "weather" capability exists anywhere in this codebase -- confirmed
+by grep across app/capabilities/ and app/tools/. The 12 seed
+capabilities are: calculator, web_research, read_dataset,
+summarize_text, detect_anomalies, compare_periods, extract_entities,
+rank_priorities, write_brief, format_table, validate_numbers,
+schedule_followup. A request mentioning weather would need to go
+through the Gemini-based mission planner, which would either map it to
+an existing capability, refuse it, or (if genuinely novel) trigger a
+SYNAPSE capability-gap/acquisition flow -- it was never going to reach
+a real weather API regardless. Given this exact request most plausibly
+happened from the same localhost:5174 dev session, the CORS fix above
+is the most likely actual explanation for the specific "Failed to
+fetch" wording (a network-level failure, not a structured backend
+error response) -- not a missing weather integration, which was never
+implemented and never claimed to be.
+STATUS: no weather capability exists; not something to fake or add
+speculatively. If real weather capability is wanted, that is new
+product scope, not a bug fix.
+
+--- SECRETS SCAN: CLEAN ---
+git grep across all tracked files for API-key-shaped, private-key-
+shaped, and service-account-JSON-shaped patterns: zero matches. No
+.env or credentials files tracked. .gitignore already covers .env*,
+*.key, service-account*.json, application_default_credentials.json,
+credentials/. Two untracked files present (see section 11) contain no
+secrets either -- verified by direct inspection, values not printed
+here or anywhere in this report.
+
+================================================================
+6. TEST RESULTS (this pass, fresh)
+================================================================
+Backend: 562 passed, 2 skipped, 0 failed (pytest -q, full suite)
+  (2 skipped = the honest, non-fake skip on the real Firestore-emulator
+  scaffold tests when FIRESTORE_EMULATOR_HOST is unset in this shell --
+  same pattern documented throughout this project's history, not new).
+Frontend: 87 checks across 8 Node test files, all passing:
+  api.stream.test.mjs (8), demoRecoveryFixture.test.mjs (11),
+  graphCompiler.test.mjs (13), graphExecutionState.test.mjs (16),
+  livePipeline.test.mjs (15), missionApprovalReconcile.test.mjs (6),
+  speechRecognition.test.mjs (11), stateMachineProof.test.mjs (7).
+Frontend build: clean (`npm run build`, 2208 modules, no errors).
+
+================================================================
+7. DEPLOYMENT VERIFICATION
+================================================================
+NOT DEPLOYED this pass. Production Cloud Run (aion-core-00039-sfq) and
+Firebase Hosting bundle (index-9omx4ZTA.js) confirmed stale relative to
+this branch's fixes (see section 3/5). Deploying is the clear next
+technical step to close the gap between "fixed locally" and "fixed in
+what a trial would actually exercise" -- explicitly NOT done in this
+pass without the owner's fresh, explicit authorization, consistent with
+this project's own standing production-safety boundary.
+
+================================================================
+8. REMAINING RISKS
+================================================================
+- Production is stale relative to local HEAD by ~214 commits of real,
+  tested fixes (BUG-001 through BUG-013). Until redeployed, a trial run
+  against the live URLs will very likely reproduce the SAME
+  already-fixed symptoms (bare status words, resume-planned failures).
+- Distributed Firestore concurrency: verified against a REAL emulator
+  by the prior session (Java was present there), with a genuine bug
+  found (BUG-003) and fixed, then a second genuine gap found under real
+  CI contention (BUG-013) and fixed. NOT re-verified in THIS sandbox
+  this pass (no attempt made to re-run the emulator here; the prior
+  session's evidence is treated as prior evidence, not re-verified
+  fresh -- see AION_AXON_ANTIGRAVITY_HANDOFF.md's own correction on
+  this point).
+- No live-Gemini reproduction of the exact reported "robotics research"
+  mission was performed this pass (no API key in this shell) --
+  the underlying mechanism is verified via non-Gemini e2e tests
+  (register's graph_e2e*.mjs scripts) and the two specific bug fixes
+  are freshly confirmed, but a live confirmation with the exact
+  original prompt was not possible here.
+- No Cloud Scheduler job exists for /monitors/run-due -- an
+  infrastructure decision genuinely still open, not a code defect.
+- Rate limiting remains per-process (documented, unchanged, not a new
+  finding this pass).
+
+================================================================
+9. TRIAL-READINESS ASSESSMENT
+================================================================
+NOT TRIAL READY as currently DEPLOYED (production is stale).
+Locally, on this exact HEAD (e76cb9f): the specific reported P1/P2
+failure classes are fixed and freshly re-verified; one new P2 bug
+(CORS dev-port rejection) found and fixed this pass; zero regressions;
+full local test suite green. The gap to trial-readiness is
+DEPLOYMENT, not further local engineering -- see section 10.
+
+================================================================
+10. EXACT NEXT STEPS
+================================================================
+1. Owner reviews this audit and the diff (git log e383d61..e76cb9f
+   --oneline for the full 215-commit list, or the bug register for the
+   curated summary).
+2. If the owner authorizes it: redeploy aion-core (backend) and the
+   Firebase Hosting frontend from this exact HEAD, following this
+   project's documented deploy commands (see AION_AXON_HANDOFF.md
+   section Q) -- NOT done automatically in this pass.
+3. After redeploy, re-run the exact trial mission
+   ("Research current trends... AI robotics... write executive brief")
+   against the NOW-current production URLs and confirm it completes
+   with the fixed run panel showing real progress/reasons, not a bare
+   FAILED.
+4. Separately, and only if wanted: decide how to authenticate
+   /monitors/run-due for a real scheduler (owner decision, not a code
+   fix).
+5. The owner personally performs any real approval/mission-execution
+   step required during that trial -- not performed by this agent, per
+   this project's own standing human-authorization boundary.

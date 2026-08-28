@@ -140,7 +140,25 @@ export default function App() {
   const decide = async (id, approved, capability) => {
     setBusy(true);
     try {
-      await api.decide(id, approved);
+      const decision = await api.decide(id, approved);
+
+      // POST /approvals/{id}/decide answers HTTP 200 even when the
+      // decision didn't apply -- ALREADY_DECIDED, NOT_FOUND, BLOCKED
+      // (kill switch), and CONTENTION are all normal 200 bodies, not
+      // thrown errors, so the await above never throws for them. This
+      // call discarded that response entirely and always proceeded as
+      // if it had succeeded -- the same bug already fixed in
+      // MissionTheater.jsx (see that file's decide()) but never applied
+      // here, the actual production approval queue.
+      const expected = approved ? "APPROVED" : "REJECTED";
+      if (decision.status !== expected) {
+        setError(
+          `Decision not recorded: ${decision.status}${
+            decision.reason ? ` — ${decision.reason}` : ""
+          }${decision.error ? ` — ${decision.error}` : ""}`
+        );
+        return;
+      }
 
       // Approving does not install. POST /approvals/{id}/decide records
       // the decision only; the install is a separate call that re-reads
@@ -154,10 +172,23 @@ export default function App() {
       // was that no caller ever took the second step.
       if (approved && capability) {
         const installed = await api.install(capability);
-        if (installed?.status !== "INSTALLED") {
+        // BUG-010: ALREADY_INSTALLED is a real, safe, idempotent
+        // outcome -- exactly what the concurrency-safe install claim
+        // (BUG-003) exists to guarantee under a duplicate call (a
+        // network retry, or a second click before this button's own
+        // disabled state takes effect). Treating it the same as a real
+        // FAILED/APPROVAL_REQUIRED error would show a scary red banner
+        // for a capability that is, in fact, genuinely installed.
+        if (!["INSTALLED", "ALREADY_INSTALLED"].includes(installed?.status)) {
+          // BUG-009: the same reason/error mismatch as BUG-008, found
+          // here in the actual production UI -- synapse.install()'s
+          // FAILED-status responses (unknown capability, no approval on
+          // record, real Firestore contention) all carry their message
+          // under "error", never "reason". Reading only "reason" always
+          // fell through to the bare status word.
           setError(
             `Approved, but install did not complete: ${
-              installed?.reason || installed?.status || "unknown"
+              installed?.reason || installed?.error || installed?.status || "unknown"
             }`
           );
         }
