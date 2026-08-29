@@ -29,9 +29,9 @@ import { STAGES, TONE, useFiringPulses } from "./Topology.jsx";
  *     a static consequence of where the ring currently sits.
  */
 
-const RADIUS = 460; // was 300 -- at 12 nodes that packed adjacent cards
-// closer together (arc spacing) than their own 150px width, so far-side
-// cards visibly overlapped every render, not just at odd rotations.
+const RADIUS = 640; // was 300, then 460 -- still not enough clearance
+// once the vertical tilt below was removed and up to 5 cards could sit
+// at meaningful opacity at once (see VISIBLE_THRESHOLD).
 const STEP = 360 / STAGES.length;
 const DRAG_SENSITIVITY = 0.35;
 const CLICK_DRAG_THRESHOLD = 6; // px — below this, a pointer-up is a click
@@ -101,17 +101,22 @@ export default function Topology3D({ stages, selected, onSelect }) {
         const facing = normalize(idx * STEP + rotation);
         const rad = (facing * Math.PI) / 180;
         const forwardness = (1 + Math.cos(rad)) / 2; // 1 = facing camera, 0 = facing away
-        // Steeper falloff than the old linear 0.3-1.0 / 0.72-1.0 range:
-        // back-facing cards used to stay legible enough (30% opacity,
-        // 72% scale) to visually collide with their neighbours. Squaring
-        // forwardness pushes anything more than ~45 degrees off-camera
-        // toward transparent and small, so only the cards actually
-        // facing the viewer compete for the same screen space.
-        const eased = Math.pow(forwardness, 2.2);
+        // First attempt (squared falloff, no visibility cutoff) still let
+        // up to 5 adjacent cards sit at high-enough opacity to visibly
+        // collide -- fading a card was not the same as removing it from
+        // the collision. VISIBLE_THRESHOLD instead makes a hard decision:
+        // a card more than ~60 degrees off-camera (roughly 2 stages away
+        // at 30 degrees/stage) is not a faint card, it is gone (near-zero
+        // opacity, not clickable), so only the 3 cards actually facing
+        // the viewer ever compete for screen space at once.
+        const VISIBLE_THRESHOLD = 0.75; // forwardness = (1+cos)/2
+        const visible = forwardness > VISIBLE_THRESHOLD;
+        const eased = Math.pow(forwardness, 4);
         return {
-          opacity: 0.08 + 0.92 * eased,
-          scale: 0.55 + 0.45 * eased,
+          opacity: visible ? 0.15 + 0.85 * eased : 0.04,
+          scale: visible ? 0.7 + 0.3 * eased : 0.5,
           z: Math.round(forwardness * 100),
+          interactive: visible,
         };
       }),
     [rotation]
@@ -133,7 +138,7 @@ export default function Topology3D({ stages, selected, onSelect }) {
 
       <div
         className="relative mt-6 mb-2 select-none touch-none"
-        style={{ height: 320, perspective: 1900 }}
+        style={{ height: 340, perspective: 2200 }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
@@ -143,7 +148,15 @@ export default function Topology3D({ stages, selected, onSelect }) {
           className="absolute inset-0"
           style={{
             transformStyle: "preserve-3d",
-            transform: `translateX(50%) rotateX(-8deg) rotateY(${rotation}deg)`,
+            // No rotateX tilt: it shifted near/far cards up and down
+            // relative to each other (a Z difference becoming a screen-Y
+            // difference), which is what let two cards land close enough
+            // in Y as well as X to visually collide. A flat ring keeps
+            // every card's vertical position identical -- only X (from
+            // rotateY) and scale (from perspective) differ, which is
+            // exactly the "governed capability spine" that's supposed to
+            // read as one clean row, not a cluttered cluster.
+            transform: `translateX(50%) rotateY(${rotation}deg)`,
             transition: transitioning ? "transform 0.6s ease" : "none",
             cursor: drag.current ? "grabbing" : "grab",
           }}
@@ -182,6 +195,7 @@ export default function Topology3D({ stages, selected, onSelect }) {
                   style={{
                     opacity: depth.opacity,
                     rotateY: -idx * STEP - rotation,
+                    pointerEvents: depth.interactive ? "auto" : "none",
                   }}
                   className={`w-full text-left rounded-md border px-3 py-2.5 backdrop-blur-sm bg-void/70 transition-colors ${
                     isSelected
