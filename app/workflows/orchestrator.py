@@ -1,3 +1,4 @@
+import inspect
 from typing import Any, Optional
 
 from app.workflows.taskmaster import taskmaster
@@ -67,6 +68,45 @@ class AxonOrchestrator:
                 "action": action,
                 "missing_capability": tool_name,
                 "reason": gap["reason"],
+            })
+
+            return gap
+
+        # BUG-014, 29 Aug 2026: a mission step's args were passed straight
+        # to tool.function(*args) with nothing checking the count/names
+        # against what the capability actually requires. The real failure
+        # this produced (generate_nepal_crisis_image() missing 1 required
+        # positional argument: 'input_str') was already being caught by
+        # execution_gate._execute_tool()'s broad except -- so it never
+        # crashed the server -- but it burned a real Guardian check, a
+        # real audit trail entry, and an "EXECUTING" status transition on
+        # a call that could never have succeeded, and it surfaced a raw
+        # Python TypeError as the mission's failure reason instead of a
+        # clear governance-style explanation. Checking here, with the
+        # tool's own real signature, catches it before any of that -- the
+        # same shape as the CAPABILITY_GAP check just above, one step
+        # later in the same lookup.
+        try:
+            inspect.signature(tool.function).bind(*args)
+        except TypeError as error:
+            gap = {
+                "status": "BLOCKED",
+                "reason": (
+                    f"'{tool_name}' cannot run with the arguments this "
+                    f"step supplied: {error}"
+                ),
+                "argument_mismatch": tool_name,
+            }
+
+            workflow.error = gap["reason"]
+            workflow.update_status("BLOCKED")
+            workflow.add_observation("argument_mismatch", gap)
+
+            firestore_store.write_audit_event("ARGUMENT_MISMATCH", {
+                "action": action,
+                "capability": tool_name,
+                "reason": gap["reason"],
+                "args_given": len(args),
             })
 
             return gap

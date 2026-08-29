@@ -61,6 +61,7 @@ export default function AppV5() {
   const [selectedId, setSelectedId] = useState(null);
   const [connectFrom, setConnectFrom] = useState(null);
   const [capabilities, setCapabilities] = useState([]);
+  const [argHint, setArgHint] = useState(null);
 
   const [compileError, setCompileError] = useState(null);
   const [running, setRunning] = useState(false);
@@ -430,6 +431,50 @@ export default function AppV5() {
   }
 
   const selected = nodes.find((n) => n.id === selectedId) || null;
+
+  // BUG-014, 29 Aug 2026: a node here could call a capability without
+  // knowing what arguments it actually needs -- the Args box below was
+  // just free text, and the only feedback was the mission failing later
+  // with a raw Python error. This reads the real, already-installed
+  // entrypoint's own signature line out of its passport (never fabricated
+  // -- if the passport has no code on file, no hint is shown) so the
+  // requirement is visible before the mission ever runs.
+  useEffect(() => {
+    if (!selected?.tool) {
+      setArgHint(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    api
+      .passport(selected.tool)
+      .then((body) => {
+        if (cancelled) return;
+
+        const candidate = body?.passport?.candidate;
+        const code = candidate?.code;
+        const entrypoint = candidate?.entrypoint;
+
+        if (!code || !entrypoint) {
+          setArgHint(null);
+          return;
+        }
+
+        const match = code.match(
+          new RegExp(`def\\s+${entrypoint}\\s*\\(([^)]*)\\)`)
+        );
+
+        setArgHint(match ? match[1].trim() || "(no arguments)" : null);
+      })
+      .catch(() => {
+        if (!cancelled) setArgHint(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.tool]);
   const isRunning = running || planning;
 
   const center = (n) => ({ x: n.x + NODE_W / 2, y: n.y + NODE_H / 2 });
@@ -760,6 +805,11 @@ export default function AppV5() {
                 Args (one per line — use @{"{node id}"} or @{"{node id}"}.field to reference a
                 connected node's real output)
               </label>
+              {argHint && (
+                <p className="text-[10px] font-mono text-amber-300/80 -mt-1">
+                  {selected.tool} needs: {argHint}
+                </p>
+              )}
               <textarea
                 value={(selected.args || []).join("\n")}
                 onChange={(e) => updateNode(selected.id, { args: e.target.value.split("\n") })}

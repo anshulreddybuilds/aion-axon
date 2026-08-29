@@ -431,3 +431,85 @@ def test_degraded_research_still_reports_its_own_reason(monkeypatch):
     assert record.research["status"] == "DEGRADED"
     assert "grounding unavailable" in record.research["degraded_reason"]
     assert record.research["error"] is None
+# --- BUG-014: argument arity is checked before the sandbox runs ----------
+
+def test_installed_capability_rejects_too_few_arguments_before_the_sandbox_runs(monkeypatch):
+    """BUG-014, 29 Aug 2026: a real mission called an installed capability
+    with too few arguments and the caller saw a raw sandbox stderr
+    traceback as the failure reason (real example:
+    generate_nepal_crisis_image() missing 1 required positional argument:
+    'input_str'). fx_normalize(amount, rate) needs two; calling it with
+    one must be rejected with one clear sentence, and must never spend a
+    real sandbox invocation on a call that cannot succeed."""
+    patch_pipeline(monkeypatch)
+    record = synapse.propose("normalize currency")
+    firestore_store.update_approval(
+        record.approval_request_id, approved=True, decided_by="anshul",
+    )
+    synapse.install("fx_normalize")
+
+    sandbox_calls = []
+    monkeypatch.setattr(
+        engine_module, "execute_in_sandbox",
+        lambda code, test="", timeout_seconds=10: sandbox_calls.append(1),
+    )
+
+    result = registry.get("fx_normalize").function("10")
+
+    assert result["status"] == "ERROR"
+    assert "needs 2 arguments" in result["error"]
+    assert "fx_normalize" in result["error"]
+    assert sandbox_calls == []
+
+
+def test_installed_capability_rejects_too_many_arguments_before_the_sandbox_runs(monkeypatch):
+    """The same check catches the opposite mistake -- too many args --
+    for a capability with no *args catch-all, before it ever reaches the
+    sandbox."""
+    patch_pipeline(monkeypatch)
+    record = synapse.propose("normalize currency")
+    firestore_store.update_approval(
+        record.approval_request_id, approved=True, decided_by="anshul",
+    )
+    synapse.install("fx_normalize")
+
+    sandbox_calls = []
+    monkeypatch.setattr(
+        engine_module, "execute_in_sandbox",
+        lambda code, test="", timeout_seconds=10: sandbox_calls.append(1),
+    )
+
+    result = registry.get("fx_normalize").function("10", "2", "extra")
+
+    assert result["status"] == "ERROR"
+    assert "needs 2 arguments" in result["error"]
+    assert sandbox_calls == []
+
+
+def test_installed_capability_with_correct_argument_count_still_reaches_the_sandbox(monkeypatch):
+    """The arity check must not become a new way to block a perfectly
+    good call -- the exact right argument count still runs."""
+    patch_pipeline(monkeypatch)
+    record = synapse.propose("normalize currency")
+    firestore_store.update_approval(
+        record.approval_request_id, approved=True, decided_by="anshul",
+    )
+    synapse.install("fx_normalize")
+
+    sandbox_calls = []
+    monkeypatch.setattr(
+        engine_module, "execute_in_sandbox",
+        lambda code, test="", timeout_seconds=10: (
+            sandbox_calls.append(1) or {
+                "status": "COMPLETED", "passed": True,
+                "stdout": '{"status": "SUCCESS", "value": 20.0}',
+                "stderr": "", "exit_code": 0,
+            }
+        ),
+    )
+
+    result = registry.get("fx_normalize").function("10", "2")
+
+    assert sandbox_calls == [1]
+    assert result["status"] == "SUCCESS"
+    assert result["value"] == 20.0

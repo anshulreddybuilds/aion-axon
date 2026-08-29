@@ -18,6 +18,7 @@ Two properties this loop must never lose:
 Every stage records what it saw, so the Skill Passport can answer "why
 does this skill exist?" with provenance rather than assertion.
 """
+import ast
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -705,6 +706,41 @@ class SynapseEngine:
         entrypoint = candidate["entrypoint"]
 
         def invoke(*args: Any) -> dict[str, Any]:
+            # BUG-014, 29 Aug 2026: a real mission called an installed
+            # capability with too few arguments and got a raw sandbox
+            # stderr traceback back as its failure reason (a real
+            # example: generate_nepal_crisis_image() missing 1 required
+            # positional argument: 'input_str'). This proxy never
+            # executes the generated code itself to check that -- the
+            # trust boundary above forbids it -- but the entrypoint's own
+            # source is safe to read with ast, the same way the safety
+            # screen already reads generated code without running it.
+            # Catching a wrong argument count here, before spending a
+            # real sandbox invocation on a call that cannot succeed,
+            # turns that traceback into one clear sentence.
+            arity = self._entrypoint_arity(code, entrypoint)
+
+            if arity is not None:
+                minimum, maximum = arity
+
+                if len(args) < minimum or (
+                    maximum is not None and len(args) > maximum
+                ):
+                    if maximum == minimum:
+                        needs = f"{minimum} argument" + ("s" if minimum != 1 else "")
+                    elif maximum is None:
+                        needs = f"at least {minimum} argument" + ("s" if minimum != 1 else "")
+                    else:
+                        needs = f"between {minimum} and {maximum} arguments"
+
+                    return {
+                        "status": "ERROR",
+                        "error": (
+                            f"'{entrypoint}' needs {needs} but this call "
+                            f"supplied {len(args)}."
+                        ),
+                    }
+
             call_args = ", ".join(repr(str(a)) for a in args)
 
             harness = (
@@ -738,6 +774,48 @@ class SynapseEngine:
         invoke.__name__ = candidate["name"]
 
         return invoke
+
+    @staticmethod
+    def _entrypoint_arity(code: str, entrypoint: str) -> Optional[tuple[int, Optional[int]]]:
+        """(min required, max allowed) positional args for `entrypoint`,
+        read from the generated source via ast -- never executed, per
+        this module's own "generated code never runs inside aion-core"
+        rule. Returns None if the function can't be found by static
+        reading, so an unusual-but-legitimate shape never blocks a real
+        call on our own inability to parse it; the sandbox still reports
+        a clean error in that case, same as before this fix.
+        """
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return None
+
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == entrypoint
+            ):
+                args = node.args
+
+                # This proxy's own harness (below) only ever calls
+                # entrypoint(...) with plain positional values -- never
+                # keyword arguments -- so a function that declares any
+                # keyword-only parameter can't be modeled as a simple
+                # positional range at all (every real call already goes
+                # through the same all-positional harness, so this isn't
+                # a new gap). Leave that rare shape to the sandbox to
+                # report, same as before this fix, rather than compute a
+                # nonsensical range for it.
+                if args.kwonlyargs:
+                    return None
+
+                positional = args.posonlyargs + args.args
+                minimum = max(len(positional) - len(args.defaults), 0)
+                maximum = None if args.vararg is not None else len(positional)
+
+                return minimum, maximum
+
+        return None
 
     def _audit(self, record: AcquisitionRecord, event: str) -> None:
         firestore_store.write_audit_event(event, {
