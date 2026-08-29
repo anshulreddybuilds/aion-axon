@@ -7,6 +7,31 @@ P2 = reliability/usability/engineering issue, P3 = minor/polish.
 
 ---
 
+## BUG-014
+
+**SEVERITY:** P1 (open, unresolved — real production failure, not yet root-caused)
+**AREA:** Mission execution — capability invocation argument binding (backend, exact call site not yet identified)
+**FILE(S):** Unknown — likely `app/synapse/engine.py` or wherever installed capabilities are invoked during real mission execution; NOT `app/synapse/generator.py` (the generated capability code itself is confirmed correct, see below)
+**PROBLEM:** A real production mission (id truncated in the UI as `acdba94a` — full ID not captured) failed with:
+```
+Traceback (most recent call last):
+  File "/tmp/tmpuhp21kkb/candidate.py", line 83, in <module>
+    print(json.dumps(generate_nepal_crisis_image()))
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: generate_nepal_crisis_image() missing 1 required positional argument: 'input_str'
+```
+The installed capability `generate_nepal_crisis_image` requires one positional argument, `input_str: str`, but whatever invoked it during this real mission called it with zero arguments.
+**HOW DISCOVERED:** Reported directly by the project owner, who ran a real mission against the live production deployment on 2026-08-29 and saw it fail, and shared the exact traceback.
+**IMPACT:** At least one real, already-installed, already-approved capability cannot be successfully invoked during ordinary mission execution when the caller omits its required argument — meaning missions that route to this capability (and structurally, any capability with required positional args, if the same call site is generic) can fail even though the capability itself is healthy. This is a real functional gap in the live production system, not a hypothetical.
+**STATUS:** OPEN — NOT fixed. Per the active freeze instruction from the project owner ("no more changes on that thing which is already running smoothly until i give any permission to do changes"), no code changes have been made in response to this finding. This entry is diagnosis-only.
+**FIX:** Not attempted (blocked by freeze). Likely candidates once permission is given: (a) whatever assembles call arguments for a mission step should read the capability's own declared signature/schema and supply `input_str` from the mission's need/context rather than calling it with no arguments; (b) alternatively, the capability's own generated wrapper could default `input_str` — but that would mask the real caller bug rather than fix it, so (a) is preferred.
+**REGRESSION TEST:** Not written yet (blocked by freeze; also blocked on root-causing the exact call site — see REMAINING WORK).
+**VERIFICATION:** Confirmed via read-only, no-token GET requests only (`GET /capabilities`, `GET /capabilities/generate_nepal_crisis_image/passport`) that: the capability's real, currently-installed signature is `generate_nepal_crisis_image(input_str: str) -> dict`; its own sandbox/passport tests (which always supply `input_str`) pass cleanly. This proves the bug is in the mission-execution call site that invoked the capability without the argument, not in the capability's own generated code.
+**COMMIT:** None (diagnosis-only, no code changed).
+**REMAINING WORK:** Get the full, untruncated mission ID (the UI only showed the 8-character prefix `acdba94a`) — either from the owner directly, or by reproducing the failure and capturing the full ID from the UI/API before it's needed — then pull the full mission record (`GET /missions/<full_id>`) to see the exact step and arguments that were actually sent, and find the exact code path that builds those arguments, before writing a fix.
+
+---
+
 ## BUG-013
 
 **SEVERITY:** P1

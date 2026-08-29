@@ -2,6 +2,97 @@
 
 Written at the end of a credit-efficient security/reliability pass. Read this before re-deriving anything — it is deliberately complete.
 
+## Update — 29 Aug 2026 (UI reinvention pass, live testing, and this handoff doc)
+
+This entry is being added at the top per this file's own stated "newest at
+the top" convention. Note for future agents: at least one earlier entry in
+this same file was appended (Python `open(path, "a")`) instead of inserted
+at the top, breaking that convention — chronological order below this
+point is not guaranteed; trust dated headers, not position, if in doubt.
+
+**What changed (frontend only, no backend/API changes):** Four real, built,
+tested, deployed UI commits against the live `AION-AXON` production site
+(`https://aion-axon-2026.web.app/`), each verified with a successful
+`npm run build` before commit:
+
+1. Spine-card visual reskin (Topology.jsx / index.css) — glassmorphism
+   panels, gradient text, glow accents, ambient background layer.
+2. Full ambient overhaul — background glow blobs + grid texture, sidebar
+   nav sliding-pill highlight (Framer Motion `layoutId`), redesigned
+   completion ring (SVG gradient + glow filter), Space Grotesk display
+   font.
+3. "Hot iron" firing/cooldown animation for spine cards (`useFiringPulses`
+   in Topology.jsx: HOT_MS=900 / COOL_MS=3200, driven only by real stage
+   counts increasing — never simulated) + decluttering the Command view
+   behind a collapsed-by-default `Disclosure` ("System Details").
+4. AXON Core (`web/src/AxonCore.jsx`, new file) — a live, state-driven SVG
+   pipeline visualization wired into Mission Theater's real SSE stream
+   (`GET /synapse/propose/stream` via `api.js`'s `consumeStageStream`,
+   newly actually used — it existed but was unused before today). Shows
+   real stage progress, a real "refused at the door" governance-gate
+   state, and a real "new capability installed" reveal — no face, no
+   mascot, nothing invented. `MissionTheater.jsx`'s `run()` was rewritten
+   to use a per-component `AbortController` so the stream cancels cleanly
+   on unmount.
+
+Deliberately NOT attempted this session (scoped out, not forgotten): the
+full 45-section "living OS" vision (3D/WebGL core, full OS-style top
+navigation rework, sound design, mobile GPU-tier adaptation, 3D capability
+graph). See `AION_AXON_NEXT_SESSION_PROMPT.md` §5 for the honest reasoning
+(ordinary mission execution has no real per-step stream to visualize
+live — only capability acquisition does — so anything claiming otherwise
+for missions would be fabricated).
+
+**Freeze in effect:** the project owner has explicitly frozen all further
+changes to the currently-deployed frontend (`web/src/*`) and backend
+(`app/*`) until they give explicit permission. Reading, read-only testing,
+and documentation remain fine and were explicitly requested. See
+`AION_AXON_NEXT_SESSION_PROMPT.md` §1 for the exact wording and scope.
+
+**Testing pass done today:** two independent passes against the live
+production system, both read-only / non-mutating by design:
+(a) direct browser verification (Claude in Chrome) of the deployed site,
+and (b) an independent, context-free `general-purpose` subagent QA pass
+under strict read-only guardrails. The subagent's report flagged what
+looked like a serious finding — the root page appearing already
+owner-unlocked with no token entered, in tension with the documented
+"token never persisted" design. This was NOT taken at face value: it was
+independently re-verified in a genuinely fresh, isolated tab (confirmed
+via a fresh `tabGroupId`, a fresh navigation to `/`, a screenshot showing
+the page properly locked, and `localStorage`/`sessionStorage` both
+confirmed empty). The fresh check showed the page locked by default with
+no persisted credential — the subagent's tab had almost certainly reused a
+tab the real user had already authenticated in the shared browser. This
+was independently confirmed by the project owner mid-session: they had
+personally unlocked the owner token in their own browser for testing
+purposes. **Conclusion: false alarm, not a real bug. No fix needed, none
+made.**
+
+**One real bug was found — reported by the owner, not by this session's
+testing —** and is logged as **BUG-014** in
+`AION_AXON_BUG_AND_PROBLEM_REGISTER.md` (OPEN, not fixed, diagnosis only
+per the freeze): a real production mission (truncated UI id `acdba94a`,
+full id not captured) failed with
+`TypeError: generate_nepal_crisis_image() missing 1 required positional
+argument: 'input_str'`. Confirmed via read-only `GET /capabilities` and
+`GET /capabilities/generate_nepal_crisis_image/passport` that the
+capability's real installed signature is
+`generate_nepal_crisis_image(input_str: str)` and its own sandbox tests
+(which always pass `input_str`) pass cleanly — so the bug is in whatever
+invoked the capability during that mission without the argument, not in
+the capability's own generated code. Root cause (exact call site) is NOT
+yet found; blocked on getting the full mission ID. See BUG-014 for the
+full writeup and remaining-work steps.
+
+**New deliverable:** `AION_AXON_NEXT_SESSION_PROMPT.md` was completely
+rewritten today into a comprehensive, single, current "hand this to any
+AI, cold start" document per the owner's explicit request (needed in case
+Claude usage runs out before the hackathon deadline). It supersedes its
+own prior 70-line version and is the file a new agent should read first —
+more current than relying on this log alone.
+
+---
+
 ## Notion Source of Truth
 
 A canonical cross-agent "AION AXON — Source of Truth" page now exists in Notion, nested under the existing "AION Axon — Hackathon Master Plan" page: https://app.notion.com/p/3c782243366881aea778e04c35afceba
