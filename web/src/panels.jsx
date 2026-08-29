@@ -6,12 +6,12 @@ import { backendLabel } from "./backendLabel.js";
 
 /** Shared shell. Panels are calm by design — one hero effect only. */
 export function Panel({ title, right, children, tone = "edge" }) {
-  const border = tone === "danger" ? "border-danger/40" : "border-edge";
+  const toneClass = tone === "danger" ? "panel-glass--danger" : "";
 
   return (
-    <section className={`bg-panel border ${border} rounded-lg p-4`}>
+    <section className={`panel-glass rounded-2xl p-5 ${toneClass}`}>
       <header className="flex items-center justify-between mb-3">
-        <h2 className="text-[10px] tracking-[0.18em] text-muted uppercase">
+        <h2 className="font-display text-[10px] tracking-[0.2em] text-muted uppercase">
           {title}
         </h2>
         {right}
@@ -68,7 +68,7 @@ export function CapabilityCounter({ implemented, total }) {
           initial={{ scale: 1.4, color: "#37e0d8" }}
           animate={{ scale: 1, color: "#ffffff" }}
           transition={{ duration: 0.45 }}
-          className="text-4xl font-semibold tabular-nums"
+          className="font-display text-4xl font-semibold tabular-nums"
         >
           {implemented ?? "—"}
         </motion.span>
@@ -157,7 +157,7 @@ export function ApprovalCard({ pending, onDecide, busy }) {
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
-              className="border border-cyan/40 rounded p-3 mb-2"
+              className="border border-cyan/40 rounded-xl p-4 mb-2 bg-cyan/[0.03]"
             >
               <p className="text-sm mb-1">{request.action}</p>
               <p className="text-[11px] text-muted mb-2">{request.reason}</p>
@@ -169,14 +169,14 @@ export function ApprovalCard({ pending, onDecide, busy }) {
                 <button
                   disabled={busy}
                   onClick={() => onDecide(request.request_id, true, request.capability)}
-                  className="px-3 py-1 text-xs rounded bg-ok/15 text-ok border border-ok/40 hover:bg-ok/25 disabled:opacity-40"
+                  className="px-4 py-1.5 text-xs rounded-lg bg-ok/15 text-ok border border-ok/40 hover:bg-ok/25 hover:shadow-[0_0_16px_rgba(74,222,128,0.25)] transition-all disabled:opacity-40"
                 >
                   Approve
                 </button>
                 <button
                   disabled={busy}
                   onClick={() => onDecide(request.request_id, false, request.capability)}
-                  className="px-3 py-1 text-xs rounded bg-danger/15 text-danger border border-danger/40 hover:bg-danger/25 disabled:opacity-40"
+                  className="px-4 py-1.5 text-xs rounded-lg bg-danger/15 text-danger border border-danger/40 hover:bg-danger/25 hover:shadow-[0_0_16px_rgba(248,113,113,0.25)] transition-all disabled:opacity-40"
                 >
                   Reject
                 </button>
@@ -351,10 +351,10 @@ export function KillSwitch({ active, onToggle, busy }) {
       <button
         disabled={busy}
         onClick={() => onToggle(!active)}
-        className={`w-full py-2 rounded text-xs tracking-wider border disabled:opacity-40 ${
+        className={`w-full py-3 rounded-xl text-xs tracking-[0.2em] border transition-all duration-300 disabled:opacity-40 ${
           active
-            ? "bg-danger/20 text-danger border-danger/50"
-            : "bg-transparent text-muted border-edge hover:border-danger/50 hover:text-danger"
+            ? "bg-danger/20 text-danger border-danger/50 shadow-[0_0_24px_rgba(248,113,113,0.25)]"
+            : "bg-transparent text-muted border-edge hover:border-danger/50 hover:text-danger hover:shadow-[0_0_20px_rgba(248,113,113,0.12)]"
         }`}
       >
         {active ? "ACTIVE — RELEASE" : "STOP EVERYTHING"}

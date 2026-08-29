@@ -84,9 +84,9 @@ export default function Command({ onChanged }) {
 
   if (!unlocked) {
     return (
-      <section className="bg-panel border border-edge rounded-lg p-5">
+      <section className="panel-glass rounded-2xl p-6">
         <p className="text-[9px] tracking-[0.22em] text-muted">COMMAND</p>
-        <h2 className="text-[15px] mt-1">Unlock to give orders</h2>
+        <h2 className="font-display text-[16px] mt-1">Unlock to give orders</h2>
         <p className="text-[10px] text-muted mt-2 leading-relaxed">
           Reads are public. Anything that changes state — running a mission,
           approving a capability, the kill switch — needs the owner token.
@@ -101,11 +101,11 @@ export default function Command({ onChanged }) {
             onChange={(e) => setToken(e.target.value)}
             placeholder="owner token"
             autoComplete="off"
-            className="flex-1 bg-void border border-edge rounded-md px-3 py-2 text-[12px] outline-none focus:border-cyan"
+            className="flex-1 bg-void/70 border border-edge rounded-full px-4 py-2.5 text-[12px] outline-none transition-shadow focus:border-cyan focus:shadow-[0_0_0_3px_rgba(55,224,216,0.12)]"
           />
           <button
             type="submit"
-            className="px-4 rounded-md border border-cyan text-cyan text-[11px] tracking-[0.12em] hover:bg-cyan/10"
+            className="px-4 rounded-full border border-cyan text-cyan text-[11px] tracking-[0.12em] hover:bg-cyan/10 hover:shadow-[0_0_16px_rgba(55,224,216,0.25)] transition-all"
           >
             UNLOCK
           </button>
@@ -115,11 +115,11 @@ export default function Command({ onChanged }) {
   }
 
   return (
-    <section className="bg-panel border border-edge rounded-lg p-5">
+    <section className="panel-glass rounded-2xl p-6">
       <div className="flex items-start justify-between">
         <div>
           <p className="text-[9px] tracking-[0.22em] text-muted">COMMAND</p>
-          <h2 className="text-[15px] mt-1">Say what you want.</h2>
+          <h2 className="font-display text-[16px] mt-1">Say what you want.</h2>
         </div>
         <span className="text-[9px] tracking-[0.14em] text-ok">UNLOCKED</span>
       </div>
@@ -130,7 +130,7 @@ export default function Command({ onChanged }) {
           onChange={(e) => setText(e.target.value)}
           disabled={busy}
           placeholder="Pull the US birth totals from 2005 and brief me"
-          className="flex-1 bg-void border border-edge rounded-md px-3 py-2 text-[12px] outline-none focus:border-cyan disabled:opacity-50"
+          className="flex-1 bg-void/70 border border-edge rounded-full px-4 py-2.5 text-[12px] outline-none transition-shadow focus:border-cyan focus:shadow-[0_0_0_3px_rgba(55,224,216,0.12)] disabled:opacity-50"
         />
         {speech.supported && (
           <button
@@ -150,7 +150,7 @@ export default function Command({ onChanged }) {
         <button
           type="submit"
           disabled={busy || !text.trim()}
-          className="px-4 rounded-md border border-cyan text-cyan text-[11px] tracking-[0.12em] hover:bg-cyan/10 disabled:opacity-30"
+          className="px-4 rounded-full border border-cyan text-cyan text-[11px] tracking-[0.12em] hover:bg-cyan/10 hover:shadow-[0_0_16px_rgba(55,224,216,0.25)] transition-all disabled:opacity-30"
         >
           {busy ? "WORKING" : "SEND"}
         </button>

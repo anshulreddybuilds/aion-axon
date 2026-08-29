@@ -34,6 +34,23 @@ export const STAGES = [
   { n: "12", key: "ledger", label: "Ledger", blurb: "chain of custody" },
 ];
 
+// One glyph per stage -- decoration that still means something: the
+// spine is a shape now, not just twelve identical cards in a row.
+const ICONS = {
+  owner: "⌘",
+  orchestrator: "⬡",
+  gap: "◇",
+  research: "⌕",
+  generate: "✎",
+  ast: "▣",
+  sandbox: "⧉",
+  evaluator: "⬢",
+  guardian: "◍",
+  approval: "⌁",
+  install: "⟡",
+  ledger: "≡",
+};
+
 /** VERIFIED = has done real work · DEGRADED = working but impaired ·
  *  LOCKED = genuinely never run. */
 export function computeStages(data) {
@@ -188,13 +205,13 @@ export default function Topology({ stages, selected, onSelect }) {
   }, {});
 
   return (
-    <section className="bg-panel border border-edge rounded-2xl p-6 md:p-8">
+    <section className="panel-glass rounded-2xl p-6 md:p-8">
       <div className="flex items-start justify-between mb-1">
         <div>
           <p className="text-[10px] tracking-[0.28em] text-muted">
             EXECUTION TOPOLOGY
           </p>
-          <h2 className="text-[22px] font-medium mt-2 tracking-tight">
+          <h2 className="font-display text-[24px] md:text-[26px] font-semibold mt-2 tracking-tight text-glow-gradient">
             Governed capability spine
           </h2>
         </div>
@@ -216,7 +233,9 @@ export default function Topology({ stages, selected, onSelect }) {
         <span className="ml-auto text-muted">CLICK ANY NODE FOR TELEMETRY</span>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div className="spine-thread" aria-hidden="true" />
+
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-5">
         {STAGES.map((stage) => {
           const s = stages[stage.key];
           const tone = TONE[s.state];
@@ -232,24 +251,29 @@ export default function Topology({ stages, selected, onSelect }) {
               onClick={() => onSelect(isSelected ? null : stage.key)}
               animate={isFiring ? { scale: [1, 1.03, 1.015] } : { scale: 1 }}
               transition={{ duration: 0.6, ease: "easeOut" }}
-              className={`spine-card ${toneClass} ${isFiring ? "spine-card--firing" : ""} text-left rounded-2xl border px-4 py-4 ${
+              className={`spine-card ${toneClass} ${isFiring ? "spine-card--firing" : ""} text-left rounded-2xl border px-5 py-5 ${
                 isSelected ? "border-cyan" : tone.ring
               }`}
             >
               <div className="flex items-start justify-between">
-                <span className="text-[9px] tracking-[0.22em] text-muted">
-                  {stage.n}
+                <span className="spine-icon" style={{ color: tone.dot }}>
+                  {ICONS[stage.key]}
                 </span>
-                <span
-                  className="h-1.5 w-1.5 rounded-full mt-0.5"
-                  style={{
-                    background: tone.dot,
-                    boxShadow: isFiring ? `0 0 10px ${tone.dot}` : "none",
-                  }}
-                />
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-[9px] tracking-[0.22em] text-muted">
+                    {stage.n}
+                  </span>
+                  <span
+                    className="h-1.5 w-1.5 rounded-full"
+                    style={{
+                      background: tone.dot,
+                      boxShadow: isFiring ? `0 0 10px ${tone.dot}` : "none",
+                    }}
+                  />
+                </div>
               </div>
 
-              <p className="text-[14px] font-medium mt-3 leading-tight tracking-tight">
+              <p className="font-display text-[15px] font-medium mt-3 leading-tight tracking-tight">
                 {stage.label}
               </p>
               <p className={`text-[10px] mt-1.5 ${tone.text}`}>{s.stat}</p>

@@ -35,6 +35,13 @@ export default {
           "Segoe UI",
           "sans-serif",
         ],
+        display: [
+          "Space Grotesk",
+          "Inter",
+          "ui-sans-serif",
+          "system-ui",
+          "sans-serif",
+        ],
       },
     },
   },

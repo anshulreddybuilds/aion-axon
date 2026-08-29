@@ -25,11 +25,11 @@ export function Sidebar({ view, onView }) {
     <aside className="hidden lg:flex flex-col w-[210px] shrink-0 border-r border-edge bg-panel/40">
       <div className="px-5 py-5 border-b border-edge">
         <div className="flex items-center gap-2.5">
-          <span className="h-7 w-7 rounded-md border border-cyan/50 grid place-items-center text-cyan text-[11px]">
+          <span className="h-8 w-8 rounded-lg border border-cyan/50 grid place-items-center text-cyan text-[13px] shadow-[0_0_16px_rgba(55,224,216,0.35)]">
             ◈
           </span>
           <div>
-            <p className="text-[13px] tracking-[0.16em] leading-none">
+            <p className="font-display text-[13px] tracking-[0.16em] leading-none">
               AION AXON
             </p>
             <p className="text-[8px] tracking-[0.2em] text-muted mt-1">
@@ -47,10 +47,10 @@ export function Sidebar({ view, onView }) {
           <button
             key={item.key}
             onClick={() => onView(item.key)}
-            className={`w-full text-left text-[12px] px-3 py-2 rounded-md mb-1 transition-colors ${
+            className={`w-full text-left text-[12px] px-3 py-2 rounded-md mb-1 transition-all duration-300 ${
               view === item.key
-                ? "bg-cyan/10 text-cyan border border-cyan/30"
-                : "text-muted hover:text-white border border-transparent"
+                ? "bg-cyan/10 text-cyan border border-cyan/30 shadow-[0_0_18px_rgba(55,224,216,0.18)] translate-x-0.5"
+                : "text-muted hover:text-white border border-transparent hover:translate-x-0.5"
             }`}
           >
             {item.label}
@@ -79,8 +79,9 @@ export function TopStrip({ online, killed }) {
       <span className="flex items-center gap-1.5">
         <span
           className={`h-1.5 w-1.5 rounded-full ${
-            killed ? "bg-danger" : online ? "bg-ok" : "bg-danger"
+            killed ? "bg-danger" : online ? "bg-ok animate-pulse" : "bg-danger"
           }`}
+          style={online && !killed ? { boxShadow: "0 0 8px rgba(74,222,128,0.7)" } : undefined}
         />
         <span className={killed ? "text-danger" : online ? "text-ok" : "text-danger"}>
           {killed ? "HALTED — KILL SWITCH" : online ? "SYSTEM NOMINAL" : "UNREACHABLE"}
@@ -98,13 +99,17 @@ export function TopStrip({ online, killed }) {
 export function Hero({ crumb, title, blurb, pendingCount }) {
   return (
     <div className="px-5 pt-6 pb-5">
-      <p className="text-[9px] tracking-[0.22em] text-muted mb-3">
-        —— MISSION CONTROL / {crumb}
+      <p className="flex items-center gap-2 text-[9px] tracking-[0.22em] text-muted mb-3">
+        <span
+          className="h-1.5 w-1.5 rounded-full bg-cyan animate-pulse"
+          style={{ boxShadow: "0 0 8px rgba(55,224,216,0.8)" }}
+        />
+        MISSION CONTROL / {crumb}
       </p>
 
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="max-w-[560px]">
-          <h1 className="text-[34px] leading-[1.1] font-semibold tracking-tight">
+          <h1 className="font-display text-[36px] md:text-[42px] leading-[1.08] font-semibold tracking-tight text-glow-gradient">
             {title}
           </h1>
           <p className="text-[12px] text-muted mt-3 leading-relaxed">
@@ -114,9 +119,9 @@ export function Hero({ crumb, title, blurb, pendingCount }) {
 
         <div className="flex items-center gap-2">
           <span
-            className={`text-[10px] tracking-[0.14em] px-3 py-2 rounded-md border ${
+            className={`text-[10px] tracking-[0.14em] px-3 py-2 rounded-md border transition-shadow ${
               pendingCount
-                ? "border-warn/50 text-warn"
+                ? "border-warn/50 text-warn shadow-[0_0_16px_rgba(251,191,36,0.2)]"
                 : "border-edge text-muted"
             }`}
           >
@@ -143,7 +148,7 @@ export function CompletionRing({ stageStates }) {
   const C = 2 * Math.PI * R;
 
   return (
-    <section className="bg-panel border border-edge rounded-lg p-5">
+    <section className="panel-glass rounded-2xl p-6">
       <div className="flex items-baseline justify-between">
         <p className="text-[9px] tracking-[0.22em] text-muted">SPINE STATUS</p>
         <p className="text-[9px] tracking-[0.14em] text-muted">
@@ -151,35 +156,63 @@ export function CompletionRing({ stageStates }) {
         </p>
       </div>
 
-      <div className="grid place-items-center py-5">
-        <svg viewBox="0 0 140 140" className="w-[150px]">
-          <circle cx="70" cy="70" r={R} fill="none" stroke="#1b2432" strokeWidth="8" />
+      <div className="grid place-items-center py-6">
+        <svg viewBox="0 0 170 170" className="w-[190px] overflow-visible">
+          <defs>
+            <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#37e0d8" />
+              <stop offset="55%" stopColor="#38bdf8" />
+              <stop offset="100%" stopColor="#8b5cf6" />
+            </linearGradient>
+            <filter id="ringGlow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="4" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+
+          {Array.from({ length: 24 }).map((_, i) => {
+            const angle = (i / 24) * 2 * Math.PI;
+            const x1 = 85 + (R + 12) * Math.cos(angle);
+            const y1 = 85 + (R + 12) * Math.sin(angle);
+            const x2 = 85 + (R + 16) * Math.cos(angle);
+            const y2 = 85 + (R + 16) * Math.sin(angle);
+            return (
+              <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#1b2432" strokeWidth="2" />
+            );
+          })}
+
+          <circle cx="85" cy="85" r={R} fill="none" stroke="#141b26" strokeWidth="9" />
           <circle
-            cx="70"
-            cy="70"
+            cx="85"
+            cy="85"
             r={R}
             fill="none"
-            stroke="#37e0d8"
-            strokeWidth="8"
+            stroke="url(#ringGrad)"
+            strokeWidth="9"
             strokeLinecap="round"
             strokeDasharray={C}
             strokeDashoffset={C - (C * pct) / 100}
-            transform="rotate(-90 70 70)"
+            transform="rotate(-90 85 85)"
+            filter="url(#ringGlow)"
+            style={{ transition: "stroke-dashoffset 0.9s cubic-bezier(0.16,1,0.3,1)" }}
           />
           <text
-            x="70"
-            y="70"
+            x="85"
+            y="83"
             textAnchor="middle"
-            className="fill-white"
-            style={{ fontSize: 26, fontWeight: 600 }}
+            className="fill-white font-display"
+            style={{ fontSize: 30, fontWeight: 600 }}
           >
             {pct}%
           </text>
           <text
-            x="70"
-            y="86"
+            x="85"
+            y="101"
             textAnchor="middle"
-            style={{ fontSize: 7.5, fill: "#7d8899", letterSpacing: 1.4 }}
+            style={{ fontSize: 8, fill: "#7d8899", letterSpacing: 1.6 }}
           >
             STAGES VERIFIED
           </text>
