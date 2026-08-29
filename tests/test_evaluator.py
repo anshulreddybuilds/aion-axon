@@ -21,9 +21,19 @@ from app.synapse import evaluator  # noqa: E402
 
 
 def test_model_is_a_real_pinned_id():
-    """Regression: gemma-3-27b-it did not exist and 404'd at runtime."""
-    assert evaluator.MODEL != "gemma-3-27b-it"
-    assert evaluator.MODEL.startswith("gemma-")
+    """Regression: two Gemma guesses in a row 404'd at runtime.
+
+    gemma-3-27b-it didn't exist on this API version; its replacement
+    gemma-4-26b-a4b-it is a real, newly-announced model but wasn't yet
+    live on serverless Model Garden in asia-south1 (2026-08-29). Rather
+    than keep guessing Gemma ids, the evaluator now pins to
+    gemini-3.5-flash -- already verified working in this exact
+    project/region/call path. This test no longer assumes any specific
+    model family; it only guards against regressing to a name already
+    proven broken, or an empty/placeholder value.
+    """
+    assert evaluator.MODEL not in ("", "gemma-3-27b-it", "gemma-4-26b-a4b-it")
+    assert isinstance(evaluator.MODEL, str) and len(evaluator.MODEL) > 0
 
 
 # --- 1. valid JSON -----------------------------------------------------
