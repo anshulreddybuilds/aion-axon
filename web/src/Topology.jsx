@@ -188,20 +188,22 @@ export default function Topology({ stages, selected, onSelect }) {
   }, {});
 
   return (
-    <section className="bg-panel border border-edge rounded-lg p-5">
+    <section className="bg-panel border border-edge rounded-2xl p-6 md:p-8">
       <div className="flex items-start justify-between mb-1">
         <div>
-          <p className="text-[9px] tracking-[0.22em] text-muted">
+          <p className="text-[10px] tracking-[0.28em] text-muted">
             EXECUTION TOPOLOGY
           </p>
-          <h2 className="text-[15px] mt-1">Governed capability spine</h2>
+          <h2 className="text-[22px] font-medium mt-2 tracking-tight">
+            Governed capability spine
+          </h2>
         </div>
-        <p className="text-[9px] tracking-[0.18em] text-muted">
+        <p className="text-[9px] tracking-[0.18em] text-muted mt-1">
           AXON / LIVE GRAPH
         </p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-4 mt-4 mb-3 text-[9px] tracking-[0.14em]">
+      <div className="flex flex-wrap items-center gap-4 mt-5 mb-5 text-[9px] tracking-[0.14em]">
         {["VERIFIED", "DEGRADED", "LOCKED"].map((s) => (
           <span key={s} className="flex items-center gap-1.5 text-muted">
             <span
@@ -214,39 +216,44 @@ export default function Topology({ stages, selected, onSelect }) {
         <span className="ml-auto text-muted">CLICK ANY NODE FOR TELEMETRY</span>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2.5">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
         {STAGES.map((stage) => {
           const s = stages[stage.key];
           const tone = TONE[s.state];
           const isFiring = !!firing[stage.key];
           const isSelected = selected === stage.key;
+          const toneClass =
+            s.state === "DEGRADED" ? "spine-card--degraded" :
+            s.state === "LOCKED" ? "spine-card--locked" : "";
 
           return (
             <motion.button
               key={stage.key}
               onClick={() => onSelect(isSelected ? null : stage.key)}
-              animate={isFiring ? { scale: [1, 1.035, 1] } : { scale: 1 }}
-              transition={{ duration: 0.5 }}
-              className={`text-left rounded-md border px-3 py-2.5 transition-colors ${
-                isSelected ? "border-cyan bg-cyan/[0.06]" : `${tone.ring} bg-void/40 hover:border-cyan/40`
+              animate={isFiring ? { scale: [1, 1.03, 1.015] } : { scale: 1 }}
+              transition={{ duration: 0.6, ease: "easeOut" }}
+              className={`spine-card ${toneClass} ${isFiring ? "spine-card--firing" : ""} text-left rounded-2xl border px-4 py-4 ${
+                isSelected ? "border-cyan" : tone.ring
               }`}
             >
               <div className="flex items-start justify-between">
-                <span className="text-[8px] tracking-[0.18em] text-muted">
+                <span className="text-[9px] tracking-[0.22em] text-muted">
                   {stage.n}
                 </span>
                 <span
                   className="h-1.5 w-1.5 rounded-full mt-0.5"
                   style={{
                     background: tone.dot,
-                    boxShadow: isFiring ? `0 0 8px ${tone.dot}` : "none",
+                    boxShadow: isFiring ? `0 0 10px ${tone.dot}` : "none",
                   }}
                 />
               </div>
 
-              <p className="text-[12px] mt-1.5 leading-tight">{stage.label}</p>
-              <p className={`text-[9px] mt-1 ${tone.text}`}>{s.stat}</p>
-              <p className="text-[8px] text-muted mt-0.5 leading-tight">
+              <p className="text-[14px] font-medium mt-3 leading-tight tracking-tight">
+                {stage.label}
+              </p>
+              <p className={`text-[10px] mt-1.5 ${tone.text}`}>{s.stat}</p>
+              <p className="text-[9px] text-muted mt-2 leading-relaxed">
                 {stage.blurb}
               </p>
             </motion.button>

@@ -40,6 +40,62 @@ body {
 .scroll-thin::-webkit-scrollbar { width: 6px; }
 .scroll-thin::-webkit-scrollbar-thumb { background: #1b2432; border-radius: 3px; }
 
+/* ── Spine cards (29 Aug redesign) ───────────────────────────────────
+   The owner's reference: dark cards, generous space, ONE soft teal
+   glow washed into a corner rather than a stroked border everywhere --
+   the same restraint as the "one hero effect only" rule above, applied
+   to a whole grid instead of one orb. The glow is a fixed ::before, not
+   a hover effect, so a card looks the same whether or not a pointer is
+   near it -- this is a status surface, not a marketing page.
+
+   .spine-card--firing is the ONLY state that intensifies the glow, and
+   only because useFiringPulses (Topology.jsx) reported a real counter
+   change -- same law as orb-breathe above: motion narrates an event,
+   it is never decoration running on its own clock. */
+.spine-card {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: #0a0f17;
+  transition: border-color 0.3s ease, transform 0.3s ease;
+}
+.spine-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(
+    140% 100% at 0% 0%,
+    rgba(55, 224, 216, 0.14),
+    transparent 60%
+  );
+  opacity: 0.7;
+  transition: opacity 0.4s ease;
+}
+.spine-card--degraded::before {
+  background: radial-gradient(
+    140% 100% at 0% 0%,
+    rgba(251, 191, 36, 0.14),
+    transparent 60%
+  );
+}
+.spine-card--locked::before {
+  opacity: 0.25;
+}
+.spine-card--firing {
+  transform: scale(1.015);
+  border-color: rgba(55, 224, 216, 0.55) !important;
+}
+.spine-card--firing::before {
+  opacity: 1;
+  background: radial-gradient(
+    140% 100% at 0% 0%,
+    rgba(55, 224, 216, 0.32),
+    transparent 65%
+  );
+}
+
+
 /* ── v2 obsidian surface primitives ──────────────────────────────────
    Defined once here so every v2 component composes the same glass and
    the same neon, instead of each one hand-rolling a slightly different
