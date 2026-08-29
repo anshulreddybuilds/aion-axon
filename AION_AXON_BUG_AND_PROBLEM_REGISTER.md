@@ -7,6 +7,22 @@ P2 = reliability/usability/engineering issue, P3 = minor/polish.
 
 ---
 
+## BUG-017
+
+**SEVERITY:** P2 — FIXED, 29 Aug 2026 (not yet deployed)
+**AREA:** Frontend — v5 graph builder's node-result panel always showed the mission's LAST step, regardless of which node was selected.
+**FILE(S):** `web/src/v4/artifact.js` (new `extractStepAnswer()`, shared `fieldsFromStepResult()` helper), `web/src/v5/AppV5.jsx` (new `nodeAnswer` computed from the selected node, rendered under its editor).
+**PROBLEM:** Clicking a node in the graph only ever changed that node's own editable fields (description/capability/args) in the panel above; the "Mission ... COMPLETED" result panel below it was driven entirely by `extractAnswer(missionResult)`, which is hardcoded to always report `step_results[last]` — the mission's final executed step — no matter which node was selected. For a multi-step mission where an earlier step produces meaningful standalone output (e.g. a `generate_nepal_crisis_image` node feeding into a `write_brief` node that narrates over it), that earlier step's own result had no way to surface anywhere in the UI at all.
+**HOW DISCOVERED:** Reported live by the owner running a real 3-step mission (research → `generate_nepal_crisis_image` → `write_brief`), all steps COMPLETED: "all steps completed but where is the image I requested?" The image had genuinely been generated — clicking the `generate_nepal_crisis_image` node showed the correct capability/args, but the result panel below it kept showing `write_brief`'s output regardless, which had absorbed the raw pollinations.ai URL (with its `%20`-encoded prompt) as unreadable inline text inside its own narrative rather than exposing it as a distinct field.
+**IMPACT:** Real usability gap for any multi-step mission — the graph builder's whole premise is per-node inspection ("click a node to edit it... click any node for telemetry"-style framing elsewhere in the app), but the one node most likely to produce a directly useful artifact (an image, a URL, a computed value) had its output invisible unless it happened to also be the mission's last step.
+**FIX:** Committed `b8784de`. `web/src/v4/artifact.js`'s field-extraction logic (skip bookkeeping keys, keep only string/number fields) was factored out of `extractAnswer()` into a shared `fieldsFromStepResult()` helper, and a new `extractStepAnswer(mission, nodeId)` uses it to look up `step_results` by `action` (already set to the node's own id by `graphCompiler.js`) instead of always taking the last entry. `AppV5.jsx` computes `nodeAnswer = extractStepAnswer(missionResult, selected.id)` and renders it as a distinct "This node's own result" block directly under that node's Args box — additive only; the existing mission-level `answer` block is unchanged and still shown.
+**REGRESSION TEST:** None written (no existing frontend test harness for `web/`). Verified by `npm run build` completing clean (2210 modules transformed) and by re-deriving the field-extraction logic against the real shape confirmed in BUG-014's own testing (`step_results[]` entries carry `action`, `tool`, `status`, `result`).
+**VERIFICATION:** `npm run build` clean; `vite.config.js`'s temporary build workaround reverted with zero net diff (confirmed via `git diff --stat` after fixing a self-inflicted CRLF→LF slip during the revert — the file's line endings were checked and restored before this commit). Live browser confirmation of a real multi-step mission showing the image node's own `image_url` cleanly is still pending deploy.
+**COMMIT:** `b8784de` — "fix(v5): show each node's own result, not just the mission's final step".
+**REMAINING WORK:** Needs a frontend-only deploy: `git push` then `cd web; npm run build; npx firebase-tools deploy --only hosting` (PowerShell needs `;` not `&&` to chain commands). No backend change. Once deployed, re-run a multi-step mission with an image-generating node and confirm clicking that node now shows its own `image_url`/`prompt_used` cleanly instead of only the final step's narrative.
+
+---
+
 ## BUG-016
 
 **SEVERITY:** P2 — FIXED, 29 Aug 2026 (not yet deployed)
@@ -20,8 +36,6 @@ P2 = reliability/usability/engineering issue, P3 = minor/polish.
 **VERIFICATION:** `npm run build` clean. Not yet checked live in the browser — the deployed site still serves the pre-fix build (frontend deploy pending, see REMAINING WORK).
 **COMMIT:** `31f4d2e` — "fix(v2/v3/v4): stop displaying retired model names as the live engine".
 **REMAINING WORK:** Needs a frontend-only deploy to go live: `git push` then `cd web && npm run build && npx firebase-tools deploy --only hosting`. No backend/`gcloud` redeploy needed — nothing in `app/` changed for this bug.
-
----
 
 ## BUG-015
 
