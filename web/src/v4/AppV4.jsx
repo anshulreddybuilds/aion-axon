@@ -680,7 +680,7 @@ export default function AppV4() {
                   dropdown that opens onto one option is a dead control
                   wearing a chevron. */}
               <span className="framer-pill flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[11px] text-slate-400">
-                gemini-3.6-flash
+                gemini-3.5-flash
               </span>
 
               <div className="flex items-center gap-1.5">
@@ -1142,7 +1142,7 @@ export default function AppV4() {
                   />
                   <div className="flex items-center justify-between mt-1.5">
                     <span className="framer-pill px-2 py-1 font-mono text-[10px] text-slate-400">
-                      {sending ? "running…" : "gemini-3.6-flash"}
+                      {sending ? "running…" : "gemini-3.5-flash"}
                     </span>
                     <div className="flex items-center gap-1.5">
                       <button

@@ -368,7 +368,7 @@ export default function AppV3() {
 
           <div className="flex items-center justify-between pt-2.5 mt-2 border-t border-white/[0.06]">
             <span className="font-mono text-[11px] font-semibold text-slate-400 bg-black/30 border border-white/[0.08] px-2.5 py-1 rounded-md">
-              gemini-3.6-flash
+              gemini-3.5-flash
             </span>
 
             <div className="flex items-center gap-2.5">
@@ -511,7 +511,7 @@ export default function AppV3() {
                     Live telemetry
                   </p>
                   {[
-                    ["Engine", "gemini-3.6-flash"],
+                    ["Engine", "gemini-3.5-flash"],
                     [
                       "Model calls",
                       data?.telemetry?.model_calls?.count ?? "—",

@@ -21,9 +21,19 @@ import { Card, MicroLabel, Pill, SessionBar } from "./Shell2.jsx";
  *      never swallowed.
  */
 
+// Both stages run gemini-3.5-flash today. The evaluator used to run a
+// Gemma model (gemma-3-27b-it, then gemma-4-26b-a4b-it), but both 404'd
+// in production on 2026-08-29 -- see app/synapse/evaluator.py's own
+// history comment -- so it now falls back to the same model as the
+// generator. Keeping `id` in sync with generator.py's and evaluator.py's
+// real MODEL env-var defaults is the whole point of this list existing;
+// a stale id here just lies to the person picking an engine. `key` is
+// separate from `id` on purpose -- now that both stages share one real
+// model, `id` alone can't tell the two rows apart for React keys or for
+// tracking which one is selected.
 const MODELS = [
-  { id: "gemini-3.6-flash", role: "planner · generator · research" },
-  { id: "gemma-4-26b-a4b-it", role: "evaluator — second opinion" },
+  { key: "generator", id: "gemini-3.5-flash", role: "planner · generator · research" },
+  { key: "evaluator", id: "gemini-3.5-flash", role: "evaluator — second opinion" },
 ];
 
 const SPEECH_ERRORS = {
@@ -108,7 +118,7 @@ export default function CommandCapsule({ onChanged, onLog, unlocked, onUnlock })
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [focused, setFocused] = useState(false);
-  const [model, setModel] = useState(MODELS[0].id);
+  const [modelKey, setModelKey] = useState(MODELS[0].key);
   const [modelOpen, setModelOpen] = useState(false);
 
   const { listening, supported, toggle } = useSpeech({
@@ -213,7 +223,7 @@ export default function CommandCapsule({ onChanged, onLog, unlocked, onUnlock })
                 className="glass rounded-full pl-2.5 pr-2 py-1.5 flex items-center gap-1.5 text-[10px] tracking-wider uppercase font-semibold text-zinc-300 hover:border-cobalt/40 transition-colors"
               >
                 <Cpu size={11} className="text-electric" />
-                {model}
+                {MODELS.find((m) => m.key === modelKey)?.id ?? MODELS[0].id}
                 <ChevronDown size={11} className="text-zinc-500" />
               </button>
 
@@ -221,14 +231,14 @@ export default function CommandCapsule({ onChanged, onLog, unlocked, onUnlock })
                 <div className="absolute bottom-full mb-2 left-0 glass rounded-xl p-1.5 w-[280px] z-20">
                   {MODELS.map((m) => (
                     <button
-                      key={m.id}
+                      key={m.key}
                       type="button"
                       onClick={() => {
-                        setModel(m.id);
+                        setModelKey(m.key);
                         setModelOpen(false);
                       }}
                       className={`w-full text-left rounded-lg px-2.5 py-2 hover:bg-white/[0.04] transition-colors ${
-                        model === m.id ? "bg-cobalt/10" : ""
+                        modelKey === m.key ? "bg-cobalt/10" : ""
                       }`}
                     >
                       <p className="text-[11px] font-medium tracking-tight">
