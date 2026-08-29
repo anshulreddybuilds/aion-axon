@@ -1,3 +1,4 @@
+import { motion } from "framer-motion";
 import { backendLabel } from "./backendLabel.js";
 import { STAGES } from "./Topology.jsx";
 
@@ -43,19 +44,29 @@ export function Sidebar({ view, onView }) {
         <p className="text-[8px] tracking-[0.22em] text-muted px-2 mb-2">
           MISSION CONTROL
         </p>
-        {items.map((item) => (
-          <button
-            key={item.key}
-            onClick={() => onView(item.key)}
-            className={`w-full text-left text-[12px] px-3 py-2 rounded-md mb-1 transition-all duration-300 ${
-              view === item.key
-                ? "bg-cyan/10 text-cyan border border-cyan/30 shadow-[0_0_18px_rgba(55,224,216,0.18)] translate-x-0.5"
-                : "text-muted hover:text-white border border-transparent hover:translate-x-0.5"
-            }`}
-          >
-            {item.label}
-          </button>
-        ))}
+        {items.map((item) => {
+          const active = view === item.key;
+          return (
+            <button
+              key={item.key}
+              onClick={() => onView(item.key)}
+              className={`relative w-full text-left text-[12px] px-3 py-2 rounded-md mb-1 transition-colors duration-300 ${
+                active
+                  ? "text-cyan"
+                  : "text-muted hover:text-white"
+              }`}
+            >
+              {active && (
+                <motion.span
+                  layoutId="navActivePill"
+                  transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                  className="absolute inset-0 rounded-md bg-cyan/10 border border-cyan/30 shadow-[0_0_18px_rgba(55,224,216,0.18)]"
+                />
+              )}
+              <span className="relative">{item.label}</span>
+            </button>
+          );
+        })}
       </nav>
 
       <div className="mt-auto px-5 py-4 border-t border-edge">

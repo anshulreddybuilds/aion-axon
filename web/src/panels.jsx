@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { forwardRef } from "react";
+import { forwardRef, useState } from "react";
 
 import ReviewPanel from "./ReviewPanel.jsx";
 import { backendLabel } from "./backendLabel.js";
@@ -35,6 +35,56 @@ export const Empty = forwardRef(function Empty({ children }, ref) {
   // make a panel look alive.
   return <p ref={ref} className="text-xs text-muted italic">{children}</p>;
 });
+
+/**
+ * A collapsed-by-default section for panels that are true and correct
+ * but not what a first-glance judge needs to see: registry counts,
+ * trust-boundary text, the raw event log, background monitors. Nothing
+ * here is removed or dumbed down -- it is one tap away -- but the
+ * default view of the Command surface now shows only what's
+ * operationally live: the spine itself, and the two panels a human can
+ * actually act on (Approval, Kill Switch).
+ */
+export function Disclosure({ title, subtitle, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div className="panel-glass rounded-2xl overflow-hidden">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-5 py-4 text-left"
+      >
+        <div>
+          <p className="font-display text-[10px] tracking-[0.2em] text-muted uppercase">
+            {title}
+          </p>
+          {subtitle && (
+            <p className="text-[10px] text-muted mt-1">{subtitle}</p>
+          )}
+        </div>
+        <span
+          className="text-muted text-[12px] transition-transform duration-300 shrink-0 ml-3"
+          style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)" }}
+        >
+          &#9656;
+        </span>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="overflow-hidden"
+          >
+            <div className="px-5 pb-5 space-y-4">{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
 
 export function LiveBadge({ online }) {
   // The dot used to breathe continuously whenever the API was reachable.

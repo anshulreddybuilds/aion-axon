@@ -17,7 +17,12 @@ import { motion } from "framer-motion";
  * a stage that has genuinely never run says LOCKED for a real reason.
  */
 
-const PULSE_MS = 1500;
+// "Hot" is the instant a real counter moves; "cooling" is the owner's own
+// spec -- like iron pulled off the fire, still glowing red but dimming --
+// so a card that just finished visibly reads as "just did something" for
+// a few seconds instead of snapping back to idle the moment work ends.
+const HOT_MS = 900;
+const COOL_MS = 3200;
 
 export const STAGES = [
   { n: "01", key: "owner", label: "Owner", blurb: "approves, denies, or halts" },
@@ -158,8 +163,12 @@ export const TONE = {
  * defined exactly once.
  */
 export function useFiringPulses(stages) {
-  const [firing, setFiring] = useState({});
+  // key -> "hot" | "cooling" | (absent = idle). A plain truthy check
+  // (`!!heat[key]`), which is all Topology3D.jsx does with this return
+  // value, still works unchanged against either string.
+  const [heat, setHeat] = useState({});
   const previous = useRef(null);
+  const timers = useRef({});
 
   useEffect(() => {
     const counts = Object.fromEntries(
@@ -178,26 +187,45 @@ export function useFiringPulses(stages) {
     previous.current = counts;
     if (!moved.length) return;
 
-    const now = Date.now();
-    setFiring((f) => ({ ...f, ...Object.fromEntries(moved.map((k) => [k, now])) }));
+    for (const key of moved) {
+      clearTimeout(timers.current[key]?.hot);
+      clearTimeout(timers.current[key]?.cool);
 
-    const t = setTimeout(() => {
-      setFiring((f) => {
-        const next = { ...f };
-        for (const k of moved) if (next[k] === now) delete next[k];
-        return next;
-      });
-    }, PULSE_MS);
+      setHeat((h) => ({ ...h, [key]: "hot" }));
 
-    return () => clearTimeout(t);
+      const hot = setTimeout(() => {
+        setHeat((h) => ({ ...h, [key]: "cooling" }));
+
+        const cool = setTimeout(() => {
+          setHeat((h) => {
+            const next = { ...h };
+            delete next[key];
+            return next;
+          });
+        }, COOL_MS);
+
+        timers.current[key] = { ...timers.current[key], cool };
+      }, HOT_MS);
+
+      timers.current[key] = { ...timers.current[key], hot };
+    }
   }, [stages]);
 
-  return firing;
+  useEffect(() => {
+    return () => {
+      Object.values(timers.current).forEach((t) => {
+        clearTimeout(t?.hot);
+        clearTimeout(t?.cool);
+      });
+    };
+  }, []);
+
+  return heat;
 }
 
 export default function Topology({ stages, selected, onSelect }) {
 
-  const firing = useFiringPulses(stages);
+  const heat = useFiringPulses(stages);
 
   const counts = STAGES.reduce((acc, { key }) => {
     acc[stages[key].state] = (acc[stages[key].state] || 0) + 1;
@@ -239,19 +267,27 @@ export default function Topology({ stages, selected, onSelect }) {
         {STAGES.map((stage) => {
           const s = stages[stage.key];
           const tone = TONE[s.state];
-          const isFiring = !!firing[stage.key];
+          const heatState = heat[stage.key]; // "hot" | "cooling" | undefined
           const isSelected = selected === stage.key;
           const toneClass =
             s.state === "DEGRADED" ? "spine-card--degraded" :
             s.state === "LOCKED" ? "spine-card--locked" : "";
+          const heatClass =
+            heatState === "hot" ? "spine-card--firing" :
+            heatState === "cooling" ? "spine-card--cooling" : "";
 
           return (
             <motion.button
               key={stage.key}
               onClick={() => onSelect(isSelected ? null : stage.key)}
-              animate={isFiring ? { scale: [1, 1.03, 1.015] } : { scale: 1 }}
+              initial={{ opacity: 0, y: 10 }}
+              animate={
+                heatState === "hot"
+                  ? { opacity: 1, y: 0, scale: [1, 1.04, 1.02] }
+                  : { opacity: 1, y: 0, scale: 1 }
+              }
               transition={{ duration: 0.6, ease: "easeOut" }}
-              className={`spine-card ${toneClass} ${isFiring ? "spine-card--firing" : ""} text-left rounded-2xl border px-5 py-5 ${
+              className={`spine-card ${toneClass} ${heatClass} text-left rounded-2xl border px-5 py-5 ${
                 isSelected ? "border-cyan" : tone.ring
               }`}
             >
@@ -267,7 +303,12 @@ export default function Topology({ stages, selected, onSelect }) {
                     className="h-1.5 w-1.5 rounded-full"
                     style={{
                       background: tone.dot,
-                      boxShadow: isFiring ? `0 0 10px ${tone.dot}` : "none",
+                      boxShadow:
+                        heatState === "hot"
+                          ? `0 0 12px ${tone.dot}`
+                          : heatState === "cooling"
+                          ? `0 0 6px ${tone.dot}`
+                          : "none",
                     }}
                   />
                 </div>

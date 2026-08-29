@@ -12,6 +12,7 @@ import {
   AuditFeed,
   AutonomyLedger,
   CapabilityCounter,
+  Disclosure,
   EvidencePanel,
   KillSwitch,
   MonitorPanel,
@@ -247,24 +248,32 @@ export default function App() {
               </div>
 
               <div className="grid gap-4 lg:grid-cols-2">
-                <div className="space-y-4">
-                  <CapabilityCounter
-                    implemented={data?.capabilities?.implemented}
-                    total={data?.capabilities?.total}
-                  />
-                  <TrustBoundary sandbox={data?.sandbox} />
-                  <ApprovalCard
-                    pending={pending}
-                    onDecide={decide}
-                    busy={busy}
-                  />
-                  <KillSwitch active={killed} onToggle={toggleKill} busy={busy} />
-                </div>
-                <div className="space-y-4">
-                  <AuditFeed events={data?.evolution?.events || []} />
-                  <MonitorPanel monitors={data?.monitors?.monitors || []} />
-                </div>
+                <ApprovalCard
+                  pending={pending}
+                  onDecide={decide}
+                  busy={busy}
+                />
+                <KillSwitch active={killed} onToggle={toggleKill} busy={busy} />
               </div>
+
+              <Disclosure
+                title="System Details"
+                subtitle="Capability registry, trust boundary, evolution log, background monitors"
+              >
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="space-y-4">
+                    <CapabilityCounter
+                      implemented={data?.capabilities?.implemented}
+                      total={data?.capabilities?.total}
+                    />
+                    <TrustBoundary sandbox={data?.sandbox} />
+                  </div>
+                  <div className="space-y-4">
+                    <AuditFeed events={data?.evolution?.events || []} />
+                    <MonitorPanel monitors={data?.monitors?.monitors || []} />
+                  </div>
+                </div>
+              </Disclosure>
             </div>
           )}
 

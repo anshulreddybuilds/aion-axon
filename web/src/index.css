@@ -427,3 +427,24 @@ body::after {
 .spine-card:hover {
   transform: translateY(-2px);
 }
+
+/* ── Hot -> cooling -> idle (29 Aug, 3rd pass) ───────────────────────
+   The owner's own description: "like fire on hot iron ... when it
+   gets off the colour of iron still red but dimmed showing that work
+   is done". Implemented as intensity on top of the existing tone
+   color (cyan/amber/gray stays the "material"; the state colors mean
+   VERIFIED/DEGRADED/LOCKED and must keep meaning that) rather than a
+   hue swap to literal fire colors, which would collide with that
+   meaning. .spine-card--firing (unchanged) is the hot flare; this
+   adds the cooling tail that follows it, so a card eases back to rest
+   over a few seconds instead of snapping off. */
+@keyframes coolDown {
+  0%   { opacity: 1;   filter: brightness(1.4) saturate(1.35); }
+  100% { opacity: 0.7; filter: brightness(1) saturate(1); }
+}
+.spine-card--cooling {
+  transition: border-color 1.8s ease, transform 1.8s ease;
+}
+.spine-card--cooling::before {
+  animation: coolDown 3.2s ease-out forwards;
+}
