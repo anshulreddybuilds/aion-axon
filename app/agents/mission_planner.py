@@ -22,7 +22,7 @@ from app.capabilities.declarations import capability_catalog
 from app.google_client import genai_available
 
 APP_NAME = "aion_axon_mission_planner"
-MODEL = os.getenv("AXON_PLANNER_MODEL", "gemini-3.6-flash")
+MODEL = os.getenv("AXON_PLANNER_MODEL", "gemini-3.5-flash")
 
 INSTRUCTION = """
 You are the mission planner of AION AXON.

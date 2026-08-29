@@ -102,12 +102,30 @@ class MemoryFirestore:
         ]
 
     def list_audit_events(self, limit: int = 500) -> list[dict[str, Any]]:
+        # Sorting on the ISO timestamp ALONE is not a total order: two
+        # events written inside the same clock tick get byte-identical
+        # strings, and Python's sort is stable, so within a tie the
+        # OLDEST kept index 0 under reverse=True. `list_audit_events()[0]`
+        # was therefore not reliably the newest event -- which is how
+        # test_stream_error_mid_pipeline_is_also_recorded_server_side
+        # failed intermittently, reading GUARDIAN_DECISION where it had
+        # just written ACQUIRE_STREAM_ERROR.
+        #
+        # Same bug class as the non-deterministic ledger chain ordering
+        # already fixed elsewhere in this project; it was fixed for the
+        # ledger and missed here. In a system whose entire claim is
+        # evidence, "the latest evidence" resolving to the wrong record is
+        # a correctness defect, not a test annoyance.
+        #
+        # dict preserves insertion order, so the enumerate() index is a
+        # free monotonic sequence number -- no new state, no change to
+        # the stored document shape.
         events = sorted(
-            self.audit_events.values(),
-            key=lambda e: e.get("timestamp", ""),
+            enumerate(self.audit_events.values()),
+            key=lambda pair: (pair[1].get("timestamp", ""), pair[0]),
             reverse=True,
         )
-        return events[:limit]
+        return [event for _index, event in events][:limit]
 
     def save_mission(self, mission_id: str, data: dict[str, Any]) -> None:
         # Merge, like capabilities and monitors. A partial write used to
@@ -283,6 +301,20 @@ class AxonFirestore:
     def __init__(self):
         self.db = firestore.Client(project="aion-axon-2026")
 
+        # Monotonic within this process, so audit events written in the
+        # same clock tick by this instance still have a defined order.
+        # Guarded by a lock because Cloud Run serves concurrent requests
+        # on threads and an unsynchronised read-modify-write would hand
+        # two events the same number, reintroducing the tie it exists to
+        # break.
+        self._audit_seq = 0
+        self._audit_seq_lock = threading.Lock()
+
+    def _next_audit_seq(self) -> int:
+        with self._audit_seq_lock:
+            self._audit_seq += 1
+            return self._audit_seq
+
     def create_approval(self, request_id: str, data: dict[str, Any]) -> None:
         self.db.collection("approval_requests").document(request_id).set({
             **data,
@@ -398,6 +430,11 @@ class AxonFirestore:
         reference.set({
             "event_type": event_type,
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            # Tiebreaker for same-tick writes -- see list_audit_events().
+            # Additive field on an append-only collection, so it cannot
+            # invalidate documents already written; those simply sort
+            # with seq 0.
+            "seq": self._next_audit_seq(),
             **data,
         })
 
@@ -416,6 +453,24 @@ class AxonFirestore:
         ]
 
     def list_audit_events(self, limit: int = 500) -> list[dict[str, Any]]:
+        # The query itself is unchanged and still single-field, so it
+        # needs no composite index -- this repo manages no Firestore
+        # indexes (firebase.json is hosting-only), and shipping a query
+        # that requires one it cannot deploy would turn a wrong ordering
+        # into a hard FAILED_PRECONDITION in production.
+        #
+        # Firestore breaks order_by ties by document ID, and these IDs
+        # are auto-generated and random, so same-tick events came back in
+        # arbitrary order -- the production twin of the MemoryFirestore
+        # bug fixed above. Re-sorting the returned page by (timestamp,
+        # seq) makes ties written by THIS instance deterministic.
+        #
+        # HONEST LIMITATION: events written by different Cloud Run
+        # instances in the same tick are still ordered by wall clock
+        # alone, because `seq` is per-process. Fixing that needs a real
+        # sequencer (or a composite index plus a shared counter) and is a
+        # design decision, not a bug fix -- it is deliberately NOT
+        # claimed here.
         query = (
             self.db
             .collection("audit_events")
@@ -423,7 +478,14 @@ class AxonFirestore:
             .limit(limit)
         )
 
-        return [doc.to_dict() for doc in query.stream()]
+        events = [doc.to_dict() for doc in query.stream()]
+
+        events.sort(
+            key=lambda e: (e.get("timestamp", ""), e.get("seq", 0)),
+            reverse=True,
+        )
+
+        return events
 
     def save_mission(self, mission_id: str, data: dict[str, Any]) -> None:
         # merge=True for the same reason as capabilities and monitors: a

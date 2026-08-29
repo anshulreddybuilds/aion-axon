@@ -3,7 +3,7 @@
 
 planner_agent = Agent(
     name="axon_planner",
-    model="gemini-3.6-flash",
+    model="gemini-3.5-flash",
     description=(
         "AION AXON Taskmaster planner. "
         "Turns messy real-world requests into explicit, "

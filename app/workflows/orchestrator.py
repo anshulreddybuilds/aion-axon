@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 
 from app.workflows.taskmaster import taskmaster
 from app.workflows.state import WorkflowState
@@ -147,6 +147,7 @@ class AxonOrchestrator:
         risk: RiskLevel,
         approval_request_id: str,
         *args: Any,
+        description: Optional[str] = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
 
@@ -216,6 +217,11 @@ class AxonOrchestrator:
             tool.function,
             approval_request_id,
             *args,
+            # Give the gate the same two fields execute() gets. The tool
+            # name is already here, so every existing caller gains the
+            # capability-aware re-check without changing its own call.
+            description=description,
+            capability=tool_name,
             **kwargs,
         )
 

@@ -1,14 +1,28 @@
 # AION AXON — Project Handoff (Claude Code owns the build)
 
-## CURRENT STATE — see the handoff checkpoint, not this file's phase list below
+## CURRENT STATE — start with `AION_AXON_NEXT_SESSION_PROMPT.md`
 
-This file's PHASES/DAY-1 sections below are Day-1-era planning docs, not
-kept current. For the actual current state (HEAD, production revisions,
-test baseline, completed work, next action), read **`AION_AXON_HANDOFF.md`**
-and **`AION_AXON_STATE.json`** first — they are the live checkpoint,
-updated through Phase 29. `AION_AXON_PHASE_INDEX.md` gives a one-line
-summary per phase. `AION_AXON_NEXT_SESSION_PROMPT.md` is what a new
-session should be started with.
+This file's PHASES/DAY-1/ENVIRONMENT sections below are Day-1-era planning
+docs. They are useful for architecture rationale and the demo story; they
+are NOT a source of current state.
+
+Read **`AION_AXON_NEXT_SESSION_PROMPT.md`** first — it is the current
+entry point. Then `AION_AXON_CONTINUATION_HANDOFF.md` (chronological
+engineering log, newest at top) and `AION_AXON_BUG_AND_PROBLEM_REGISTER.md`.
+
+**`AION_AXON_HANDOFF.md`, `AION_AXON_STATE.json` and
+`AION_AXON_PHASE_INDEX.md` are STALE.** They describe an earlier,
+superseded branch (`feat/beastmode-core`) and an old HEAD. An earlier
+version of this section called them "the live checkpoint" — that was true
+when written and is not true now. Do not trust their branch name, HEAD
+hash, or "current state" claims without re-deriving them from git.
+
+**The authoritative branch is `feat/beastmode-core-oagiwb-weku3h`.**
+Verify before trusting any doc in this repo, including this one:
+
+```bash
+git fetch origin && git log --oneline -1 origin/feat/beastmode-core-oagiwb-weku3h
+```
 
 Claude Code is the PRIMARY and SOLE implementation agent through submission.
 Do not route work back to ChatGPT. Self-drive the phases below in order.
@@ -125,10 +139,14 @@ Detail per phase lives in `PROGRESS.md`. Phase 9 (UI) runs parallel where safe.
   + kill switch → evidence ending "AION Axon doesn't just act. It earns
   permission to become more capable." → black screen.
 
-## ENVIRONMENT (verified 19 Aug 2026)
+## ENVIRONMENT (verified 19 Aug 2026 — branch line corrected 29 Aug 2026)
 
 - Repo: `C:\Users\sneha\Desktop\AION-AXON` · GitHub
-  `anshulreddybuilds/aion-axon` (PRIVATE) · branch `main`.
+  `anshulreddybuilds/aion-axon` (PRIVATE) · branch
+  **`feat/beastmode-core-oagiwb-weku3h`** (this line said `main` until
+  29 Aug 2026; `main` is far behind and is not where work happens).
+  Note `C:\Users\sneha\Desktop\AION-AXON-core` and `-surface` are git
+  WORKTREES of this same repo, not separate clones or separate projects.
   (Account renamed from `webserieswatchdog-dotcom` on 20 Aug 2026. The
   Google/gcloud account is still `webserieswatchdog@gmail.com` — the
   rename was GitHub-only.)

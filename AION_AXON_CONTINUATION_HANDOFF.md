@@ -10,6 +10,39 @@ It mirrors this file's content in a 30-section structure (Executive Summary, Sec
 
 Update both whenever a checkpoint materially changes.
 
+## CORRECTION (29 Aug 2026) — Update 22's scenario-matrix evidence was not reproducible
+
+Update 22 below records scenarios A–H as VERIFIED and cites
+`graph_e2e.mjs`, `graph_e2e_voice.mjs`, `graph_e2e_gap.mjs`,
+`graph_e2e_approval.mjs` and `graph_e2e_failure.mjs` as the proof.
+
+**Those files were never committed to any branch.**
+
+```bash
+git log --all --oneline --diff-filter=A -- '*graph_e2e*'   # returns nothing
+```
+
+They were scratch files that did not survive the session. The runs very
+likely happened as described — this is not an accusation that the results
+were invented — but under this project's own "no PASS without evidence"
+rule, a citation nobody can re-run is not evidence. Update 22's A–H rows
+should be read as UNVERIFIED until re-derived.
+
+**Replacement, committed this time:** `scripts/scenario_matrix.py`
+covers A–G against the real MissionEngine / ExecutionGate / Guardian /
+ToolRegistry with no mocked spine and no Gemini requirement:
+
+```bash
+AXON_FIRESTORE_MODE=memory python -m scripts.scenario_matrix   # 7/7
+```
+
+Scenario H (duplicate install → `ALREADY_INSTALLED`) is not in that
+script; it remains covered by the existing API-level tests only.
+
+This correction is the same class of problem as the stale `CLAUDE.md`
+fixed the same day: a document of record that had drifted from what the
+repository can actually show.
+
 ## Update 22 — Final release audit: clean confirmation pass, zero new bugs, full scenario matrix A–H, HEAD 34929b1
 
 Directive: switch from engineering-audit mode to final release/demo

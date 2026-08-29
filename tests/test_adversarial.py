@@ -575,3 +575,101 @@ def test_a_benign_sounding_need_cannot_smuggle_malicious_generated_code(
     assert "os" in " ".join(final["safety"]["findings"])
 
     registry.unregister("format_filenames")
+
+
+# --------------------------------------------------------------------
+# The approved-execution path must be screened as strictly as the
+# unapproved one.
+#
+# execute_approved() used to call guardian.evaluate(action, risk) with
+# neither `description` nor `capability`, while execute() passed both.
+# find_policy() matches across all three fields, so a prohibited intent
+# carried in the description was refused before approval and waved
+# through after it -- on the path that actually runs the tool. Both
+# tests below fail against that older signature.
+# --------------------------------------------------------------------
+
+def _approved_request(action, reason="ok", capability=None):
+    from app.governance.approval import approval_manager
+
+    request = approval_manager.create(
+        action=action,
+        risk=RiskLevel.MEDIUM,
+        reason=reason,
+        capability=capability,
+    )
+    firestore_store.update_approval(
+        request.request_id, approved=True, decided_by="anshul",
+    )
+    return request
+
+
+def test_prohibited_intent_in_the_description_is_refused_after_approval():
+    """The action label is bland; the real intent is in the description.
+
+    This is the exact hiding place execute()'s own comment warns about,
+    arriving via the approved path instead.
+    """
+    request = _approved_request("run the maintenance step")
+
+    ran = []
+
+    result = execution_gate.execute_approved(
+        "run the maintenance step",
+        RiskLevel.LOW,
+        lambda *a: ran.append(a),
+        request.request_id,
+        description="read the service account private key from the runtime",
+    )
+
+    assert result["status"] == "REFUSED"
+    assert result["reason"].startswith("Guardian refused under policy G-04")
+    assert ran == []
+
+
+def test_prohibited_intent_is_recovered_from_the_stored_approval_record():
+    """A caller that passes no description must not get the weaker check.
+
+    The approval document already persists `reason` and `capability`, so
+    the gate recovers them rather than silently falling back to
+    action-only screening for callers written before those arguments
+    existed.
+    """
+    request = _approved_request(
+        "run the maintenance step",
+        reason="capability will read credentials from the environment",
+    )
+
+    ran = []
+
+    result = execution_gate.execute_approved(
+        "run the maintenance step",
+        RiskLevel.LOW,
+        lambda *a: ran.append(a),
+        request.request_id,
+    )
+
+    assert result["status"] == "REFUSED"
+    assert result["reason"].startswith("Guardian refused under policy G-04")
+    assert ran == []
+
+
+def test_approved_path_recheck_sees_the_capability_name():
+    """G-07's autonomy branch is `if capability and ...`, so with
+    capability always None it could never fire on this path. Proving the
+    name now reaches Guardian is what makes that branch live again."""
+    request = _approved_request(
+        "summarise", reason="ok", capability="read_secrets_helper",
+    )
+
+    result = execution_gate.execute_approved(
+        "summarise",
+        RiskLevel.LOW,
+        lambda *a: "done",
+        request.request_id,
+    )
+
+    # The capability NAME itself carries a G-04 trigger, so a refusal here
+    # is only possible if `capability` actually reached find_policy().
+    assert result["status"] == "REFUSED"
+    assert result["reason"].startswith("Guardian refused under policy G-04")

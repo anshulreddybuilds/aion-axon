@@ -193,6 +193,20 @@ class SynapseEngine:
             "source_count": research.get("source_count") or 0,
             "findings": (research.get("findings") or "")[:4000],
             "degraded_reason": research.get("degraded_reason"),
+            # search_web() reports a DEGRADED run under "degraded_reason"
+            # but an outright ERROR under "error"/"grounding_error" --
+            # different keys for different outcomes. Projecting only the
+            # first recorded `status: "ERROR"` with `degraded_reason:
+            # null` and empty findings, discarding the one thing that
+            # said why. The acquisition then continues to GENERATE with
+            # no research, so unless generation happens to fail for the
+            # same underlying cause, the research failure's reason was
+            # lost for good.
+            #
+            # Same contract-reading class as BUG-005/007/011: the message
+            # was always there, one key over, and only one key was read.
+            "error": research.get("error"),
+            "grounding_error": research.get("grounding_error"),
         }
         yield snap("RESEARCH")
 

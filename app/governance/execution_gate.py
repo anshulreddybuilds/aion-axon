@@ -96,6 +96,8 @@ class ExecutionGate:
         tool: Callable[..., Any],
         approval_request_id: str,
         *args,
+        description: str | None = None,
+        capability: str | None = None,
         **kwargs,
     ) -> dict:
 
@@ -132,7 +134,31 @@ class ExecutionGate:
                 ),
             }
 
-        decision = guardian.evaluate(action, risk)
+        # The re-check must be at least as strong as execute()'s original
+        # check, or it is theatre: this is the path that actually runs the
+        # tool. Passing only `action` meant the policy catalog -- which
+        # matches across action AND description AND capability
+        # (find_policy) -- saw just the short, often innocuous label, so a
+        # prohibited intent carried in the description was screened on the
+        # unapproved path and NOT on the approved one. It also left
+        # Guardian's G-07 autonomy-demotion branch (`if capability and
+        # ...`) permanently dead here, because `capability` was always
+        # None -- a demoted capability was re-checked as if it were still
+        # fully trusted, precisely when a human had just said yes.
+        #
+        # Both fall back to the approval record itself, which already
+        # persists `capability` and `reason`, so callers that predate
+        # these arguments are covered too rather than silently keeping
+        # the weaker check.
+        capability = capability or approval.get("capability")
+        description = description or approval.get("reason")
+
+        decision = guardian.evaluate(
+            action,
+            risk,
+            description=description,
+            capability=capability,
+        )
 
         firestore_store.write_audit_event(
             "APPROVED_EXECUTION_GUARDIAN_RECHECK",

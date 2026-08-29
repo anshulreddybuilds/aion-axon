@@ -359,6 +359,9 @@ class MissionService:
             RiskLevel(step.risk),
             mission["approval_request_id"],
             *resolved_args,
+            # Same reason the engine passes it on the unapproved path:
+            # the real intent lives in the description, not the label.
+            description=step.description,
         )
 
         if approved.get("status") != "EXECUTED":

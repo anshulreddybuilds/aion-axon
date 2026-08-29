@@ -16,7 +16,7 @@ from google.genai import types
 from app.google_client import genai_client
 from app.observability.telemetry import record_model_call, timed
 
-MODEL = os.getenv("AXON_RESEARCH_MODEL", "gemini-3.6-flash")
+MODEL = os.getenv("AXON_RESEARCH_MODEL", "gemini-3.5-flash")
 
 
 async def _generate_async(query: str, grounded: bool = True) -> Any:
