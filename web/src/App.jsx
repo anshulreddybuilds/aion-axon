@@ -5,7 +5,7 @@ import Topology3D from "./Topology3D.jsx";
 import Inventory from "./Inventory.jsx";
 import JudgeMode from "./JudgeMode.jsx";
 import MissionTheater from "./MissionTheater.jsx";
-import { CompletionRing, Hero, Sidebar, TopStrip } from "./Shell.jsx";
+import { CompletionRing, Hero, MobileNav, Sidebar, TopStrip } from "./Shell.jsx";
 import { api, loadAll } from "./api.js";
 import {
   ApprovalCard,
@@ -222,6 +222,7 @@ export default function App() {
       <Sidebar view={view} onView={setView} />
 
       <main className="flex-1 min-w-0">
+        <MobileNav view={view} onView={setView} />
         <TopStrip online={!!data?.online} killed={killed} />
 
         <Hero

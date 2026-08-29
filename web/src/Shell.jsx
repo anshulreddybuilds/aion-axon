@@ -12,15 +12,49 @@ import { STAGES } from "./Topology.jsx";
  * overstates an unfinished one, and only one of those is usually noticed.
  */
 
+// Shared by Sidebar (desktop, lg and up) and MobileNav (below lg) so the
+// two can never drift out of sync -- a page reachable from one was
+// unreachable from the other before MobileNav existed, since Sidebar's
+// "hidden lg:flex" had no narrower-viewport equivalent at all: below
+// 1024px, Pipeline/Autonomy Ledger/Evidence/Mission Theater/Judge Mode
+// were not just visually hidden but structurally unreachable -- there is
+// no separate URL per view (view is plain useState in App.jsx), so a
+// phone or an unmaximized window landing on Command had no way to reach
+// the other five screens at all.
+const NAV_ITEMS = [
+  { key: "command", label: "Command" },
+  { key: "pipeline", label: "Pipeline" },
+  { key: "ledger", label: "Autonomy ledger" },
+  { key: "evidence", label: "Evidence" },
+  { key: "theater", label: "Mission Theater" },
+  { key: "judge", label: "Judge Mode" },
+];
+
+export function MobileNav({ view, onView }) {
+  return (
+    <nav className="lg:hidden flex gap-1.5 overflow-x-auto px-4 py-2.5 border-b border-edge bg-panel/40">
+      {NAV_ITEMS.map((item) => {
+        const active = view === item.key;
+        return (
+          <button
+            key={item.key}
+            onClick={() => onView(item.key)}
+            className={`relative shrink-0 text-[11px] px-3 py-1.5 rounded-full whitespace-nowrap transition-colors duration-300 ${
+              active
+                ? "text-cyan bg-cyan/10 border border-cyan/30 shadow-[0_0_12px_rgba(55,224,216,0.18)]"
+                : "text-muted border border-transparent hover:text-white"
+            }`}
+          >
+            {item.label}
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
 export function Sidebar({ view, onView }) {
-  const items = [
-    { key: "command", label: "Command" },
-    { key: "pipeline", label: "Pipeline" },
-    { key: "ledger", label: "Autonomy ledger" },
-    { key: "evidence", label: "Evidence" },
-    { key: "theater", label: "Mission Theater" },
-    { key: "judge", label: "Judge Mode" },
-  ];
+  const items = NAV_ITEMS;
 
   return (
     <aside className="hidden lg:flex flex-col w-[210px] shrink-0 border-r border-edge bg-panel/40">
