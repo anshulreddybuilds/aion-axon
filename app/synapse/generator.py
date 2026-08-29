@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from app.google_client import genai_client
 from app.observability.telemetry import record_model_call, timed
 
-MODEL = os.getenv("AXON_BUILDER_MODEL", "gemini-3.6-flash")
+MODEL = os.getenv("AXON_BUILDER_MODEL", "gemini-3.5-flash")
 
 
 class Candidate(BaseModel):

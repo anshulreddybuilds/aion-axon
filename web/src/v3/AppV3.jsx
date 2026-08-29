@@ -5,6 +5,7 @@ import Hologram from "./Hologram.jsx";
 import { buildBeats, buildDecision, humanMs, loadReplay } from "./replay.js";
 import { runLiveMission } from "./live.js";
 import { hasOwnerToken, setOwnerToken } from "../api.js";
+import { backendLabel } from "../backendLabel.js";
 
 /**
  * v3 — the owner's hologram prototype, driven by real data.
@@ -234,7 +235,7 @@ export default function AppV3() {
               </p>
             </div>
             <span className="font-mono text-[11px] font-semibold text-sky-400 bg-sky-400/10 border border-sky-400/25 px-2 py-0.5 rounded-md hidden sm:inline">
-              AXON NODE / ASIA-SOUTH1
+              {backendLabel().node}
             </span>
           </div>
 

@@ -29,7 +29,9 @@ import { STAGES, TONE, useFiringPulses } from "./Topology.jsx";
  *     a static consequence of where the ring currently sits.
  */
 
-const RADIUS = 300;
+const RADIUS = 460; // was 300 -- at 12 nodes that packed adjacent cards
+// closer together (arc spacing) than their own 150px width, so far-side
+// cards visibly overlapped every render, not just at odd rotations.
 const STEP = 360 / STAGES.length;
 const DRAG_SENSITIVITY = 0.35;
 const CLICK_DRAG_THRESHOLD = 6; // px — below this, a pointer-up is a click
@@ -99,9 +101,16 @@ export default function Topology3D({ stages, selected, onSelect }) {
         const facing = normalize(idx * STEP + rotation);
         const rad = (facing * Math.PI) / 180;
         const forwardness = (1 + Math.cos(rad)) / 2; // 1 = facing camera, 0 = facing away
+        // Steeper falloff than the old linear 0.3-1.0 / 0.72-1.0 range:
+        // back-facing cards used to stay legible enough (30% opacity,
+        // 72% scale) to visually collide with their neighbours. Squaring
+        // forwardness pushes anything more than ~45 degrees off-camera
+        // toward transparent and small, so only the cards actually
+        // facing the viewer compete for the same screen space.
+        const eased = Math.pow(forwardness, 2.2);
         return {
-          opacity: 0.3 + 0.7 * forwardness,
-          scale: 0.72 + 0.28 * forwardness,
+          opacity: 0.08 + 0.92 * eased,
+          scale: 0.55 + 0.45 * eased,
           z: Math.round(forwardness * 100),
         };
       }),
@@ -124,7 +133,7 @@ export default function Topology3D({ stages, selected, onSelect }) {
 
       <div
         className="relative mt-6 mb-2 select-none touch-none"
-        style={{ height: 300, perspective: 1400 }}
+        style={{ height: 320, perspective: 1900 }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}

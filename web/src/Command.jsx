@@ -157,7 +157,7 @@ export default function Command({ onChanged }) {
       </form>
 
       <p className="text-[8px] text-muted mt-2">
-        Planning spends Gemini quota. The free tier allows 20 requests a day.
+        Planning spends real Gemini quota.
       </p>
 
       <div className="mt-4 space-y-3 max-h-[420px] overflow-y-auto scroll-thin">

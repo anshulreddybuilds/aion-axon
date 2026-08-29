@@ -330,3 +330,29 @@ def test_413_response_never_contains_internal_paths():
         headers={**TOKEN, "Content-Type": "application/json"},
     )
     assert "C:\\" not in r.text and "/app/" not in r.text
+
+
+# --- Advisory endpoints must not answer a question that wasn't asked ------
+
+@pytest.mark.parametrize("path", ["/beastmode/plan", "/beastmode/memory/query"])
+@pytest.mark.parametrize("need", ["", "   ", "\t\n"])
+def test_advisory_endpoints_reject_an_empty_need(path, need):
+    """These are read-only and spend no quota, so they were left without a
+    minimum length. The cost was not resource use but honesty: an empty
+    need returned a confident ACQUIRE_NEW decision, a named strategy and
+    a planned attempt count -- a real-looking conclusion drawn from
+    nothing. Whitespace-only is included because a numeric minimum alone
+    never catches it."""
+    response = anonymous.post(path, json={"need": need})
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("path", ["/beastmode/plan", "/beastmode/memory/query"])
+def test_advisory_endpoints_still_answer_a_genuinely_short_need(path):
+    """min_length is 1, not the acting endpoint's 3: a real two-letter
+    lookup like "FX" must still be answerable on a path that spends no
+    quota and runs no sandbox."""
+    response = anonymous.post(path, json={"need": "FX"})
+
+    assert response.status_code == 200

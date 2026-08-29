@@ -280,7 +280,7 @@ export default function CommandCapsule({ onChanged, onLog, unlocked, onUnlock })
       </motion.div>
 
       <div className="flex items-center gap-2 mt-2.5">
-        <Pill tone="warn">Planning spends Gemini quota · free tier is 20/day</Pill>
+        <Pill tone="warn">Planning spends real Gemini quota</Pill>
         {listening && <Pill tone="danger">Listening</Pill>}
       </div>
     </div>

@@ -1114,9 +1114,21 @@ class MemoryQuery(BaseModel):
     # work an anonymous caller can trigger per request, not a cost/quota
     # concern like the LLM-facing fields above.
     need: str = Field(
-        ..., max_length=4000,
+        ..., min_length=1, max_length=4000,
         description="Free-text capability need to check against memory.",
     )
+
+    # An empty or whitespace-only need used to return a confident
+    # recommendation about nothing -- ACQUIRE_NEW, a named strategy, and
+    # a planned attempt count, for "". Read-only or not, that is the
+    # system stating a conclusion it has no basis for, which is the one
+    # thing this project claims it does not do.
+    #
+    # min_length is 1 here rather than the acting endpoint's 3: this path
+    # spends no quota and runs no sandbox, so a genuinely short lookup
+    # ("FX") should still be answerable. The blank check below is what
+    # actually closes the hole -- "   " satisfies any numeric minimum.
+    _reject_blank = field_validator("need")(_reject_blank_after_stripping)
 
 
 @app.post("/beastmode/memory/query")
@@ -1160,8 +1172,14 @@ class PlanQuery(BaseModel):
     # Same rationale as MemoryQuery.need above: public, read-only, no LLM
     # call (see app/synapse/planner.py's own docstring).
     need: str = Field(
-        ..., max_length=4000, description="Free-text capability need to plan for.",
+        ..., min_length=1, max_length=4000,
+        description="Free-text capability need to plan for.",
     )
+
+    # Same reasoning as MemoryQuery.need above: planning for an empty
+    # need produced a real-looking ACQUIRE_NEW decision with a strategy
+    # and an attempt count. See tests/test_api_hardening.py.
+    _reject_blank = field_validator("need")(_reject_blank_after_stripping)
 
 
 @app.post("/beastmode/plan")

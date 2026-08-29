@@ -1,6 +1,8 @@
 import { motion } from "framer-motion";
 import { Activity, Gauge, Lock, Maximize2, Unlock } from "lucide-react";
 
+import { backendLabel } from "../backendLabel.js";
+
 /**
  * v2 chrome: the floating navigation island and the shared small parts.
  *
@@ -78,7 +80,7 @@ export function NavIsland({ online, killed, verifiedPct, unlocked, quotaNote }) 
               AION AXON
             </p>
             <p className="text-[9px] tracking-wider uppercase text-zinc-500 mt-1 truncate">
-              Axon Node / asia-south1
+              {backendLabel().node}
             </p>
           </div>
         </div>
@@ -95,7 +97,7 @@ export function NavIsland({ online, killed, verifiedPct, unlocked, quotaNote }) 
             </span>
             <span className="text-zinc-600">·</span>
             <span className="text-[10px] tracking-wider uppercase font-semibold text-zinc-400">
-              Live — Cloud Run
+              {backendLabel().live}
             </span>
             {verifiedPct != null && (
               <>

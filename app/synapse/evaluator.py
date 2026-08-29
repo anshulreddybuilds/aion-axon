@@ -35,15 +35,17 @@ from google.genai import types
 from app.google_client import genai_client
 from app.observability.telemetry import record_model_call, timed
 
-# Pinned from a live models.list() against the project's own key, not
-# guessed: the previous value (gemma-3-27b-it) did not exist on this API
-# version and returned 404 at runtime, which is how the evaluator ended up
-# UNSCORED during Acquisition #1.
+# History: gemma-3-27b-it 404'd (UNSCORED during Acquisition #1), then its
+# replacement gemma-4-26b-a4b-it ALSO 404'd on 2026-08-29 - it's a real,
+# newly-announced model (Gemma-4-26B-A4B, MoE, ~4B active/26B total params)
+# but Google's own announcement says serverless Model Garden availability is
+# rolling out "over the coming days," so it isn't live in asia-south1 yet.
 #
-# gemma-4-26b-a4b-it is the mixture-of-experts variant (~4B active
-# parameters), chosen over the dense gemma-4-31b-it because §4.2 asks for
-# a CHEAP second opinion, not a second reasoning model.
-MODEL = os.getenv("AXON_EVALUATOR_MODEL", "gemma-4-26b-a4b-it")
+# Rather than guess a third Gemma name, this now uses gemini-3.5-flash - the
+# exact model already verified working in this project/region/call-path
+# (see app/agents/mission_planner.py, planner.py, synapse/generator.py,
+# tools/web_research.py). It's a cheap second opinion, same as intended.
+MODEL = os.getenv("AXON_EVALUATOR_MODEL", "gemini-3.5-flash")
 
 PROMPT = """You are grading a generated Python capability.
 

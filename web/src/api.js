@@ -61,9 +61,10 @@ async function request(path, options = {}) {
     // Includes CORE, not just the path: a 404/405 here is often not a
     // real backend defect but this browser talking to the wrong backend
     // entirely (CORE defaults to production -- see this module's own
-    // docstring -- and there is no .env.example wiring VITE_CORE_URL to
-    // a local backend for dev). Without the origin in the message, that
-    // class of confusion is indistinguishable from a real API bug.
+    // docstring -- unless web/.env.example has been copied to .env.local
+    // to point VITE_CORE_URL at a local backend). Without the origin in
+    // the message, that class of confusion is indistinguishable from a
+    // real API bug.
     throw new Error(`${options.method || "GET"} ${CORE}${path} → ${response.status}`);
   }
 

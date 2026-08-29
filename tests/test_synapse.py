@@ -387,3 +387,47 @@ def test_rollback_keeps_the_original_acquisition_event(monkeypatch):
     assert len(events) == 2
     assert any(not e.get("rollback") for e in events)
     assert any(e.get("rollback") for e in events)
+
+
+# --- Research failure must stay explainable -------------------------------
+
+def test_research_error_reason_is_not_discarded(monkeypatch):
+    """search_web() reports an outright failure under "error"/
+    "grounding_error", not "degraded_reason" -- different keys for
+    different outcomes.
+
+    The acquisition record used to project only the DEGRADED field set,
+    so a hard research failure was stored as `status: "ERROR"` with
+    `degraded_reason: None` and empty findings: the one field that said
+    why was dropped. Because the pipeline continues to GENERATE with no
+    research, that reason was then unrecoverable unless generation
+    happened to fail for the same underlying cause.
+    """
+    patch_pipeline(monkeypatch, research={
+        "status": "ERROR",
+        "query": "anything",
+        "error": "ClientError: 429 RESOURCE_EXHAUSTED",
+        "grounding_error": "ClientError: 429 grounding quota exhausted",
+    })
+
+    record = synapse.propose("normalize a currency amount")
+
+    assert record.research["status"] == "ERROR"
+    assert "429 RESOURCE_EXHAUSTED" in record.research["error"]
+    assert "grounding quota" in record.research["grounding_error"]
+
+
+def test_degraded_research_still_reports_its_own_reason(monkeypatch):
+    """The DEGRADED path must keep working exactly as before -- this
+    change is additive, not a replacement of degraded_reason."""
+    patch_pipeline(monkeypatch, research={
+        "status": "DEGRADED", "grounded": False, "sources": [],
+        "findings": "ungrounded notes", "source_count": 0,
+        "degraded_reason": "ClientError: grounding unavailable",
+    })
+
+    record = synapse.propose("normalize a currency amount")
+
+    assert record.research["status"] == "DEGRADED"
+    assert "grounding unavailable" in record.research["degraded_reason"]
+    assert record.research["error"] is None

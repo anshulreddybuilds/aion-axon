@@ -1,5 +1,8 @@
 import { AnimatePresence, motion } from "framer-motion";
+import { forwardRef } from "react";
+
 import ReviewPanel from "./ReviewPanel.jsx";
+import { backendLabel } from "./backendLabel.js";
 
 /** Shared shell. Panels are calm by design — one hero effect only. */
 export function Panel({ title, right, children, tone = "edge" }) {
@@ -18,11 +21,20 @@ export function Panel({ title, right, children, tone = "edge" }) {
   );
 }
 
-export function Empty({ children }) {
+// forwardRef, not a plain function component: several panels render
+// <Empty> inside framer-motion's <AnimatePresence>, whose PopChild wraps
+// each child in a measurement ref. A function component cannot receive
+// one, so every render of an empty panel logged
+// "Warning: Function components cannot be given refs" to the console --
+// repeatedly, since the approval panel is empty in the normal case.
+// Real console errors on a surface handed to judges are worth removing,
+// and this one also meant PopChild's exit measurement silently did
+// nothing.
+export const Empty = forwardRef(function Empty({ children }, ref) {
   // An empty panel is correct behaviour, not a bug. Never fake data to
   // make a panel look alive.
-  return <p className="text-xs text-muted italic">{children}</p>;
-}
+  return <p ref={ref} className="text-xs text-muted italic">{children}</p>;
+});
 
 export function LiveBadge({ online }) {
   // The dot used to breathe continuously whenever the API was reachable.
@@ -37,7 +49,11 @@ export function LiveBadge({ online }) {
         }`}
       />
       <span className={online ? "text-ok" : "text-danger"}>
-        {online ? "LIVE — Cloud Run / aion-core" : "OFFLINE"}
+        {/* Was the static string "LIVE — Cloud Run / aion-core", which
+            claimed a Cloud Run deployment whatever CORE actually pointed
+            at -- the same false claim TopStrip carried. Derived from the
+            real origin now; see backendLabel.js. */}
+        {online ? backendLabel().live : "OFFLINE"}
       </span>
     </div>
   );

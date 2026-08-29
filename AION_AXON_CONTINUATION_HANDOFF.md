@@ -1808,3 +1808,92 @@ section's first option unless the owner directs otherwise. Never push,
 deploy, execute a real mission, click approve, or reseal the ledger
 without the owner's own explicit action.
 ```
+
+---
+
+## 29 Aug 2026 session — model + UI pass (uncommitted at time of writing, see git status)
+
+Picked up from a prior session's uncommitted work (202 files of drift had
+piled up on disk without ever being committed -- staged via `git add -A`
+but blocked on a stale `.git/index.lock` this session could not remove).
+Real changes bundled in that pending commit, beyond CRLF noise:
+
+- `app/synapse/generator.py`: the `gemini-3.6-flash` -> `gemini-3.5-flash`
+  fix that commit 380b942 claimed to make everywhere actually missed this
+  file. Production had been running the fixed code anyway only because
+  `gcloud run deploy --source .` ships whatever is on disk, not HEAD --
+  repo and live service were out of sync until this commit.
+- `app/synapse/evaluator.py`: `gemma-4-26b-a4b-it` 404'd (real model,
+  Google's own announcement says serverless Model Garden rollout is
+  still "coming days" as of this date -- not a guessing mistake, just
+  not live yet in asia-south1). Switched to `gemini-3.5-flash`, already
+  proven working in this exact project/region/call path.
+- `app/api.py`: blank/whitespace `need` on `/beastmode/memory/query` and
+  `/beastmode/plan` used to produce a confident-looking fake
+  recommendation for nothing. Now rejected. See `tests/test_api_hardening.py`.
+- `web/src/backendLabel.js` (new) + `Shell.jsx`/`panels.jsx`/`Command.jsx`/
+  v2/v3 surfaces: removed hardcoded "LIVE — CLOUD RUN" / "20/day free
+  tier" strings that displayed regardless of what backend was actually
+  running. Also fixed a real React ref-warning on `Empty`.
+- `web/src/Topology3D.jsx`: RADIUS 300->460, opacity/scale falloff
+  changed from linear to `forwardness^2.2`, perspective 1400->1900. The
+  12-node ring was overlapping itself at every rotation (owner's own
+  screenshots show "AST Screen"/"Sandbox"/"Generate" cards visually
+  colliding) -- card width (150px) exceeded the arc spacing at the old
+  radius. Untested visually by this session (no live browser check was
+  run to save credits) -- **owner should confirm this actually reads
+  clean after redeploy, not just "no longer obviously broken."**
+- `web/src/main.jsx`: default surface at `/` changed from v1 (App) to
+  v5 (AppV5) -- the owner's own explicit call on this date, after
+  reviewing screenshots of all surfaces, that v5 "is the right UI we
+  worked and build[t]." v1 is NOT removed, it moved to `/v1` (Pipeline /
+  Autonomy ledger / Evidence / Mission Theater / Judge Mode all still
+  live there, unchanged).
+
+New, previously-uncommitted test/tooling files in this same pending
+commit: `scripts/scenario_matrix.py`, `tests/test_audit_event_ordering.py`,
+`tests/test_calculator_limits.py`, `tests/test_resilience_gemini.py`,
+`web/src/backendLabel.test.mjs`.
+
+## Production safety state (this session)
+
+- pushed? **NOT YET** -- blocked on the owner clearing a stale
+  `.git\index.lock` in `C:\Users\sneha\Desktop\AION-AXON` (a session
+  tool crash left it; needs `Remove-Item ".git\index.lock" -Force`
+  run from inside that exact folder, then `git add -A`, `git commit`,
+  `git push`).
+- deployed? **NOT YET** -- backend (`gcloud run deploy`) and frontend
+  (`npm run build` + `firebase deploy --only hosting`) both still need
+  to run after the push above.
+- Billing: hackathon credit (~Rs.14,275 of ~Rs.14,347 left, "My Billing
+  Account 2", expires 2026-10-24) -- **not yet independently confirmed
+  linked to project `aion-axon-2026`**. Owner should run
+  `gcloud billing projects describe aion-axon-2026` and compare the
+  billing account against `gcloud billing accounts list`.
+
+## Exact next step
+
+1. Owner clears the git lock, commits, pushes (pre-push hook runs the
+   real suite -- if it's red, fix before pushing, don't `--no-verify`).
+2. Redeploy backend + frontend (commands above).
+3. Re-run `/synapse/propose` end-to-end -- confirm the evaluator now
+   returns `SCORED`, not `UNSCORED`.
+4. Visually check `/` (now v5) and `/v1` (old Holo-Deck, Topology3D fix)
+   in an actual browser -- this session never rendered either.
+5. Devpost checklist still open: teammates accepted, repo shared with
+   `testing@devpost.com` + `cloudhackathons@google.com` if private,
+   architecture diagram uploaded, README spin-up guide, demo video
+   (public, <4 min, must show Google Cloud backend on screen), hosted
+   URL + test login in the submission text.
+
+## Suggested continuation command
+
+```
+Continue AION AXON from AION_AXON_CONTINUATION_HANDOFF.md, reading the
+29 Aug 2026 section at the very end first -- it is more current than
+anything above it. Do not re-diagnose the gemini-3.6/gemma-4 model bugs,
+the backend-label honesty fixes, or the Topology3D overlap fix -- all
+already made, just confirm they're pushed/deployed/visually correct.
+Never push, deploy, or touch billing without the owner's own explicit
+go-ahead on that specific action.
+```

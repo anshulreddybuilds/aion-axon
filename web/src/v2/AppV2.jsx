@@ -164,7 +164,7 @@ export default function AppV2() {
         killed={killed}
         verifiedPct={verifiedPct}
         unlocked={unlocked}
-        quotaNote="Gemini free tier · 20/day"
+        quotaNote="Planning spends real Gemini quota"
       />
 
       <main className="px-4 pb-10 pt-5 max-w-[1600px] mx-auto">

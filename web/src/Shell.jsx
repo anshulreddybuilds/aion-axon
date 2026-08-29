@@ -1,3 +1,4 @@
+import { backendLabel } from "./backendLabel.js";
 import { STAGES } from "./Topology.jsx";
 
 /**
@@ -67,11 +68,13 @@ export function Sidebar({ view, onView }) {
   );
 }
 
-export function TopStrip({ online, killed, revision }) {
+export function TopStrip({ online, killed }) {
+  const { node, live } = backendLabel();
+
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3 border-b border-edge text-[9px] tracking-[0.16em]">
       <span className="text-muted">
-        AXON NODE / ASIA-SOUTH1
+        {node}
       </span>
       <span className="flex items-center gap-1.5">
         <span
@@ -86,7 +89,7 @@ export function TopStrip({ online, killed, revision }) {
 
       <span className="ml-auto flex items-center gap-2 text-muted">
         <span className={`h-1.5 w-1.5 rounded-full ${online ? "bg-cyan" : "bg-edge"}`} />
-        {online ? "LIVE — CLOUD RUN" : "OFFLINE"}
+        {online ? live : "OFFLINE"}
       </span>
     </div>
   );

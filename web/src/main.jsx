@@ -8,27 +8,30 @@ import AppV5 from "./v5/AppV5.jsx";
 import "./index.css";
 
 /**
- * Two surfaces, one build.
+ * Five surfaces, one build.
  *
- * v1 (App) is the live production Holo-Deck and the filming fallback. It
- * stays the default at `/` so nothing about the existing site changes.
+ * v5 (AppV5), the graphical mission builder, is now the default at `/` --
+ * the owner's explicit call on 29 Aug after reviewing all of them: it is
+ * "the right UI we worked and build[t]", not the v1 Holo-Deck that used
+ * to load here.
  *
- * v2 (AppV2) is the obsidian redesign, reachable at `/v2`. Firebase
- * rewrites every path to index.html, so this is a plain path check with
- * no router dependency.
+ * v1 (App), the original production Holo-Deck (Pipeline / Autonomy
+ * ledger / Evidence / Mission Theater / Judge Mode), is NOT removed --
+ * it is still fully live at `/v1`, since nothing else in the product
+ * routes to those panels except through it.
  *
- * Gating on the path rather than replacing App outright is deliberate:
- * eight days from submission, the thing that already works has to remain
- * reachable while the new thing is still being judged on real hardware.
+ * v2/v3/v4 keep their existing paths unchanged. Firebase rewrites every
+ * path to index.html, so this is a plain path check with no router
+ * dependency.
  */
 const path = window.location.pathname.replace(/\/+$/, "");
 
 function Surface() {
-  if (path.endsWith("/v5")) return <AppV5 />;
   if (path.endsWith("/v4")) return <AppV4 />;
   if (path.endsWith("/v3")) return <AppV3 />;
   if (path.endsWith("/v2")) return <AppV2 />;
-  return <App />;
+  if (path.endsWith("/v1")) return <App />;
+  return <AppV5 />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(
