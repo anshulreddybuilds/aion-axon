@@ -139,18 +139,14 @@ export function humanMs(ms) {
  * Reads the last EXECUTED step's payload. Returns null rather than
  * inventing a shape when a mission has not produced one.
  */
-export function extractAnswer(mission) {
-  if (!mission) return null;
-
-  const steps = (mission.step_results || []).filter(
-    (s) => s.status === "EXECUTED"
-  );
-  if (!steps.length) return null;
-
-  const last = steps[steps.length - 1];
+// Shared by extractAnswer (the mission's final step) and
+// extractStepAnswer (one specific step, picked by the caller) so the two
+// can never format a result differently from each other.
+function fieldsFromStepResult(step) {
+  if (!step) return null;
 
   // Results arrive either bare or wrapped in a {status, result} envelope.
-  const raw = last.result || {};
+  const raw = step.result || {};
   const payload = raw.result && typeof raw.result === "object" ? raw.result : raw;
 
   // Show the substantive fields, not the bookkeeping ones.
@@ -160,7 +156,20 @@ export function extractAnswer(mission) {
       !SKIP.has(k) && (typeof v === "number" || typeof v === "string")
   );
 
-  if (!fields.length) return null;
+  return fields.length ? fields : null;
+}
+
+export function extractAnswer(mission) {
+  if (!mission) return null;
+
+  const steps = (mission.step_results || []).filter(
+    (s) => s.status === "EXECUTED"
+  );
+  if (!steps.length) return null;
+
+  const last = steps[steps.length - 1];
+  const fields = fieldsFromStepResult(last);
+  if (!fields) return null;
 
   return {
     tool: last.tool,
@@ -169,6 +178,40 @@ export function extractAnswer(mission) {
     request: mission.request,
     fields,
   };
+}
+
+/**
+ * The result ONE specific graph node actually produced, not just the
+ * mission's final step.
+ *
+ * extractAnswer() above always reports the LAST executed step -- correct
+ * for a single narrative answer, but it means an earlier step's own
+ * output (e.g. a generate_nepal_crisis_image node feeding into a
+ * write_brief node that summarizes it) was never shown anywhere in the
+ * graph builder, no matter which node you selected. Clicking a node only
+ * ever changed its own editable fields above this panel; the "Mission ...
+ * COMPLETED" result below it was always the same regardless of selection
+ * -- reported live 29 Aug 2026 as "all steps completed but where is the
+ * image I requested?" (the image link was real, but only visible buried
+ * inside write_brief's own free-text narrative).
+ *
+ * `mission.step_results[].action` is the node id the plan compiler set
+ * this step from (graphCompiler.js writes `action: node.id`), so this
+ * just finds this node's own entry instead of always taking the last one.
+ */
+export function extractStepAnswer(mission, nodeId) {
+  if (!mission || !nodeId) return null;
+
+  const steps = (mission.step_results || []).filter(
+    (s) => s.status === "EXECUTED" && s.action === nodeId
+  );
+  if (!steps.length) return null;
+
+  const last = steps[steps.length - 1];
+  const fields = fieldsFromStepResult(last);
+  if (!fields) return null;
+
+  return { tool: last.tool, fields };
 }
 
 /** Numbers readable at a glance; long strings left alone. */

@@ -5,7 +5,7 @@ import { compileGraphToPlan, planToGraph, topoOrder } from "../graphCompiler.js"
 import { nodeStatuses, runOutcomeText, toneForMissionStatus } from "../graphExecutionState.js";
 import { describeStage } from "../livePipeline.js";
 import { speak, speechSynthesisSupported, stopSpeaking } from "../speechOutput.js";
-import { extractAnswer, prettyValue } from "../v4/artifact.js";
+import { extractAnswer, extractStepAnswer, prettyValue } from "../v4/artifact.js";
 import { useSpeechInput } from "../useSpeechInput.js";
 
 /**
@@ -432,6 +432,12 @@ export default function AppV5() {
 
   const selected = nodes.find((n) => n.id === selectedId) || null;
 
+  // This node's OWN result, distinct from `answer` (always the mission's
+  // LAST step -- see extractStepAnswer's doc comment for why that alone
+  // wasn't enough: an earlier step's real output, like an image URL, had
+  // no way to surface here at all before this).
+  const nodeAnswer = selected ? extractStepAnswer(missionResult, selected.id) : null;
+
   // BUG-014, 29 Aug 2026: a node here could call a capability without
   // knowing what arguments it actually needs -- the Args box below was
   // just free text, and the only feedback was the mission failing later
@@ -816,6 +822,25 @@ export default function AppV5() {
                 rows={3}
                 className="w-full bg-black/40 border border-white/10 rounded-md font-mono text-[10.5px] px-2 py-1.5 outline-none resize-none"
               />
+
+              {nodeAnswer && (
+                <div
+                  className="rounded-lg p-2.5 space-y-1"
+                  style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.4)" }}
+                >
+                  <p className="text-[9px] uppercase tracking-wider font-bold text-emerald-300/80">
+                    This node's own result ({nodeAnswer.tool})
+                  </p>
+                  {nodeAnswer.fields.map(([k, v]) => (
+                    <div key={k} className="flex items-baseline gap-2">
+                      <span className="font-mono text-[9.5px] text-slate-500 min-w-[80px]">{k}</span>
+                      <span className="font-mono text-[11px] text-emerald-200 font-semibold break-all">
+                        {prettyValue(v)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-[11px] text-slate-500 italic">
