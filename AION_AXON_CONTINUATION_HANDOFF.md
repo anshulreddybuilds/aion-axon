@@ -1897,3 +1897,59 @@ already made, just confirm they're pushed/deployed/visually correct.
 Never push, deploy, or touch billing without the owner's own explicit
 go-ahead on that specific action.
 ```
+
+
+---
+
+## 29 Aug 2026, later same day — full ambient UI overhaul (v1 command surface)
+
+Owner feedback after the first spine-card reskin (commit 6c58de3): "it's
+still showing the old Ui i want you to change Ui completely" — sent
+alongside screenshots that actually showed the new card-glow reskin
+live. Read as: the first pass only re-tinted the existing flat card
+grid, which was too subtle relative to the ui8.ai/forge and Voltrix
+deck references. This pass is structural, not just color:
+
+- Global animated ambient background (drifting radial glow blobs +
+  faint grid texture, `body::before`/`::after`, fixed behind every
+  surface — v1 through v5, since it's in the shared `index.css`).
+- Space Grotesk added as a display typeface for headings/numerals
+  (`font-display` utility, loaded via Google Fonts link in
+  `index.html`, wired into `tailwind.config.js`).
+- One shared `.panel-glass` material (blur + gradient + top hairline)
+  applied consistently: Command, the spine-status ring, capability
+  registry, trust boundary, human approval, kill switch.
+- Gradient-text headlines (`.text-glow-gradient`) on the Hero title and
+  the topology section heading.
+- A literal glowing "spine" thread (`.spine-thread`, CSS-only traveling
+  pulse) drawn under the topology header — makes "governed capability
+  spine" a shape on screen.
+- A per-stage icon glyph on each of the 12 spine cards (`ICONS` map in
+  Topology.jsx), plus a `.spine-icon` badge treatment.
+- Spine-status ring redone: bigger, gradient stroke + glow filter, tick
+  marks, animated dash transition.
+
+Scope: className/CSS/SVG markup only. No prop, state, data-fetch, or
+tested-logic changes in any touched file (Command.jsx, Shell.jsx,
+Topology.jsx, panels.jsx, index.css, index.html, tailwind.config.js).
+`npm run build` verified clean before committing. Not yet pushed by the
+owner as of this note — commit `a3986ac` on
+`feat/beastmode-core-oagiwb-weku3h`, one ahead of origin.
+
+Still open / not done this pass:
+- v5 (graph builder) has NOT received matching treatment yet — the
+  shared `index.css` ambient background reaches it for free, but its
+  own component styling is untouched.
+- Billing account linkage to the $150 hackathon credit — still
+  unverified.
+- Devpost checklist walkthrough — still not done.
+- Firebase CI token / `--no-verify` push authorization — still not
+  decided by the owner; every push and deploy this session continued
+  to require the owner's own PowerShell for the same two reasons as
+  before (pre-push hook needs Windows Python; Firebase CLI auth lives
+  in the Windows browser session).
+
+If a future session picks this up: check whether the owner is happy
+with this pass before touching v5, since a second guess in the wrong
+direction burns the same budget this whole thread has been anxious
+about.
