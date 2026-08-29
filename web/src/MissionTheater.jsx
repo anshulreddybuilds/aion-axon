@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, hasOwnerToken } from "./api.js";
 import { Panel, Empty } from "./panels.jsx";
+import AxonCore from "./AxonCore.jsx";
 import DemoRecoveryMode from "./DemoRecoveryMode.jsx";
 import { deriveStages, StageRow } from "./missionStages.jsx";
 import { reconcileRecord } from "./missionApprovalReconcile.js";
@@ -296,17 +297,40 @@ export default function MissionTheater() {
     }
   };
 
+  // A ref, not state: aborting on unmount must not itself trigger a
+  // state update on an unmounted component.
+  const abortRef = useRef(null);
+
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
+
   const run = async () => {
     if (!need.trim()) return;
     setRunning(true);
     setError(null);
     setRecord(null);
     setDecided(false);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
-      const result = await api.proposeCapability(need.trim(), { allowRetry });
+      // GET /synapse/propose/stream -- the same real pipeline as
+      // proposeCapability(), but delivered as it actually happens: one
+      // real AcquisitionRecord snapshot per stage the backend has
+      // genuinely completed (see api.js's consumeStageStream). Each
+      // snapshot replaces `record` outright, so AxonCore and the
+      // stage-by-stage detail below always render the exact same real
+      // state the backend just reported -- never a step ahead of it.
+      const result = await api.proposeStream(need.trim(), {
+        allowRetry,
+        signal: controller.signal,
+        onStage: (partial) => setRecord(partial),
+      });
       setRecord(result);
     } catch (err) {
-      setError(err.message);
+      if (err.name !== "AbortError") setError(err.message);
     } finally {
       setRunning(false);
     }
@@ -400,8 +424,14 @@ export default function MissionTheater() {
 
       {error && <p className="text-xs text-danger">{error}</p>}
 
+      {(running || record) && (
+        <Panel title="AXON CORE — live pipeline state">
+          <AxonCore record={record} running={running} />
+        </Panel>
+      )}
+
       {record && (
-        <Panel title="Live governance spine — real terminal record">
+        <Panel title="Stage-by-stage detail">
           <div className="space-y-2">
             {stages.length === 0 && <Empty>No stages evidenced by this record.</Empty>}
             {stages.map((s) => (
