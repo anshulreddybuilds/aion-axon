@@ -199,7 +199,17 @@ function LedgerTab({ data }) {
   return (
     <div className="space-y-2.5">
       {tracked.map((c) => {
-        const pct = c.autonomy ?? c.autonomy_score ?? null;
+        // BUG-020, 30 Aug 2026: GET /autonomy's capability objects carry
+        // effective_autonomy_pct and autonomy_pct -- there is no
+        // "autonomy" or "autonomy_score" field on this response, so this
+        // read always fell through both `??` branches to null and every
+        // row rendered "--" regardless of the real score underneath.
+        // v1's own AutonomyLedger (panels.jsx) reads the same /autonomy
+        // response correctly; this now matches that field order --
+        // effective_autonomy_pct first because it is the ledger's live,
+        // outcome-adjusted number, autonomy_pct as the fallback for a
+        // capability the ledger hasn't adjusted yet.
+        const pct = c.effective_autonomy_pct ?? c.autonomy_pct ?? null;
         const below = pct != null && pct < threshold;
 
         return (
