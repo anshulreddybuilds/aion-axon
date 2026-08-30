@@ -12,6 +12,7 @@ Design constraints that are not negotiable:
   resume the engine continues from there rather than replaying completed
   steps, because replaying an EXTERNAL_EFFECT step would perform it twice.
 """
+import inspect
 import json
 import re
 from datetime import datetime, timezone
@@ -55,6 +56,47 @@ class MissionEngine:
                     "BLOCKED", results, index, plan,
                     blocked_on=gap,
                 )
+
+            # BUG-018, 30 Aug 2026: the natural-language "Plan it" flow
+            # (POST /missions/planned) planned a step naming an EXISTING,
+            # already-registered capability (generate_nepal_crisis_image --
+            # the same capability BUG-014 was found on) but left `args: []`,
+            # the schema's own default (app/agents/plan_schema.py). BUG-014's
+            # fix already turns the resulting call into one clean sentence
+            # instead of a crash, but the mission still never completes --
+            # which is exactly resume_blocked()'s own already-documented
+            # "Found live 21 Aug" failure, just reached from the first-run
+            # path instead of the capability-gap resume path it was
+            # originally fixed for. Root cause: the planner's prompt
+            # (mission_planner.INSTRUCTION, rule 5) only spells out argument
+            # shape for calculator and web_research by name, and a
+            # SYNAPSE-acquired capability's catalog entry carries no
+            # signature at all -- its registered function is always
+            # `_sandbox_proxy`'s bare `invoke(*args)`, so
+            # `declarations._signature_of()` deliberately returns "" for it
+            # rather than a misleading `(*args)`. The planner was never told
+            # this capability takes an argument, so it could not have
+            # written one.
+            #
+            # Same backfill as resume_blocked(), same justification: the
+            # mission's own free-text request is the only material this
+            # step was ever given, so it becomes the sole positional arg --
+            # only when args are still empty, never overwriting an explicit
+            # one. Unlike resume_blocked() (which only ever backfills a step
+            # whose tool was just installed for it), this runs for every
+            # first-run step, so it is gated on the capability's own known
+            # minimum argument count: a capability KNOWN to take zero
+            # arguments must never be force-fed one it never asked for --
+            # that would trade BUG-018 for a new, self-inflicted arity
+            # error. An UNKNOWN minimum (can't be determined by static
+            # reading) is treated as "needs at least one", matching
+            # resume_blocked()'s own unconditional backfill for the one
+            # case it handles.
+            if not step.args:
+                minimum = self._minimum_args_required(step.tool)
+
+                if minimum is None or minimum > 0:
+                    step.args = [workflow.user_request]
 
             args = self._resolve_args(step.args, results)
 
@@ -250,6 +292,77 @@ class MissionEngine:
             return str(target.get("error") or "Capability reported ERROR.")
 
         return None
+
+    @staticmethod
+    def _minimum_args_required(tool_name: str) -> Optional[int]:
+        """Best-effort minimum positional-arg count for `tool_name`.
+
+        Returns None when it can't be determined. BUG-018's backfill above
+        treats that the same as "needs at least one" -- the only case worth
+        guarding against is a capability KNOWN to need zero, and an unknown
+        minimum is not that.
+
+        A SYNAPSE-acquired capability's registered function is always
+        `_sandbox_proxy`'s own `invoke(*args)` closure -- its Python
+        signature reveals nothing, on purpose, the same reason
+        `declarations._signature_of()` returns "" for these rather than a
+        misleading `(*args)`. The real shape lives in the generated source
+        Firestore still holds for it (`passport.candidate.code` /
+        `.entrypoint`, the same record `rehydrate.py` reads to re-register
+        it after a restart), so it's read the same static way
+        `SynapseEngine._entrypoint_arity` already reads it for the exact
+        same reason -- see that method and BUG-014's fix in
+        `_sandbox_proxy`, this same class of problem one layer down.
+
+        A hand-written seed capability (calculator, web_research, ...) IS
+        its own real function, so `inspect.signature` on it is enough, the
+        same way `declarations._signature_of()` already relies on it for
+        the planner's catalog.
+        """
+        # Imported locally: rehydrate.py already sets the precedent for
+        # reaching synapse.engine lazily from this layer rather than
+        # risking a cycle at module load ("synapse.engine imports the
+        # registry, and the registry must not import synapse").
+        from app.synapse.engine import synapse
+
+        stored = firestore_store.get_capability(tool_name) or {}
+        candidate = (stored.get("passport") or {}).get("candidate") or {}
+        code = candidate.get("code")
+        entrypoint = candidate.get("entrypoint")
+
+        if code and entrypoint:
+            arity = synapse._entrypoint_arity(code, entrypoint)
+
+            if arity is not None:
+                return arity[0]
+
+        tool = registry.describe(tool_name)
+
+        if tool is None or tool.function is None:
+            return None
+
+        try:
+            parameters = inspect.signature(tool.function).parameters
+        except (TypeError, ValueError):  # builtins and C callables
+            return None
+
+        if any(
+            p.kind is inspect.Parameter.VAR_POSITIONAL
+            for p in parameters.values()
+        ):
+            # `*args` alone -- the sandbox proxy's own shape, or a
+            # genuinely variadic seed function -- says nothing about how
+            # many are actually required. Indeterminate, not zero.
+            return None
+
+        return sum(
+            1 for p in parameters.values()
+            if p.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+            and p.default is inspect.Parameter.empty
+        )
 
     def _gap_for(self, step: MissionStep) -> Optional[dict[str, Any]]:
         """Describe the capability gap at this step, if there is one."""

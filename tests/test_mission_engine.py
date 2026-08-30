@@ -22,6 +22,7 @@ from app.capabilities.registry import (  # noqa: E402
 )
 from app.capabilities.seed import SEED_COUNT  # noqa: E402
 from app.governance.kill_switch import kill_switch  # noqa: E402
+from app.memory.firestore_store import firestore_store  # noqa: E402
 from app.missions.engine import mission_engine  # noqa: E402
 from app.workflows.state import WorkflowState  # noqa: E402
 
@@ -227,3 +228,160 @@ def test_capability_gaps_helper():
     )
 
     assert len(plan.capability_gaps()) == 1
+
+
+# --- BUG-018: an existing capability with empty args is backfilled -------
+#
+# Mirrors resume_blocked()'s own "Found live 21 Aug" backfill, but for the
+# normal first-run path: the natural-language planner left `args: []` on a
+# step naming a capability that already exists (generate_nepal_crisis_image
+# in the real report), so BUG-014's arity check fails the step cleanly but
+# the mission never completes.
+
+def test_step_naming_an_existing_tool_with_empty_args_is_backfilled_with_the_request():
+    def echo_one(x):
+        return {"status": "OK", "echo": x}
+
+    registry.register("bug018_echo_one", "echoes its single argument", "LOW", echo_one)
+    try:
+        plan = MissionPlan(
+            goal="echo the request",
+            steps=[step(
+                step=1, tool="bug018_echo_one", args=[],
+                description="echo something", action="run echo tool",
+            )],
+        )
+
+        workflow = WorkflowState(user_request="the mission's own free text")
+        summary = mission_engine.run(workflow, plan)
+
+        assert summary["status"] == "COMPLETED"
+        assert summary["step_results"][0]["result"]["echo"] == (
+            "the mission's own free text"
+        )
+    finally:
+        registry.unregister("bug018_echo_one")
+
+
+def test_step_with_explicit_args_is_never_overwritten_by_the_backfill():
+    def echo_one(x):
+        return {"status": "OK", "echo": x}
+
+    registry.register("bug018_echo_one_explicit", "echoes its single argument", "LOW", echo_one)
+    try:
+        plan = MissionPlan(
+            goal="echo an explicit value",
+            steps=[step(
+                step=1, tool="bug018_echo_one_explicit", args=["explicit value"],
+                description="echo something", action="run echo tool",
+            )],
+        )
+
+        workflow = WorkflowState(user_request="must not appear anywhere")
+        summary = mission_engine.run(workflow, plan)
+
+        assert summary["status"] == "COMPLETED"
+        assert summary["step_results"][0]["result"]["echo"] == "explicit value"
+    finally:
+        registry.unregister("bug018_echo_one_explicit")
+
+
+def test_zero_arg_capability_is_not_force_fed_the_request():
+    """A capability KNOWN to take zero arguments must stay at zero -- the
+    exact failure mode the arity gate exists to prevent. Without it, this
+    step would receive one unwanted argument and BLOCK on BUG-014's own
+    arity check (`inspect.signature(zero_arg).bind(request)` in
+    orchestrator.execute_tool), trading one bug for another.
+    """
+    def zero_arg():
+        return {"status": "OK", "called_with": "nothing"}
+
+    registry.register("bug018_zero_arg", "takes no arguments at all", "LOW", zero_arg)
+    try:
+        plan = MissionPlan(
+            goal="run a zero-arg capability",
+            steps=[step(
+                step=1, tool="bug018_zero_arg", args=[],
+                description="run the zero-arg tool", action="run zero-arg tool",
+            )],
+        )
+
+        workflow = WorkflowState(user_request="this must not become an argument")
+        summary = mission_engine.run(workflow, plan)
+
+        assert summary["status"] == "COMPLETED"
+        assert summary["step_results"][0]["result"]["called_with"] == "nothing"
+    finally:
+        registry.unregister("bug018_zero_arg")
+
+
+def test_backfill_reads_arity_from_the_stored_synapse_candidate_not_the_bare_proxy():
+    """The real report: a SYNAPSE-acquired capability's registered function
+    is always the sandbox proxy's bare `invoke(*args)` -- inspecting IT
+    reveals nothing. The minimum-args check must instead read the real
+    generated source Firestore holds for it (`passport.candidate`), the
+    same record `rehydrate.py` already reads to restore it after a
+    restart, and the same static reading `SynapseEngine._entrypoint_arity`
+    already does for BUG-014's own check one layer down.
+    """
+    def sandbox_proxy_shape(*args):
+        return {"status": "OK", "n": len(args)}
+
+    registry.register(
+        "generate_nepal_crisis_image_test", "image generator (test double)",
+        "LOW", sandbox_proxy_shape,
+    )
+    firestore_store.save_capability("generate_nepal_crisis_image_test", {
+        "name": "generate_nepal_crisis_image_test",
+        # autonomy_pct is set high on purpose: saving ANY capability
+        # record makes autonomy_ledger.tracked() see it, and an absent
+        # autonomy_pct defaults to STARTING_AUTONOMY (32.0), which is
+        # BELOW SUPERVISION_THRESHOLD (40.0) -- that would route this
+        # step through G-07 approval-required instead of straight
+        # execution, which is a fact about the autonomy ledger, not
+        # about BUG-018's backfill this test exists to check.
+        "autonomy_pct": 100.0,
+        "passport": {
+            "candidate": {
+                "code": (
+                    "def generate_image(input_str):\n"
+                    "    return {'status': 'OK', 'input': input_str}\n"
+                ),
+                "entrypoint": "generate_image",
+            },
+        },
+    })
+    try:
+        plan = MissionPlan(
+            goal="generate an image",
+            steps=[step(
+                step=1, tool="generate_nepal_crisis_image_test", args=[],
+                description="generate a crisis image",
+                action="generate crisis image",
+            )],
+        )
+
+        workflow = WorkflowState(user_request="a crisis image prompt")
+        summary = mission_engine.run(workflow, plan)
+
+        assert summary["status"] == "COMPLETED"
+        assert summary["step_results"][0]["result"]["n"] == 1
+    finally:
+        registry.unregister("generate_nepal_crisis_image_test")
+        firestore_store.capabilities.pop("generate_nepal_crisis_image_test", None)
+
+
+def test_minimum_args_required_is_none_for_a_genuinely_variadic_seed():
+    """An indeterminate minimum (a real `*args` seed function, not a
+    sandbox proxy) must not be treated as "requires zero" -- BUG-018's
+    backfill still applies in that case, matching resume_blocked()'s own
+    unconditional backfill.
+    """
+    def variadic(*args):
+        return {"status": "OK", "count": len(args)}
+
+    registry.register("bug018_variadic_seed", "variadic test tool", "LOW", variadic)
+    try:
+        assert mission_engine._minimum_args_required("bug018_variadic_seed") is None
+    finally:
+        registry.unregister("bug018_variadic_seed")
