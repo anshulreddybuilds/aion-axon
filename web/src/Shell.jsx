@@ -94,7 +94,7 @@ export function Sidebar({ view, onView }) {
                 <motion.span
                   layoutId="navActivePill"
                   transition={{ type: "spring", stiffness: 420, damping: 34 }}
-                  className="absolute inset-0 rounded-md bg-cyan/10 border border-cyan/30 shadow-[0_0_18px_rgba(55,224,216,0.18)]"
+                  className="pointer-events-none absolute inset-0 rounded-md bg-cyan/10 border border-cyan/30 shadow-[0_0_18px_rgba(55,224,216,0.18)]"
                 />
               )}
               <span className="relative">{item.label}</span>
