@@ -53,13 +53,13 @@ def test_seed_capabilities_are_registered():
     assert counts["total"] == SEED_COUNT == 12
     assert registry.is_implemented("calculator")
     assert registry.is_implemented("web_research")
-    assert not registry.is_implemented("write_brief")
+    assert not registry.is_implemented("summarize_text")
 
 
 def test_declared_capability_cannot_be_executed():
     """A declared capability must raise, never silently do nothing."""
     with pytest.raises(CapabilityNotImplemented):
-        registry.get("write_brief")
+        registry.get("summarize_text")
 
 
 def test_declaring_never_overwrites_an_implementation():
@@ -133,7 +133,7 @@ def test_missing_tool_blocks_the_mission_and_records_the_gap():
 def test_declared_but_unimplemented_tool_blocks_with_the_name():
     plan = MissionPlan(
         goal="Write a brief",
-        steps=[step(step=1, tool="write_brief", args=[])],
+        steps=[step(step=1, tool="summarize_text", args=[])],
     )
 
     summary = mission_engine.run(
@@ -141,7 +141,7 @@ def test_declared_but_unimplemented_tool_blocks_with_the_name():
     )
 
     assert summary["status"] == "BLOCKED"
-    assert summary["blocked_on"]["missing_capability"] == "write_brief"
+    assert summary["blocked_on"]["missing_capability"] == "summarize_text"
     assert "declared but has no implementation" in (
         summary["blocked_on"]["reason"]
     )
@@ -152,7 +152,7 @@ def test_gap_is_detected_before_execution_not_after():
     plan = MissionPlan(
         goal="Gap first",
         steps=[
-            step(step=1, tool="write_brief", args=[]),
+            step(step=1, tool="summarize_text", args=[]),
             step(step=2, args=["2 + 2"]),
         ],
     )
