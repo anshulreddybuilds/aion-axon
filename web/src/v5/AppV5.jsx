@@ -1,44 +1,87 @@
-import { useEffect, useRef, useState } from "react";
-import { Mic, Plus, Trash2, Unlock, Volume2, VolumeX, Zap } from "lucide-react";
-import { api, hasOwnerToken, setOwnerToken } from "../api.js";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Activity,
+  AlertTriangle,
+  Box,
+  CheckCircle2,
+  CircleDot,
+  Clock,
+  Database,
+  GitBranch,
+  Lock,
+  Mic,
+  Network,
+  Plus,
+  RefreshCw,
+  Shield,
+  ShieldAlert,
+  Terminal,
+  Trash2,
+  Unlock,
+  Volume2,
+  VolumeX,
+  XCircle,
+  Zap,
+} from "lucide-react";
+import { api, CORE, hasOwnerToken, loadAll, setOwnerToken } from "../api.js";
 import { compileGraphToPlan, planToGraph, topoOrder } from "../graphCompiler.js";
-import { nodeStatuses, runOutcomeText, toneForMissionStatus } from "../graphExecutionState.js";
-import { describeStage } from "../livePipeline.js";
-import { speak, speechSynthesisSupported, stopSpeaking } from "../speechOutput.js";
+import {
+  nodeStatuses,
+  runOutcomeText,
+  toneForMissionStatus,
+} from "../graphExecutionState.js";
+import { actionsFromMissionSteps, describeStage } from "../livePipeline.js";
+import {
+  speak,
+  speechSynthesisSupported,
+  stopSpeaking,
+} from "../speechOutput.js";
 import { extractAnswer, extractStepAnswer, prettyValue } from "../v4/artifact.js";
 import { useSpeechInput } from "../useSpeechInput.js";
+import "./axonV5.css";
 
-/**
- * v5 — the graphical mission builder.
- *
- * GRAPH -> MISSION COMPILER -> EXISTING MISSION ENGINE. graphCompiler.js's
- * compileGraphToPlan() is the compiler; POST /missions/from-graph and
- * MissionService.start_from_plan() (backend, this same milestone) are the
- * engine entry point. There is no second execution engine here: a graph
- * built on this canvas produces the exact MissionPlan the Gemini planner
- * produces from free text, and from that point on -- Guardian, sandbox,
- * approval, resume -- it is one pipeline.
- *
- * "Plan it" (text or voice) is the convergence path: it runs the SAME
- * plannedMission() every other surface uses, then reconstructs the
- * resulting plan onto this canvas via graphCompiler.js's planToGraph() --
- * so a mission described in words and a mission drawn as nodes end up as
- * the same editable object, not two unrelated features bolted together.
- *
- * Node status is never invented. nodeStatuses() (graphExecutionState.js)
- * only reports what the last real mission result actually said about
- * each step; a node with nothing to report reads "not yet run".
- */
-
-const NODE_W = 208;
-const NODE_H = 112;
+const NODE_W = 218;
+const NODE_H = 118;
 
 const TONE_COLOR = {
-  ok: "#4ade80",
-  danger: "#f87171",
+  ok: "#34d399",
+  danger: "#fb7185",
   warn: "#fbbf24",
-  idle: "#475569",
+  idle: "#64748b",
   acquiring: "#22d3ee",
+};
+
+const STATE_STYLE = {
+  idle: {
+    color: "#64748b",
+    bg: "rgba(100,116,139,0.08)",
+    border: "rgba(148,163,184,0.14)",
+  },
+  active: {
+    color: "#22d3ee",
+    bg: "rgba(34,211,238,0.1)",
+    border: "rgba(34,211,238,0.34)",
+  },
+  complete: {
+    color: "#34d399",
+    bg: "rgba(52,211,153,0.1)",
+    border: "rgba(52,211,153,0.28)",
+  },
+  waiting: {
+    color: "#fbbf24",
+    bg: "rgba(251,191,36,0.1)",
+    border: "rgba(251,191,36,0.32)",
+  },
+  stopped: {
+    color: "#fb7185",
+    bg: "rgba(251,113,133,0.1)",
+    border: "rgba(251,113,133,0.3)",
+  },
+  recorded: {
+    color: "#a78bfa",
+    bg: "rgba(167,139,250,0.1)",
+    border: "rgba(167,139,250,0.26)",
+  },
 };
 
 function emptyNode(id, x, y) {
@@ -54,6 +97,672 @@ function emptyNode(id, x, y) {
   };
 }
 
+function cx(...parts) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function Panel({ className = "", children }) {
+  return <section className={cx("axon-panel", className)}>{children}</section>;
+}
+
+function IconButton({ children, className = "", ...props }) {
+  return (
+    <button {...props} className={cx("axon-icon-button", className)}>
+      {children}
+    </button>
+  );
+}
+
+function ActionButton({
+  children,
+  tone = "primary",
+  className = "",
+  ...props
+}) {
+  return (
+    <button
+      {...props}
+      className={cx("axon-action", `axon-action--${tone}`, className)}
+    >
+      {children}
+    </button>
+  );
+}
+
+function MicroLabel({ children, className = "" }) {
+  return <p className={cx("axon-label", className)}>{children}</p>;
+}
+
+function StatusDot({ tone = "idle" }) {
+  return (
+    <span
+      className="axon-dot"
+      style={{ background: TONE_COLOR[tone] || TONE_COLOR.idle }}
+    />
+  );
+}
+
+function Field({ label, value }) {
+  return (
+    <div className="axon-field">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function stateForMission(status) {
+  if (!status) return "idle";
+  if (status === "COMPLETED") return "complete";
+  if (status === "AWAITING_APPROVAL" || status === "APPROVAL_REQUIRED") {
+    return "waiting";
+  }
+  if (status === "BLOCKED") return "waiting";
+  return "stopped";
+}
+
+function isImageUrl(value) {
+  return /^https?:\/\/.+\.(png|jpe?g|gif|webp|avif)(\?.*)?$/i.test(
+    String(value || "")
+  );
+}
+
+function urlsIn(value) {
+  const text = String(value || "");
+  return [...text.matchAll(/https?:\/\/[^\s)"']+/g)].map((m) =>
+    m[0].replace(/[.,;]+$/, "")
+  );
+}
+
+function ValueView({ value }) {
+  const text = prettyValue(value);
+  const images = urlsIn(text).filter(isImageUrl).slice(0, 4);
+
+  return (
+    <div className="axon-value">
+      <span>{text}</span>
+      {images.length > 0 && (
+        <div className="axon-image-strip">
+          {images.map((url) => (
+            <a
+              key={url}
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="axon-image-link"
+            >
+              <img src={url} alt="Mission result" loading="lazy" />
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ResultCard({ title, answer }) {
+  if (!answer) return null;
+  return (
+    <div className="axon-result-card">
+      <MicroLabel>{title}</MicroLabel>
+      <div className="axon-result-grid">
+        {answer.fields.map(([k, v]) => (
+          <div key={k} className="axon-result-row">
+            <span>{k}</span>
+            <ValueView value={v} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MissionTimeline({
+  missionResult,
+  running,
+  planning,
+  directApproval,
+  acquisition,
+  answer,
+  lastCompiled,
+}) {
+  const steps = [
+    {
+      label: "Plan",
+      detail: lastCompiled
+        ? `${lastCompiled.plan.steps.length} step${
+            lastCompiled.plan.steps.length === 1 ? "" : "s"
+          }`
+        : "No plan yet",
+      state: planning ? "active" : lastCompiled ? "complete" : "idle",
+    },
+    {
+      label: "Govern",
+      detail: directApproval
+        ? "Human decision required"
+        : missionResult
+        ? "Policy state returned"
+        : "Waiting for mission",
+      state: directApproval ? "waiting" : missionResult ? "complete" : "idle",
+    },
+    {
+      label: "Capability",
+      detail:
+        acquisition?.record?.status ||
+        (acquisition
+          ? "Acquiring"
+          : missionResult?.blocked_on
+          ? "Gap found"
+          : "Registry only"),
+      state: acquisition
+        ? "active"
+        : missionResult?.blocked_on
+        ? "waiting"
+        : missionResult
+        ? "recorded"
+        : "idle",
+    },
+    {
+      label: "Execute",
+      detail: running ? "Running real engine" : missionResult?.status || "Not started",
+      state: running ? "active" : stateForMission(missionResult?.status),
+    },
+    {
+      label: "Verify",
+      detail: answer
+        ? "Final result captured"
+        : missionResult
+        ? "No final artifact yet"
+        : "Waiting",
+      state: answer ? "complete" : missionResult ? "recorded" : "idle",
+    },
+  ];
+
+  return (
+    <div className="axon-timeline">
+      {steps.map((step, index) => {
+        const style = STATE_STYLE[step.state] || STATE_STYLE.idle;
+        return (
+          <div
+            key={step.label}
+            className="axon-timeline-step"
+            style={{ borderColor: style.border, background: style.bg }}
+          >
+            <span className="axon-timeline-index" style={{ color: style.color }}>
+              {String(index + 1).padStart(2, "0")}
+            </span>
+            <div>
+              <strong>{step.label}</strong>
+              <small>{step.detail}</small>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function HealthStack({ snapshot, loading, error, onRefresh }) {
+  const pending = snapshot?.pending?.pending?.length ?? 0;
+  const capabilityRows = snapshot?.capabilities?.capabilities || [];
+  const implemented =
+    snapshot?.capabilities?.implemented ??
+    capabilityRows.filter((c) => c.implemented).length;
+  const total = snapshot?.capabilities?.total ?? capabilityRows.length;
+  const rows = [
+    {
+      label: "Core API",
+      value: snapshot?.online ? "online" : "not verified",
+      tone: snapshot?.online ? "ok" : "warn",
+      icon: Activity,
+    },
+    {
+      label: "Kill switch",
+      value: snapshot?.root?.kill_switch_active ? "active" : "released",
+      tone: snapshot?.root?.kill_switch_active ? "danger" : "ok",
+      icon: Lock,
+    },
+    {
+      label: "Sandbox",
+      value: snapshot?.sandbox?.verdict || "unknown",
+      tone: snapshot?.sandbox?.verdict ? "ok" : "warn",
+      icon: Shield,
+    },
+    {
+      label: "Approvals",
+      value: `${pending} waiting`,
+      tone: pending ? "warn" : "ok",
+      icon: ShieldAlert,
+    },
+    {
+      label: "Capabilities",
+      value: `${implemented}/${total}`,
+      tone: total ? "ok" : "warn",
+      icon: Database,
+    },
+  ];
+
+  return (
+    <Panel className="axon-health">
+      <div className="axon-panel-head">
+        <div>
+          <MicroLabel>Live system</MicroLabel>
+          <h2>Security state</h2>
+        </div>
+        <IconButton
+          onClick={onRefresh}
+          title="Refresh live state"
+          aria-label="Refresh live state"
+        >
+          <RefreshCw size={15} className={loading ? "axon-spin" : ""} />
+        </IconButton>
+      </div>
+      <div className="axon-health-list">
+        {rows.map((row) => {
+          const Icon = row.icon;
+          return (
+            <div key={row.label} className="axon-health-row">
+              <Icon size={15} />
+              <span>{row.label}</span>
+              <strong className={`tone-${row.tone}`}>{row.value}</strong>
+            </div>
+          );
+        })}
+      </div>
+      {error && <p className="axon-error-text">{error}</p>}
+      <p className="axon-footnote">Backend: {CORE}</p>
+    </Panel>
+  );
+}
+
+function CapabilityLedger({ snapshot, capabilities }) {
+  const tracked = snapshot?.autonomy?.capabilities || [];
+  const threshold = snapshot?.autonomy?.supervision_threshold ?? 40;
+  const source = tracked.length
+    ? tracked
+    : capabilities
+        .slice(0, 8)
+        .map((c) => ({ name: c.name, implemented: c.implemented }));
+
+  return (
+    <Panel>
+      <div className="axon-panel-head">
+        <div>
+          <MicroLabel>Capability and autonomy</MicroLabel>
+          <h2>Registry ledger</h2>
+        </div>
+        <Box size={16} />
+      </div>
+      <div className="axon-ledger-list">
+        {source.length === 0 ? (
+          <p className="axon-empty">No capability data has been returned yet.</p>
+        ) : (
+          source.map((cap) => {
+            const raw = cap.effective_autonomy_pct ?? cap.autonomy_pct ?? null;
+            const pct = raw == null ? null : Number(raw);
+            const validPct = Number.isFinite(pct) ? pct : null;
+            const below = validPct != null && validPct < threshold;
+            return (
+              <div key={cap.name} className="axon-ledger-row">
+                <div>
+                  <strong>{cap.name}</strong>
+                  <small>
+                    {cap.implemented === false
+                      ? "not installed"
+                      : below
+                      ? "supervision threshold"
+                      : "registered"}
+                  </small>
+                </div>
+                <span className={below ? "tone-warn" : "tone-ok"}>
+                  {validPct == null ? "--" : `${validPct}%`}
+                </span>
+                {validPct != null && (
+                  <div className="axon-ledger-bar">
+                    <i
+                      style={{
+                        width: `${Math.min(100, Math.max(0, validPct))}%`,
+                        background: below ? "#fbbf24" : "#34d399",
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function EvolutionFeed({ snapshot, acquisition, missionResult }) {
+  const events = snapshot?.evolution?.events || [];
+  const missionActions = actionsFromMissionSteps(missionResult?.step_results || []);
+  const feed = acquisition?.actions?.length
+    ? acquisition.actions
+    : missionActions.length
+    ? missionActions
+    : events.slice(0, 6).map((e) => ({
+        label: e.event || e.type || "evolution event",
+        detail: e.capability || e.message || e.status || "recorded",
+        tone: "ok",
+      }));
+
+  return (
+    <Panel>
+      <div className="axon-panel-head">
+        <div>
+          <MicroLabel>Execution and evidence</MicroLabel>
+          <h2>Live trace</h2>
+        </div>
+        <Terminal size={16} />
+      </div>
+      <div className="axon-feed">
+        {feed.length === 0 ? (
+          <p className="axon-empty">
+            No execution events recorded in this session yet.
+          </p>
+        ) : (
+          feed.map((item, i) => (
+            <div key={`${item.label}-${i}`} className="axon-feed-item">
+              <StatusDot tone={item.tone || "ok"} />
+              <div>
+                <strong>{item.label}</strong>
+                <small>{item.detail}</small>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function CoreGraph({
+  nodes,
+  edges,
+  statuses,
+  selectedId,
+  connectFrom,
+  canvasRef,
+  center,
+  onNodePointerDown,
+  onNodeClick,
+  onConnect,
+  onDelete,
+  isRunning,
+  planning,
+}) {
+  return (
+    <Panel className="axon-graph-panel">
+      <div className="axon-graph-header">
+        <div>
+          <MicroLabel>AXON live graph</MicroLabel>
+          <h1>Mission nervous system</h1>
+        </div>
+        <div className="axon-graph-badges">
+          <span>{nodes.length} nodes</span>
+          <span>{edges.length} links</span>
+        </div>
+      </div>
+      <div ref={canvasRef} className="axon-canvas scroll-thin">
+        <div className={cx("axon-core-orbit", isRunning && "axon-core-orbit--active")}>
+          <span />
+          <strong>AXON</strong>
+          <small>{planning ? "planning" : isRunning ? "running" : "ready"}</small>
+        </div>
+        <svg className="axon-edge-layer" width="100%" height="100%">
+          <defs>
+            <marker
+              id="axon-arrow"
+              markerWidth="9"
+              markerHeight="9"
+              refX="8"
+              refY="4.5"
+              orient="auto"
+            >
+              <path d="M0,0 L9,4.5 L0,9 Z" fill="rgba(45,212,191,0.78)" />
+            </marker>
+          </defs>
+          {edges.map((e) => {
+            const a = nodes.find((n) => n.id === e.from);
+            const b = nodes.find((n) => n.id === e.to);
+            if (!a || !b) return null;
+            const p1 = center(a);
+            const p2 = center(b);
+            return (
+              <line
+                key={`${e.from}->${e.to}`}
+                x1={p1.x}
+                y1={p1.y}
+                x2={p2.x}
+                y2={p2.y}
+                markerEnd="url(#axon-arrow)"
+              />
+            );
+          })}
+        </svg>
+        {nodes.length === 0 && (
+          <div className="axon-empty-canvas">
+            <Network size={28} />
+            <strong>Describe a mission or add nodes manually.</strong>
+            <span>The first real plan becomes an editable graph here.</span>
+          </div>
+        )}
+        {(isRunning || planning) && (
+          <div className="axon-run-banner">
+            {planning
+              ? "Planning through the governed mission API"
+              : "Running through the real AXON engine"}
+          </div>
+        )}
+        {nodes.map((node) => {
+          const st = statuses.get(node.id);
+          const tone = st?.tone || "idle";
+          const selected = selectedId === node.id;
+          const connecting = connectFrom === node.id;
+          return (
+            <div
+              key={node.id}
+              onPointerDown={(e) => onNodePointerDown(e, node)}
+              onClick={() => onNodeClick(node.id)}
+              className={cx(
+                "axon-node",
+                selected && "axon-node--selected",
+                connecting && "axon-node--connecting"
+              )}
+              style={{
+                left: node.x,
+                top: node.y,
+                width: NODE_W,
+                minHeight: NODE_H,
+                "--node-tone": TONE_COLOR[tone] || TONE_COLOR.idle,
+              }}
+            >
+              <div className="axon-node-head">
+                <StatusDot tone={tone} />
+                <span>{node.id}</span>
+                <em>{node.risk}</em>
+              </div>
+              <p>{node.description || "No description"}</p>
+              <code>{node.tool || "AION acquisition path"}</code>
+              {st && <small>{st.label}</small>}
+              <div className="axon-node-actions">
+                <button
+                  type="button"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onConnect(node.id);
+                  }}
+                >
+                  connect
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Delete ${node.id}`}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(node.id);
+                  }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}
+
+function NodeEditor({
+  selected,
+  capabilities,
+  argHint,
+  nodeAnswer,
+  updateNode,
+  close,
+}) {
+  if (!selected) {
+    return (
+      <Panel>
+        <MicroLabel>Node inspector</MicroLabel>
+        <p className="axon-empty">
+          Select a graph node to edit its capability, risk, arguments, and
+          node-specific result.
+        </p>
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel>
+      <div className="axon-panel-head">
+        <div>
+          <MicroLabel>Node inspector</MicroLabel>
+          <h2>Node {selected.id}</h2>
+        </div>
+        <IconButton title="Close inspector" aria-label="Close inspector" onClick={close}>
+          <XCircle size={15} />
+        </IconButton>
+      </div>
+      <div className="axon-form">
+        <label>Description</label>
+        <textarea
+          value={selected.description}
+          onChange={(e) => updateNode(selected.id, { description: e.target.value })}
+          rows={3}
+        />
+        <label>Capability</label>
+        <select
+          value={selected.tool || ""}
+          onChange={(e) => updateNode(selected.id, { tool: e.target.value || null })}
+        >
+          <option value="">Let AION acquire</option>
+          {capabilities.map((c) => (
+            <option key={c.name} value={c.name}>
+              {c.name}
+              {c.implemented ? "" : " (not installed)"}
+            </option>
+          ))}
+        </select>
+        <div className="axon-form-grid">
+          <div>
+            <label>Risk</label>
+            <select
+              value={selected.risk}
+              onChange={(e) => updateNode(selected.id, { risk: e.target.value })}
+            >
+              <option value="LOW">LOW</option>
+              <option value="MEDIUM">MEDIUM</option>
+              <option value="HIGH">HIGH</option>
+            </select>
+          </div>
+          <div>
+            <label>Kind</label>
+            <select
+              value={selected.kind}
+              onChange={(e) => updateNode(selected.id, { kind: e.target.value })}
+            >
+              <option value="READ_ANALYZE">READ_ANALYZE</option>
+              <option value="EXTERNAL_EFFECT">EXTERNAL_EFFECT</option>
+            </select>
+          </div>
+        </div>
+        <label>Args</label>
+        {argHint && <p className="axon-hint">{selected.tool} needs: {argHint}</p>}
+        <textarea
+          value={(selected.args || []).join("\n")}
+          onChange={(e) => updateNode(selected.id, { args: e.target.value.split("\n") })}
+          rows={4}
+        />
+      </div>
+      <ResultCard title={`Node result: ${nodeAnswer?.tool || ""}`} answer={nodeAnswer} />
+    </Panel>
+  );
+}
+
+function ApprovalPanel({
+  directApproval,
+  acquisition,
+  deciding,
+  decideDirect,
+  decideAcquisition,
+}) {
+  if (directApproval) {
+    return (
+      <Panel className="axon-gate axon-gate--warn">
+        <MicroLabel>Governance gate</MicroLabel>
+        <h2>Human approval required</h2>
+        <p>AXON stopped at a real approval request before continuing this mission.</p>
+        <div className="axon-button-row">
+          <ActionButton tone="success" onClick={() => decideDirect(true)} disabled={deciding}>
+            Approve
+          </ActionButton>
+          <ActionButton tone="danger" onClick={() => decideDirect(false)} disabled={deciding}>
+            Reject
+          </ActionButton>
+        </div>
+      </Panel>
+    );
+  }
+
+  if (acquisition?.record?.status === "AWAITING_APPROVAL") {
+    return (
+      <Panel className="axon-gate axon-gate--active">
+        <MicroLabel>Capability gate</MicroLabel>
+        <h2>Install proposed capability</h2>
+        <p>
+          <strong>{acquisition.record.candidate?.name}</strong> is waiting for
+          approval before install and resume.
+        </p>
+        <div className="axon-button-row">
+          <ActionButton
+            tone="success"
+            onClick={() => decideAcquisition(true)}
+            disabled={deciding}
+          >
+            Approve install
+          </ActionButton>
+          <ActionButton
+            tone="danger"
+            onClick={() => decideAcquisition(false)}
+            disabled={deciding}
+          >
+            Reject
+          </ActionButton>
+        </div>
+      </Panel>
+    );
+  }
+
+  return null;
+}
+
 export default function AppV5() {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
@@ -62,46 +771,52 @@ export default function AppV5() {
   const [connectFrom, setConnectFrom] = useState(null);
   const [capabilities, setCapabilities] = useState([]);
   const [argHint, setArgHint] = useState(null);
+  const [systemSnapshot, setSystemSnapshot] = useState(null);
+  const [systemLoading, setSystemLoading] = useState(false);
+  const [systemError, setSystemError] = useState(null);
 
   const [compileError, setCompileError] = useState(null);
   const [running, setRunning] = useState(false);
   const [planning, setPlanning] = useState(false);
   const [missionResult, setMissionResult] = useState(null);
   const [answer, setAnswer] = useState(null);
-  const [lastCompiled, setLastCompiled] = useState(null); // { stepNumberById, plan }
+  const [lastCompiled, setLastCompiled] = useState(null);
 
-  const [directApproval, setDirectApproval] = useState(null); // { missionId, approvalRequestId }
-  const [acquisition, setAcquisition] = useState(null); // { missionId, actions, record }
+  const [directApproval, setDirectApproval] = useState(null);
+  const [acquisition, setAcquisition] = useState(null);
   const [deciding, setDeciding] = useState(false);
-  // BUG-011: resume-planned cannot distinguish "rejected" from "not yet
-  // decided" in its own status word (both come back as
-  // APPROVAL_REQUIRED -- see runOutcomeText()'s doc comment). The ONLY
-  // place that distinction genuinely exists is api.decide()'s own
-  // response, so it is captured here at the moment of the click, not
-  // guessed from the status word afterwards.
   const [rejected, setRejected] = useState(false);
 
   const [unlocked, setUnlocked] = useState(hasOwnerToken());
   const [tokenInput, setTokenInput] = useState("");
-
-  // Voice output mirrors AppV4's pattern exactly: off by default (no
-  // audio a viewer did not ask for), speaks only the SAME terminal-
-  // outcome sentence already on screen (runOutcomeText()), never a
-  // separate scripted line.
   const [speakEnabled, setSpeakEnabled] = useState(false);
 
   const idCounter = useRef(1);
-  const dragRef = useRef(null); // { id, offsetX, offsetY }
+  const dragRef = useRef(null);
   const canvasRef = useRef(null);
 
   const speech = useSpeechInput({
     onText: (t) => setGoal(t),
-    // A mic error (permission denied, no mic, network) is reported via
-    // the SAME error banner a compile/run failure uses -- one honest
-    // place on screen for "something went wrong", not a second silent
-    // failure mode nothing shows.
     onError: (message) => setCompileError(message),
   });
+
+  const refreshSystem = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setSystemLoading(true);
+    setSystemError(null);
+    try {
+      const snapshot = await loadAll();
+      setSystemSnapshot(snapshot);
+      setCapabilities(snapshot?.capabilities?.capabilities || []);
+    } catch (err) {
+      setSystemError(String(err.message || err));
+    } finally {
+      if (!silent) setSystemLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshSystem();
+  }, [refreshSystem]);
 
   const announce = (result, opts) => {
     const text = runOutcomeText(result, opts);
@@ -109,25 +824,17 @@ export default function AppV5() {
     return text;
   };
 
-  useEffect(() => {
-    api
-      .capabilities()
-      .then((c) => setCapabilities(c?.capabilities || []))
-      .catch(() => {});
-  }, []);
-
-  // ── node CRUD ────────────────────────────────────────────────────────
-
   const addNode = () => {
     const id = `n${idCounter.current++}`;
-    const x = 40 + (nodes.length % 3) * 240;
-    const y = 40 + Math.floor(nodes.length / 3) * 150;
+    const x = 36 + (nodes.length % 3) * 252;
+    const y = 54 + Math.floor(nodes.length / 3) * 154;
     setNodes((prev) => [...prev, emptyNode(id, x, y)]);
     setSelectedId(id);
   };
 
-  const updateNode = (id, patch) =>
+  const updateNode = (id, patch) => {
     setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, ...patch } : n)));
+  };
 
   const deleteNode = (id) => {
     setNodes((prev) => prev.filter((n) => n.id !== id));
@@ -153,13 +860,12 @@ export default function AppV5() {
     setSelectedId(id);
   };
 
-  const removeEdge = (from, to) =>
+  const removeEdge = (from, to) => {
     setEdges((prev) => prev.filter((e) => !(e.from === from && e.to === to)));
-
-  // ── dragging ─────────────────────────────────────────────────────────
+  };
 
   const onNodePointerDown = (e, node) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || !canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
     dragRef.current = {
       id: node.id,
@@ -188,10 +894,8 @@ export default function AppV5() {
     };
   }, []);
 
-  // ── compile + run ────────────────────────────────────────────────────
-
   const resetRunState = () => {
-    stopSpeaking(); // never let a stale result keep talking over a new run
+    stopSpeaking();
     setMissionResult(null);
     setAnswer(null);
     setDirectApproval(null);
@@ -207,7 +911,11 @@ export default function AppV5() {
           const { label, detail, tone } = describeStage(record);
           setAcquisition((prev) =>
             prev && prev.missionId === missionId
-              ? { ...prev, actions: [...prev.actions, { label, detail, tone }], record }
+              ? {
+                  ...prev,
+                  actions: [...prev.actions, { label, detail, tone }],
+                  record,
+                }
               : prev
           );
         },
@@ -215,6 +923,7 @@ export default function AppV5() {
       setAcquisition((prev) =>
         prev && prev.missionId === missionId ? { ...prev, record: acquired } : prev
       );
+      refreshSystem({ silent: true });
     } catch (err) {
       setCompileError(String(err.message || err));
     }
@@ -222,7 +931,9 @@ export default function AppV5() {
 
   const compileAndRun = async () => {
     if (!unlocked) {
-      setCompileError("Unlock with the owner token below -- running a mission is a real, governed write.");
+      setCompileError(
+        "Unlock with the owner token. Running a mission is a real governed write."
+      );
       return;
     }
 
@@ -246,6 +957,7 @@ export default function AppV5() {
       setMissionResult(result);
       setAnswer(extractAnswer(result));
       announce(result);
+      refreshSystem({ silent: true });
 
       if (result.status === "BLOCKED") {
         startAcquisition(result.mission_id);
@@ -262,19 +974,14 @@ export default function AppV5() {
     }
   };
 
-  // "Plan it": the text/voice convergence path. Runs the SAME real
-  // plannedMission() every other surface uses, then reconstructs the
-  // resulting plan onto the canvas so it can be seen and re-run as a
-  // graph. This genuinely executes (there is no plan-only endpoint --
-  // governance gates the same way regardless), so a step that needs
-  // approval or a capability that does not exist still stops for a real
-  // human decision below, exactly as a hand-built graph would.
   const planIt = async () => {
     const text = goal.trim();
     if (!text || planning) return;
 
     if (!unlocked) {
-      setCompileError("Unlock with the owner token below -- running a mission is a real, governed write.");
+      setCompileError(
+        "Unlock with the owner token. Planning runs a real governed mission."
+      );
       return;
     }
 
@@ -284,22 +991,30 @@ export default function AppV5() {
 
     try {
       const result = await api.plannedMission(text);
-      const built = planToGraph({ goal: result.goal || text, steps: result.plan || [] });
+      const built = planToGraph({
+        goal: result.goal || text,
+        steps: result.plan || [],
+      });
       const laidOut = built.nodes.map((n, i) => ({
         ...n,
-        x: 40 + (i % 3) * 240,
-        y: 40 + Math.floor(i / 3) * 150,
+        x: 36 + (i % 3) * 252,
+        y: 54 + Math.floor(i / 3) * 154,
       }));
       setNodes(laidOut);
       setEdges(built.edges);
       idCounter.current = laidOut.length + 1;
 
-      const stepNumberById = new Map(laidOut.map((n) => [n.id, Number(n.id.slice(1))]));
-      setLastCompiled({ stepNumberById, plan: { goal: result.goal || text, steps: result.plan || [] } });
-
+      const stepNumberById = new Map(
+        laidOut.map((n) => [n.id, Number(n.id.slice(1))])
+      );
+      setLastCompiled({
+        stepNumberById,
+        plan: { goal: result.goal || text, steps: result.plan || [] },
+      });
       setMissionResult(result);
       setAnswer(extractAnswer(result));
       announce(result);
+      refreshSystem({ silent: true });
 
       if (result.status === "BLOCKED") {
         startAcquisition(result.mission_id);
@@ -316,27 +1031,19 @@ export default function AppV5() {
     }
   };
 
-  // ── approvals ────────────────────────────────────────────────────────
-
   const decideDirect = async (approved) => {
     if (!directApproval || deciding) return;
     setDeciding(true);
     setRejected(!approved);
     try {
-      // decide() itself is the ONE place a real REJECTED signal exists --
-      // resume-planned's own re-derived status word cannot tell "rejected"
-      // apart from "not yet decided" (see runOutcomeText()'s doc comment,
-      // BUG-011). Captured here, not re-guessed from what comes back below.
       await api.decide(directApproval.approvalRequestId, approved);
       const resumed = await api.resumePlanned(directApproval.missionId);
       setMissionResult(resumed);
       setAnswer(extractAnswer(resumed));
       announce(resumed, { rejected: !approved });
+      refreshSystem({ silent: true });
 
       if (approved && resumed.status === "AWAITING_APPROVAL") {
-        // Only a genuinely new approval gate further down the plan
-        // re-arms this panel -- a rejection must never loop back into
-        // "waiting for a decision" as if nothing happened.
         setDirectApproval({
           missionId: directApproval.missionId,
           approvalRequestId: resumed.approval_request_id,
@@ -363,26 +1070,28 @@ export default function AppV5() {
 
       if (approved) {
         const installed = await api.install(rec.candidate?.name);
-
-        if (installed?.status !== "INSTALLED" && installed?.status !== "ALREADY_INSTALLED") {
-          // BUG-008/BUG-010's own lesson, reapplied here: a real FAILED
-          // install response carries its message under "error", and
-          // ALREADY_INSTALLED is a safe idempotent outcome, never an
-          // error -- so only a genuine non-install status is reported as
-          // a problem, and with its real message, not a bare status word.
+        if (
+          installed?.status !== "INSTALLED" &&
+          installed?.status !== "ALREADY_INSTALLED"
+        ) {
           setCompileError(
-            `Install did not complete: ${installed?.reason || installed?.error || installed?.status || "unknown"}`
+            `Install did not complete: ${
+              installed?.reason || installed?.error || installed?.status || "unknown"
+            }`
           );
         }
 
         const resumedId =
           installed?.mission_resumed?.mission_id ||
-          (typeof installed?.mission_resumed === "string" ? installed.mission_resumed : null);
+          (typeof installed?.mission_resumed === "string"
+            ? installed.mission_resumed
+            : null);
         if (resumedId) {
           const resumed = await api.mission(resumedId);
           setMissionResult(resumed);
           setAnswer(extractAnswer(resumed));
           announce(resumed);
+          refreshSystem({ silent: true });
           if (resumed.status === "BLOCKED") {
             setAcquisition(null);
             startAcquisition(resumedId);
@@ -394,6 +1103,7 @@ export default function AppV5() {
         speak("Capability rejected. The mission remains blocked.");
       }
       setAcquisition(null);
+      refreshSystem({ silent: true });
     } catch (err) {
       setCompileError(String(err.message || err));
     } finally {
@@ -401,20 +1111,14 @@ export default function AppV5() {
     }
   };
 
-  // ── derived ──────────────────────────────────────────────────────────
-
   const statuses = lastCompiled
-    ? nodeStatuses({ nodes, stepNumberById: lastCompiled.stepNumberById, missionResult })
+    ? nodeStatuses({
+        nodes,
+        stepNumberById: lastCompiled.stepNumberById,
+        missionResult,
+      })
     : new Map();
 
-  // The ONE genuinely real-time per-node override: while acquisition is
-  // actively streaming (GET /missions/{id}/acquire/stream), the exact
-  // node that BLOCKED gets the real current stage's own label instead of
-  // the static "BLOCKED" text -- this is live because the underlying
-  // data genuinely is (see graphExecutionState.js's doc comment on the
-  // real-time boundary). Every other node's state still comes only from
-  // the last real mission result; nothing else is fabricated as "in
-  // progress".
   if (acquisition && lastCompiled && missionResult?.blocked_on) {
     const blockedStep = missionResult.blocked_on.step;
     const blockedNodeId = [...lastCompiled.stepNumberById.entries()].find(
@@ -424,27 +1128,15 @@ export default function AppV5() {
       const stage = acquisition.record ? describeStage(acquisition.record) : null;
       statuses.set(blockedNodeId, {
         tone: "acquiring",
-        label: stage?.label || "Acquiring a missing capability…",
+        label: stage?.label || "Acquiring a missing capability",
         detail: stage?.detail || "",
       });
     }
   }
 
   const selected = nodes.find((n) => n.id === selectedId) || null;
-
-  // This node's OWN result, distinct from `answer` (always the mission's
-  // LAST step -- see extractStepAnswer's doc comment for why that alone
-  // wasn't enough: an earlier step's real output, like an image URL, had
-  // no way to surface here at all before this).
   const nodeAnswer = selected ? extractStepAnswer(missionResult, selected.id) : null;
 
-  // BUG-014, 29 Aug 2026: a node here could call a capability without
-  // knowing what arguments it actually needs -- the Args box below was
-  // just free text, and the only feedback was the mission failing later
-  // with a raw Python error. This reads the real, already-installed
-  // entrypoint's own signature line out of its passport (never fabricated
-  // -- if the passport has no code on file, no hint is shown) so the
-  // requirement is visible before the mission ever runs.
   useEffect(() => {
     if (!selected?.tool) {
       setArgHint(null);
@@ -452,25 +1144,20 @@ export default function AppV5() {
     }
 
     let cancelled = false;
-
     api
       .passport(selected.tool)
       .then((body) => {
         if (cancelled) return;
-
         const candidate = body?.passport?.candidate;
         const code = candidate?.code;
         const entrypoint = candidate?.entrypoint;
-
         if (!code || !entrypoint) {
           setArgHint(null);
           return;
         }
-
         const match = code.match(
           new RegExp(`def\\s+${entrypoint}\\s*\\(([^)]*)\\)`)
         );
-
         setArgHint(match ? match[1].trim() || "(no arguments)" : null);
       })
       .catch(() => {
@@ -481,481 +1168,251 @@ export default function AppV5() {
       cancelled = true;
     };
   }, [selected?.tool]);
-  const isRunning = running || planning;
 
+  const isRunning = running || planning;
   const center = (n) => ({ x: n.x + NODE_W / 2, y: n.y + NODE_H / 2 });
+  const missionTone = toneForMissionStatus(missionResult?.status);
 
   return (
-    <div className="min-h-screen bg-[#06090f] text-slate-100 font-sans">
-      {/* topbar */}
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-white/[0.07] glass">
-        <span className="font-semibold tracking-tight text-[13px]">
-          AION Axon — Graphical Mission Builder
-        </span>
-        <span className="text-[10px] text-slate-500 font-mono">
-          graph → mission compiler → the real governed engine
-        </span>
-
-        <div className="ml-auto flex items-center gap-2">
+    <div className="axon-v5-shell">
+      <header className="axon-topbar">
+        <div className="axon-brand">
+          <CircleDot size={18} />
+          <div>
+            <strong>AION AXON</strong>
+            <span>Live autonomous mission control</span>
+          </div>
+        </div>
+        <div className="axon-topbar-center">
+          <span
+            className={cx(
+              "axon-connection",
+              systemSnapshot?.online ? "tone-ok" : "tone-warn"
+            )}
+          >
+            {systemSnapshot?.online ? "core online" : "core not verified"}
+          </span>
+          <span>
+            {missionResult?.mission_id
+              ? `mission ${missionResult.mission_id.slice(0, 8)}`
+              : "no active mission"}
+          </span>
+        </div>
+        <div className="axon-topbar-actions">
           {!unlocked ? (
-            <div className="flex items-center gap-1.5">
+            <div className="axon-token-box">
               <input
                 type="password"
                 value={tokenInput}
                 onChange={(e) => setTokenInput(e.target.value)}
                 placeholder="owner token"
                 autoComplete="off"
-                className="bg-black/40 border border-white/10 rounded-md text-[11px] px-2 py-1 outline-none placeholder:text-slate-600"
               />
-              <button
+              <ActionButton
                 onClick={() => {
                   if (!tokenInput.trim()) return;
                   setOwnerToken(tokenInput);
                   setTokenInput("");
                   setUnlocked(true);
                 }}
-                className="flex items-center gap-1 px-2 py-1 rounded-md border border-cyan-400/40 text-cyan-300 text-[10px] font-bold uppercase"
               >
-                <Unlock size={11} /> Unlock
-              </button>
+                <Unlock size={14} />
+                Unlock
+              </ActionButton>
             </div>
           ) : (
-            <span className="text-[10px] text-emerald-400 font-mono">owner unlocked</span>
+            <span className="axon-owner">
+              <Unlock size={13} /> owner unlocked
+            </span>
           )}
-
-          {/* Speaks only the real terminal outcome text already on
-              screen (runOutcomeText()) -- never a scripted line. Hidden,
-              not disabled, when the browser has no SpeechSynthesis; off
-              by default, same reasoning as AppV4. */}
           {speechSynthesisSupported() && (
-            <button
+            <IconButton
               onClick={() => setSpeakEnabled((v) => !v)}
-              title={speakEnabled ? "Voice output on — click to mute" : "Voice output off — click to enable"}
+              title={speakEnabled ? "Mute voice output" : "Enable voice output"}
               aria-label={speakEnabled ? "Mute voice output" : "Enable voice output"}
-              className={`h-7 w-7 grid place-items-center rounded-full transition-colors ${
-                speakEnabled ? "text-cyan-300" : "text-slate-500 hover:bg-white/[0.06]"
-              }`}
             >
-              {speakEnabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
-            </button>
+              {speakEnabled ? <Volume2 size={15} /> : <VolumeX size={15} />}
+            </IconButton>
           )}
         </div>
-      </div>
+      </header>
 
-      <div className="grid xl:grid-cols-[1fr_360px] gap-4 p-4">
-        {/* ── canvas ─────────────────────────────────────────────── */}
-        <div className="flex flex-col gap-2 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={addNode}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full framer-pill text-[11px] hover:bg-white/[0.06]"
-            >
-              <Plus size={13} /> Add node
-            </button>
+      <main className="axon-layout">
+        <aside className="axon-sidebar axon-sidebar--left">
+          <HealthStack
+            snapshot={systemSnapshot}
+            loading={systemLoading}
+            error={systemError}
+            onRefresh={() => refreshSystem()}
+          />
+          <CapabilityLedger snapshot={systemSnapshot} capabilities={capabilities} />
+        </aside>
 
-            {connectFrom && (
-              <span className="text-[11px] text-cyan-300 font-mono">
-                click a target node to connect from "{connectFrom}" (click it again to cancel)
-              </span>
-            )}
-
-            <div className="flex-1" />
-
-            {speech.supported && (
-              <button
-                onClick={speech.toggle}
-                title="Speak a mission description"
-                className={`h-7 w-7 grid place-items-center rounded-full transition-colors ${
-                  speech.listening ? "text-red-400 mic-live bg-red-400/10" : "framer-pill text-slate-400"
-                }`}
-              >
-                <Mic size={13} />
-              </button>
-            )}
-            <input
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-              placeholder="Describe the mission (typed or spoken) — 'Plan it' builds this graph for you"
-              className="bg-black/40 border border-white/10 rounded-md text-[11.5px] px-2.5 py-1.5 outline-none placeholder:text-slate-600 w-[360px] max-w-full"
-            />
-            <button
-              onClick={planIt}
-              disabled={planning || !goal.trim()}
-              className="px-3 py-1.5 rounded-full text-[11px] font-semibold text-white disabled:opacity-40"
-              style={{ background: "linear-gradient(135deg,#0066ff,#00f0ff)" }}
-            >
-              {planning ? "Planning…" : "Plan it"}
-            </button>
-          </div>
-
-          <div
-            ref={canvasRef}
-            className="relative framer-canvas-frame min-h-[460px] overflow-auto scroll-thin"
-            style={{ background: "#090a0f" }}
-          >
-            <svg className="absolute inset-0 pointer-events-none" width="100%" height="100%">
-              {edges.map((e) => {
-                const a = nodes.find((n) => n.id === e.from);
-                const b = nodes.find((n) => n.id === e.to);
-                if (!a || !b) return null;
-                const p1 = center(a);
-                const p2 = center(b);
-                return (
-                  <line
-                    key={`${e.from}->${e.to}`}
-                    x1={p1.x}
-                    y1={p1.y}
-                    x2={p2.x}
-                    y2={p2.y}
-                    stroke="rgba(0,136,255,0.55)"
-                    strokeWidth="1.5"
-                    markerEnd="url(#arrow)"
-                  />
-                );
-              })}
-              <defs>
-                <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-                  <path d="M0,0 L8,4 L0,8 Z" fill="rgba(0,136,255,0.7)" />
-                </marker>
-              </defs>
-            </svg>
-
-            {nodes.length === 0 && (
-              <div className="absolute inset-0 grid place-items-center text-[11px] text-slate-600 italic">
-                Add a node, or describe the mission above and click "Plan it".
-              </div>
-            )}
-
-            {/* The ONE honest global "work is happening" signal for the
-                main plan's execution. There is no per-step streaming
-                endpoint for a normal mission run (see
-                graphExecutionState.js's real-time boundary comment), so
-                this is deliberately a single banner, not per-node
-                fabricated EXECUTING states. */}
-            {isRunning && (
-              <div
-                className="absolute top-0 left-0 right-0 z-10 px-3 py-1.5 text-[10px] font-mono text-cyan-200 orb-breathe"
-                style={{ background: "rgba(0,102,255,0.14)", borderBottom: "1px solid rgba(0,136,255,0.35)" }}
-              >
-                {planning ? "Planning the mission…" : "Running the mission through the real governed engine…"}
-              </div>
-            )}
-
-            {nodes.map((n) => {
-              const st = statuses.get(n.id);
-              const dot = TONE_COLOR[st?.tone] || TONE_COLOR.idle;
-              return (
-                <div
-                  key={n.id}
-                  onPointerDown={(e) => onNodePointerDown(e, n)}
-                  onClick={() => handleNodeClick(n.id)}
-                  className="absolute rounded-xl p-2.5 cursor-grab active:cursor-grabbing select-none"
-                  style={{
-                    left: n.x,
-                    top: n.y,
-                    width: NODE_W,
-                    minHeight: NODE_H,
-                    background: "rgba(13,16,28,0.9)",
-                    border:
-                      selectedId === n.id
-                        ? "1.5px solid #0088ff"
-                        : connectFrom === n.id
-                        ? "1.5px solid #00f0ff"
-                        : "1px solid rgba(255,255,255,0.09)",
-                    boxShadow: selectedId === n.id ? "0 0 16px rgba(0,102,255,0.35)" : "none",
-                  }}
+        <section className="axon-main-stage">
+          <Panel className="axon-command-panel">
+            <div className="axon-command-copy">
+              <MicroLabel>Mission command</MicroLabel>
+              <h1>Plan, govern, execute, verify.</h1>
+            </div>
+            <div className="axon-command-input">
+              {speech.supported && (
+                <IconButton
+                  onClick={speech.toggle}
+                  title="Speak a mission"
+                  aria-label="Speak a mission"
+                  className={speech.listening ? "axon-mic-live" : ""}
                 >
-                  <div className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full shrink-0" style={{ background: dot }} />
-                    <span className="font-mono text-[10px] text-slate-500">{n.id}</span>
-                    <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded framer-pill text-slate-400">
-                      {n.risk}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-200 mt-1 leading-tight break-words">
-                    {n.description || "(no description)"}
-                  </p>
-                  <p className="font-mono text-[10px] text-cyan-300/80 mt-1 truncate">
-                    {n.tool || "— let AION acquire —"}
-                  </p>
-                  {st && (
-                    <p className="text-[9px] mt-1 leading-tight break-words" style={{ color: dot }}>
-                      {st.label}
-                    </p>
-                  )}
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <button
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setConnectFrom(n.id);
-                      }}
-                      className="text-[9px] text-slate-500 hover:text-cyan-300"
-                    >
-                      connect →
-                    </button>
-                    <button
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteNode(n.id);
-                      }}
-                      className="text-[9px] text-slate-500 hover:text-red-400 ml-auto"
-                    >
-                      <Trash2 size={10} />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                  <Mic size={16} />
+                </IconButton>
+              )}
+              <textarea
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
+                placeholder="Describe the mission. AXON will turn it into the real governed plan."
+                rows={2}
+              />
+              <div className="axon-command-actions">
+                <ActionButton onClick={planIt} disabled={planning || !goal.trim()}>
+                  <GitBranch size={14} />
+                  {planning ? "Planning" : "Plan it"}
+                </ActionButton>
+                <ActionButton tone="neutral" onClick={addNode}>
+                  <Plus size={14} />
+                  Node
+                </ActionButton>
+                <ActionButton
+                  tone="success"
+                  onClick={compileAndRun}
+                  disabled={running || !nodes.length}
+                >
+                  <Zap size={14} />
+                  {running ? "Running" : "Compile & Run"}
+                </ActionButton>
+              </div>
+            </div>
+          </Panel>
+
+          {connectFrom && (
+            <div className="axon-info-strip">
+              Connecting from {connectFrom}. Select a target node to create the
+              dependency.
+            </div>
+          )}
+          {compileError && (
+            <div className="axon-error-strip">
+              <AlertTriangle size={15} />
+              {compileError}
+            </div>
+          )}
+
+          <MissionTimeline
+            missionResult={missionResult}
+            running={running}
+            planning={planning}
+            directApproval={directApproval}
+            acquisition={acquisition}
+            answer={answer}
+            lastCompiled={lastCompiled}
+          />
+
+          <CoreGraph
+            nodes={nodes}
+            edges={edges}
+            statuses={statuses}
+            selectedId={selectedId}
+            connectFrom={connectFrom}
+            canvasRef={canvasRef}
+            center={center}
+            onNodePointerDown={onNodePointerDown}
+            onNodeClick={handleNodeClick}
+            onConnect={setConnectFrom}
+            onDelete={deleteNode}
+            isRunning={isRunning}
+            planning={planning}
+          />
 
           {edges.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="axon-edge-list">
               {edges.map((e) => (
-                <span
-                  key={`${e.from}->${e.to}`}
-                  className="framer-pill text-[10px] font-mono px-2 py-1 flex items-center gap-1.5 text-slate-400"
-                >
-                  {e.from} → {e.to}
-                  <button onClick={() => removeEdge(e.from, e.to)} className="text-slate-600 hover:text-red-400">
-                    ×
+                <span key={`${e.from}->${e.to}`}>
+                  {e.from} -&gt; {e.to}
+                  <button
+                    onClick={() => removeEdge(e.from, e.to)}
+                    aria-label={`Remove ${e.from} to ${e.to}`}
+                  >
+                    x
                   </button>
                 </span>
               ))}
             </div>
           )}
+        </section>
 
-          {compileError && (
-            <p className="text-[11px] text-red-300 bg-red-400/10 border border-red-400/30 rounded-md px-3 py-2">
-              {compileError}
-            </p>
-          )}
-
-          <button
-            onClick={compileAndRun}
-            disabled={running || !nodes.length}
-            className="self-start flex items-center gap-1.5 px-4 py-2 rounded-full text-[12px] font-bold text-white disabled:opacity-40"
-            style={{ background: "linear-gradient(135deg,#0066ff,#00f0ff)", boxShadow: "0 0 18px rgba(0,102,255,0.5)" }}
-          >
-            <Zap size={13} /> {running ? "Compiling & running…" : "Compile & Run"}
-          </button>
-        </div>
-
-        {/* ── side panel: node editor / run state ───────────────── */}
-        <div className="framer-panel p-3.5 flex flex-col gap-3 min-h-0">
-          {selected ? (
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-slate-300">
-                  Node {selected.id}
+        <aside className="axon-sidebar axon-sidebar--right">
+          <Panel className="axon-mission-card">
+            <MicroLabel>Mission state</MicroLabel>
+            <div className="axon-mission-status">
+              {missionResult?.status === "COMPLETED" ? (
+                <CheckCircle2 size={18} />
+              ) : missionResult?.status ? (
+                <ShieldAlert size={18} />
+              ) : (
+                <Clock size={18} />
+              )}
+              <div>
+                <strong className={`tone-${missionTone}`}>
+                  {missionResult?.status || "IDLE"}
+                </strong>
+                <span>
+                  {missionResult
+                    ? runOutcomeText(missionResult, { rejected })
+                    : "No mission has run in this session."}
                 </span>
-                <button onClick={() => setSelectedId(null)} className="text-[10px] text-slate-500">
-                  close
-                </button>
               </div>
-
-              <label className="block text-[9.5px] uppercase tracking-wider text-slate-500">
-                Description
-              </label>
-              <textarea
-                value={selected.description}
-                onChange={(e) => updateNode(selected.id, { description: e.target.value })}
-                rows={2}
-                className="w-full bg-black/40 border border-white/10 rounded-md text-[11.5px] px-2 py-1.5 outline-none resize-none"
-              />
-
-              <label className="block text-[9.5px] uppercase tracking-wider text-slate-500">
-                Capability
-              </label>
-              <select
-                value={selected.tool || ""}
-                onChange={(e) => updateNode(selected.id, { tool: e.target.value || null })}
-                className="w-full bg-black/40 border border-white/10 rounded-md text-[11px] px-2 py-1.5 outline-none font-mono"
-              >
-                <option value="">— let AION acquire —</option>
-                {capabilities.map((c) => (
-                  <option key={c.name} value={c.name}>
-                    {c.name} {c.implemented ? "" : "(not yet built)"}
-                  </option>
-                ))}
-              </select>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[9.5px] uppercase tracking-wider text-slate-500">Risk</label>
-                  <select
-                    value={selected.risk}
-                    onChange={(e) => updateNode(selected.id, { risk: e.target.value })}
-                    className="w-full bg-black/40 border border-white/10 rounded-md text-[11px] px-2 py-1.5 outline-none"
-                  >
-                    <option value="LOW">LOW</option>
-                    <option value="MEDIUM">MEDIUM</option>
-                    <option value="HIGH">HIGH</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[9.5px] uppercase tracking-wider text-slate-500">Kind</label>
-                  <select
-                    value={selected.kind}
-                    onChange={(e) => updateNode(selected.id, { kind: e.target.value })}
-                    className="w-full bg-black/40 border border-white/10 rounded-md text-[11px] px-2 py-1.5 outline-none"
-                  >
-                    <option value="READ_ANALYZE">READ_ANALYZE</option>
-                    <option value="EXTERNAL_EFFECT">EXTERNAL_EFFECT</option>
-                  </select>
-                </div>
+            </div>
+            {missionResult && (
+              <div className="axon-fields-grid">
+                <Field
+                  label="steps"
+                  value={`${missionResult.steps_completed ?? 0}/${
+                    missionResult.steps_total ?? "?"
+                  }`}
+                />
+                <Field label="approval" value={directApproval ? "waiting" : "clear"} />
+                <Field
+                  label="capability"
+                  value={
+                    acquisition?.record?.status ||
+                    (missionResult.blocked_on ? "blocked" : "ready")
+                  }
+                />
               </div>
+            )}
+          </Panel>
 
-              <label className="block text-[9.5px] uppercase tracking-wider text-slate-500">
-                Args (one per line — use @{"{node id}"} or @{"{node id}"}.field to reference a
-                connected node's real output)
-              </label>
-              {argHint && (
-                <p className="text-[10px] font-mono text-amber-300/80 -mt-1">
-                  {selected.tool} needs: {argHint}
-                </p>
-              )}
-              <textarea
-                value={(selected.args || []).join("\n")}
-                onChange={(e) => updateNode(selected.id, { args: e.target.value.split("\n") })}
-                rows={3}
-                className="w-full bg-black/40 border border-white/10 rounded-md font-mono text-[10.5px] px-2 py-1.5 outline-none resize-none"
-              />
-
-              {nodeAnswer && (
-                <div
-                  className="rounded-lg p-2.5 space-y-1"
-                  style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.4)" }}
-                >
-                  <p className="text-[9px] uppercase tracking-wider font-bold text-emerald-300/80">
-                    This node's own result ({nodeAnswer.tool})
-                  </p>
-                  {nodeAnswer.fields.map(([k, v]) => (
-                    <div key={k} className="flex items-baseline gap-2">
-                      <span className="font-mono text-[9.5px] text-slate-500 min-w-[80px]">{k}</span>
-                      <span className="font-mono text-[11px] text-emerald-200 font-semibold break-all">
-                        {prettyValue(v)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-[11px] text-slate-500 italic">
-              Click a node to edit it, or drag it to reposition. "connect →" then click another
-              node to declare a dependency.
-            </p>
-          )}
-
-          {/* run result */}
-          {missionResult && (
-            <div className="border-t border-white/[0.07] pt-3 space-y-2">
-              <p className="text-[10px] uppercase tracking-wider font-bold text-slate-400">
-                Mission {missionResult.mission_id?.slice(0, 8)} —{" "}
-                <span style={{ color: TONE_COLOR[toneForMissionStatus(missionResult.status)] }}>
-                  {missionResult.status}
-                </span>
-              </p>
-              {/* BUG-011: the real reason, not just the bare status word --
-                  see runOutcomeText()'s doc comment for the full contract
-                  this reads (step_results[last].reason/error, the
-                  summary's own reason/error, and the decide()-captured
-                  rejection signal, in that order). */}
-              <p className="text-[10.5px] text-slate-400 leading-relaxed">
-                {runOutcomeText(missionResult, { rejected })}
-              </p>
-
-              {answer && (
-                <div className="rounded-lg p-2.5" style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.4)" }}>
-                  {answer.fields.map(([k, v]) => (
-                    <div key={k} className="flex items-baseline gap-2">
-                      <span className="font-mono text-[9.5px] text-slate-500 min-w-[80px]">{k}</span>
-                      <span className="font-mono text-[12px] text-emerald-200 font-semibold">{prettyValue(v)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {directApproval && (
-                <div className="rounded-lg p-2.5" style={{ background: "rgba(0,102,255,0.1)", border: "1.5px solid rgba(0,136,255,0.7)" }}>
-                  <p className="text-[10px] uppercase tracking-wider font-bold text-[#00f0ff] mb-1.5">
-                    ⏸ A step needs your approval
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => decideDirect(true)}
-                      disabled={deciding}
-                      className="px-2.5 py-1 rounded-lg border border-emerald-400/50 text-emerald-300 text-[10px] font-bold uppercase disabled:opacity-40"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      onClick={() => decideDirect(false)}
-                      disabled={deciding}
-                      className="px-2.5 py-1 rounded-lg border border-red-400/50 text-red-300 text-[10px] font-bold uppercase disabled:opacity-40"
-                    >
-                      Reject
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {acquisition && (
-                <div className="rounded-lg p-2.5 space-y-1.5" style={{ background: "rgba(0,102,255,0.08)", border: "1px solid rgba(0,136,255,0.4)" }}>
-                  <p className="text-[10px] uppercase tracking-wider font-bold text-slate-400">
-                    Acquiring a missing capability…
-                  </p>
-                  <div className="space-y-1 max-h-[160px] overflow-y-auto scroll-thin">
-                    {acquisition.actions.map((a, i) => (
-                      <div key={i} className="text-[10px] text-slate-400">
-                        <span style={{ color: TONE_COLOR[a.tone] || "#94a3b8" }}>●</span> {a.label}
-                        <div className="text-[9px] text-slate-600 pl-3">{a.detail}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {acquisition.record?.status === "AWAITING_APPROVAL" && (
-                    <div className="pt-1.5 border-t border-white/[0.07]">
-                      <p className="text-[10px] text-slate-300 mb-1.5">
-                        Proposed <span className="font-mono">{acquisition.record.candidate?.name}</span> — approve to
-                        install and resume this mission.
-                      </p>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => decideAcquisition(true)}
-                          disabled={deciding}
-                          className="px-2.5 py-1 rounded-lg border border-emerald-400/50 text-emerald-300 text-[10px] font-bold uppercase disabled:opacity-40"
-                        >
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => decideAcquisition(false)}
-                          disabled={deciding}
-                          className="px-2.5 py-1 rounded-lg border border-red-400/50 text-red-300 text-[10px] font-bold uppercase disabled:opacity-40"
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {acquisition.record?.status && acquisition.record.status !== "AWAITING_APPROVAL" && (
-                    <p className="text-[10px] text-amber-300">
-                      {acquisition.record.status} — {acquisition.record.reason || ""}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              <p className="text-[9px] text-slate-500">
-                steps {missionResult.steps_completed ?? 0}/{missionResult.steps_total ?? "?"}
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
+          <ApprovalPanel
+            directApproval={directApproval}
+            acquisition={acquisition}
+            deciding={deciding}
+            decideDirect={decideDirect}
+            decideAcquisition={decideAcquisition}
+          />
+          <NodeEditor
+            selected={selected}
+            capabilities={capabilities}
+            argHint={argHint}
+            nodeAnswer={nodeAnswer}
+            updateNode={updateNode}
+            close={() => setSelectedId(null)}
+          />
+          <ResultCard title="Final result" answer={answer} />
+          <EvolutionFeed
+            snapshot={systemSnapshot}
+            acquisition={acquisition}
+            missionResult={missionResult}
+          />
+        </aside>
+      </main>
     </div>
   );
 }

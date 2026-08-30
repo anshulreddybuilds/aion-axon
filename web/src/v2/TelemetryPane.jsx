@@ -1,7 +1,11 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronRight, Clock, ShieldAlert, Zap } from "lucide-react";
 import { buildLogLines, buildTrace, humanMs } from "./trace.js";
+import {
+  autonomyLedgerRow,
+  DEFAULT_SUPERVISION_THRESHOLD,
+} from "./telemetryLedger.js";
 import { Card, Dot, MicroLabel, Metric, Pill } from "./Shell2.jsx";
 
 /**
@@ -73,7 +77,7 @@ function TraceStep({ step, index, open, onToggle }) {
 
       {/* Opacity only, no height animation.
           `animate={{ height: "auto" }}` mounted the panel with a resolved
-          height of 0 — the element was added to the DOM (child count went
+          height of 0 â€” the element was added to the DOM (child count went
           1 -> 2) and stayed invisible, so the accordion looked completely
           dead while actually working. Animating a property that can fail
           to resolve is not worth it for a drawer; the panel now simply
@@ -96,7 +100,7 @@ function TraceStep({ step, index, open, onToggle }) {
                 </p>
               ) : (
                 <p className="text-[10px] text-zinc-600 mt-1.5">
-                  no measurement recorded — shown as absent rather than zero
+                  no measurement recorded â€” shown as absent rather than zero
                 </p>
               )}
             </div>
@@ -122,10 +126,10 @@ function ReasoningTab({ data }) {
       <div className="flex flex-wrap gap-2 mb-3.5">
         <Pill tone="electric">
           <Zap size={10} />
-          {measured?.count ?? "—"} model calls
+          {measured?.count ?? "â€”"} model calls
         </Pill>
         <Pill tone="neutral">
-          {measured?.total_tokens?.toLocaleString() ?? "—"} tokens
+          {measured?.total_tokens?.toLocaleString() ?? "â€”"} tokens
         </Pill>
         {measured?.unmeasured ? (
           <Pill tone="warn">{measured.unmeasured} unmeasured</Pill>
@@ -144,7 +148,7 @@ function ReasoningTab({ data }) {
 
       <p className="text-[9px] text-zinc-600 leading-relaxed pt-1">
         Timings are averages measured from the model's own usage metadata, not
-        estimates. This is the pipeline's real cost per stage — it is not a
+        estimates. This is the pipeline's real cost per stage â€” it is not a
         transcript of model reasoning, because nothing in this system records
         one.
       </p>
@@ -155,13 +159,13 @@ function ReasoningTab({ data }) {
 function StateTab({ data, stages }) {
   const rows = [
     ["kill switch", data?.root?.kill_switch_active ? "ACTIVE" : "released"],
-    ["capabilities", `${data?.capabilities?.implemented ?? "—"} / ${data?.capabilities?.total ?? "—"}`],
+    ["capabilities", `${data?.capabilities?.implemented ?? "â€”"} / ${data?.capabilities?.total ?? "â€”"}`],
     ["approval queue", `${data?.pending?.pending?.length ?? 0} waiting`],
-    ["sandbox verdict", data?.sandbox?.verdict ?? "—"],
-    ["evolution events", data?.evolution?.count ?? "—"],
-    ["tool executions", data?.telemetry?.tool_executions?.count ?? "—"],
-    ["exec p50", humanMs(data?.telemetry?.tool_executions?.p50_ms) ?? "—"],
-    ["exec max", humanMs(data?.telemetry?.tool_executions?.max_ms) ?? "—"],
+    ["sandbox verdict", data?.sandbox?.verdict ?? "â€”"],
+    ["evolution events", data?.evolution?.count ?? "â€”"],
+    ["tool executions", data?.telemetry?.tool_executions?.count ?? "â€”"],
+    ["exec p50", humanMs(data?.telemetry?.tool_executions?.p50_ms) ?? "â€”"],
+    ["exec max", humanMs(data?.telemetry?.tool_executions?.max_ms) ?? "â€”"],
   ];
 
   return (
@@ -185,12 +189,14 @@ function StateTab({ data, stages }) {
 
 function LedgerTab({ data }) {
   const tracked = data?.autonomy?.capabilities || [];
-  const threshold = data?.autonomy?.supervision_threshold ?? 40;
+  const threshold =
+    data?.autonomy?.supervision_threshold ??
+    DEFAULT_SUPERVISION_THRESHOLD;
 
   if (!tracked.length) {
     return (
       <p className="text-[11px] text-zinc-500 italic">
-        Nothing tracked yet — an empty ledger means nothing has been acquired,
+        Nothing tracked yet â€” an empty ledger means nothing has been acquired,
         not that the panel failed.
       </p>
     );
@@ -199,10 +205,11 @@ function LedgerTab({ data }) {
   return (
     <div className="space-y-2.5">
       {tracked.map((c) => {
-        const pct = c.effective_autonomy_pct ?? c.autonomy_pct ?? null;
-        const below = pct != null && pct < threshold;
+      const ledger = autonomyLedgerRow(c, threshold);
+      const pct = ledger.pct;
+      const below = ledger.belowThreshold;
 
-        return (
+      return (
           <div
             key={c.name}
             className="border border-white/[0.06] rounded-xl px-3 py-2.5"
@@ -213,7 +220,7 @@ function LedgerTab({ data }) {
                 {c.name}
               </span>
               <span className="text-[11px] tabular-nums font-semibold">
-                {pct != null ? `${pct}%` : "—"}
+                {pct != null ? `${pct}%` : "â€”"}
               </span>
             </div>
 
@@ -222,7 +229,7 @@ function LedgerTab({ data }) {
                 <div
                   className="h-full rounded-full"
                   style={{
-                    width: `${Math.min(100, Math.max(0, pct))}%`,
+                    width: `${ledger.widthPct}%`,
                     background: below ? "#fbbf24" : "#38bdf8",
                   }}
                 />
@@ -232,7 +239,7 @@ function LedgerTab({ data }) {
             {below && (
               <p className="flex items-center gap-1.5 text-[9.5px] text-amber-300 mt-2">
                 <ShieldAlert size={10} />
-                below the {threshold}% supervision threshold — a human is asked
+                below the {threshold}% supervision threshold â€” a human is asked
                 again
               </p>
             )}
@@ -297,7 +304,7 @@ export default function TelemetryPane({ data, stages }) {
         )}
 
         <p className="text-[9px] text-zinc-600 mt-3.5 leading-relaxed">
-          Tags come from recorded outcomes — a real sandbox exit code, a real
+          Tags come from recorded outcomes â€” a real sandbox exit code, a real
           citation count. DEGRADED on research means zero citations, which is
           the honest state while Search grounding is tier-blocked.
         </p>
@@ -305,3 +312,6 @@ export default function TelemetryPane({ data, stages }) {
     </div>
   );
 }
+
+
+
